@@ -1,6 +1,6 @@
 // Words and tones for contract enums. Presentation only: what a state is called, never what it means for money.
 import type { Tone } from "@/components/ui/tag";
-import type { ChainEvent, ChainEventKind, CheckResult, Milestone, MilestoneStatus, Party, ProjectStatus, ProjectType, RiskTier } from "./contract";
+import type { ChainEvent, ChainEventKind, CheckResult, Milestone, MilestoneStatus, Party, Project, ProjectStatus, ProjectType, RiskTier, SovLine } from "./contract";
 import { formatAmount, shortAddress } from "./utils";
 
 export const PROJECT_STATUS: Record<ProjectStatus, { label: string; tone: Tone }> = {
@@ -28,6 +28,10 @@ export const MILESTONE_STATUS: Record<MilestoneStatus, { label: string; tone: To
   released: { label: "Released", tone: "pass" },
   expired: { label: "Expired", tone: "review" },
   refunded: { label: "Returned", tone: "neutral" },
+  // v1 statuses still in the shared enum while lanes migrate
+  ai_reviewed: { label: "In review", tone: "info" },
+  inspected: { label: "Inspected", tone: "info" },
+  rejected: { label: "Failed", tone: "fail" },
 };
 
 export const PROJECT_TYPE: Record<ProjectType, string> = {
@@ -161,3 +165,6 @@ export function focusMilestone(milestones: Milestone[]): Milestone | undefined {
   const inFlight = milestones.find((m) => ["evidence_submitted", "audited", "needs_human", "failed", "expired"].includes(m.status));
   return inFlight ?? milestones.find((m) => m.status === "escrowed") ?? [...milestones].reverse().find((m) => m.status === "released") ?? milestones[0];
 }
+
+/** The SoV lines a milestone pays for (both fields are optional in the v2 contract). */
+export const sovLinesFor = (p: Pick<Project, "sov">, m: Pick<Milestone, "sovCodes">): SovLine[] => (p.sov ?? []).filter((l) => (m.sovCodes ?? []).includes(l.code));

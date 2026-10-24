@@ -242,7 +242,7 @@ const routes: Route[] = [
       status: "draft",
       sov: body.sov,
       // Mock maps SoV lines 1:1 to milestones; core/verifier owns the real grouping.
-      milestones: body.sov.map((l, i) => ({ id: `${id}-m${i + 1}`, index: i, title: l.title, amount: l.amount, sovCodes: [l.code], requiredInspectors: 1, status: "pending" })),
+      milestones: body.sov.map((l, i) => ({ id: `${id}-m${i + 1}`, index: i, templateKey: l.code, title: l.title, amount: l.amount, sovCodes: [l.code], requiredInspectors: 1, status: "pending" })),
       chain: {},
     };
     db.projects.push(p);
@@ -536,7 +536,7 @@ const routes: Route[] = [
       for (const m of p.milestones) {
         const needs = m.status === "evidence_submitted" ? "audit" : m.status === "failed" ? "re_audit" : "none";
         if (needs === "none" && m.status !== "audited") continue;
-        tasks.push({ projectId: p.id, projectName: p.name, milestone: m, sov: p.sov.filter((l) => m.sovCodes.includes(l.code)), evidence: db.evidence[m.id] ?? [], needs, siteGeo: p.siteGeo, priorAudits: db.audits[m.id] ?? [] });
+        tasks.push({ projectId: p.id, projectName: p.name, milestone: m, sov: (p.sov ?? []).filter((l) => (m.sovCodes ?? []).includes(l.code)), evidence: db.evidence[m.id] ?? [], needs, siteGeo: p.siteGeo, priorAudits: db.audits[m.id] ?? [] });
       }
     }
     return tasks;

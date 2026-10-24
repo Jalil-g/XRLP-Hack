@@ -8,7 +8,7 @@ import { Empty, PageHeader, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
 import type { CheckResult, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, checkLabel } from "@/lib/display";
+import { PROJECT_STATUS, checkLabel, sovLinesFor } from "@/lib/display";
 import { getSession } from "@/lib/session";
 import { formatAmount, toCents } from "@/lib/utils";
 
@@ -102,7 +102,7 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
               projectId={p.id}
               milestoneId={current.id}
               milestoneTitle={current.title}
-              requirements={p.sov.filter((l) => current.sovCodes.includes(l.code)).flatMap((l) => l.evidence)}
+              requirements={sovLinesFor(p, current).flatMap((l) => l.evidence)}
             />
           )}
           <ChecksPanel

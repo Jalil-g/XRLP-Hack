@@ -114,30 +114,31 @@ const KINGSTON = builder({
   verified: false,
 });
 
-const inspector = (seed: string, i: Omit<Inspector, "address" | "credentialTx">): Inspector => ({
+const inspector = (seed: string, i: Omit<Inspector, "address" | "credentialTx" | "verified"> & { firm: string }): Inspector & { firm: string } => ({
+  verified: true,
   ...i,
   address: fakeAddress(seed),
   credentialTx: fakeHash(`cred:${seed}`),
 });
 const DANA = inspector("inspector-dana", {
   name: "Dana Okafor, PE",
-  licence: "NY PE-089412",
+  homeGeo: { lat: 41.8287, lng: -74.0751 },
+  licenseNumber: "NY PE-089412",
   firm: "Catskill Inspection Group",
-  region: "Hudson Valley",
   trades: ["Concrete", "Carpentry", "Structural"],
 });
 const MARCUS = inspector("inspector-marcus", {
   name: "Marcus Lindqvist",
-  licence: "ICC 5381207",
+  homeGeo: { lat: 41.9973, lng: -73.8768 },
+  licenseNumber: "ICC 5381207",
   firm: "Hudson Code Services",
-  region: "Hudson Valley",
   trades: ["Carpentry", "Roofing", "Openings"],
 });
 const PRIYA = inspector("inspector-priya", {
   name: "Priya Raman, PE",
-  licence: "NY PE-091377",
+  homeGeo: { lat: 41.0534, lng: -73.7629 },
+  licenseNumber: "NY PE-091377",
   firm: "Raman Engineering",
-  region: "Westchester",
   trades: ["MEP", "Structural"],
 });
 
@@ -222,6 +223,7 @@ const sov = (code: string, title: string, amount: Rlusd, trade: string, evidence
 const ms = (projectId: string, index: number, title: string, amount: Rlusd, sovCodes: string[], status: Milestone["status"], cancelAfter?: string): Milestone => ({
   id: `${projectId}-m${index + 1}`,
   index,
+  templateKey: title.toLowerCase().replace(/[^a-z]+/g, "_").replace(/^_|_$/g, ""),
   title,
   amount,
   sovCodes,
@@ -579,7 +581,7 @@ export function seed(): { db: MockDb; script: MockScript } {
         perceptualHash: i === 1 ? "9b8c7d6e5f4a3b2d" : undefined,
       }),
     ];
-    audit(oak, m, MARCUS, at, oak.sov.filter((l) => m.sovCodes.includes(l.code)).map((l) => ({ sovCode: l.code, status: "done" as const })), [], "Complete per plans.");
+    audit(oak, m, MARCUS, at, (oak.sov ?? []).filter((l) => (m.sovCodes ?? []).includes(l.code)).map((l) => ({ sovCode: l.code, status: "done" as const })), [], "Complete per plans.");
     released(oak, m, RIDGELINE.address, at, genericPassFor(oak, m, at));
   });
   push({ projectId: oak.id, kind: "loan_payment", actor: oak.chain.spv, amount: "96300.00", at: iso("2026-10-06T15:00:00Z") });
@@ -731,7 +733,7 @@ export function seed(): { db: MockDb; script: MockScript } {
     TRUSTEE,
     ...INVESTORS,
     ...builders.map((b): Party => ({ address: b.address, name: b.name, role: "builder", detail: `Lic. ${b.licenseNumber}` })),
-    ...inspectors.map((i): Party => ({ address: i.address, name: i.name, role: "inspector", detail: `${i.licence} · ${i.firm}` })),
+    ...inspectors.map((i): Party => ({ address: i.address, name: i.name, role: "inspector", detail: `${i.licenseNumber} · ${i.firm}` })),
     ...spvs,
   ];
 

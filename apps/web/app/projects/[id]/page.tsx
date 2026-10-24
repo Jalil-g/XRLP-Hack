@@ -85,7 +85,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
           <>
             <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-caption text-ink-2">
               <span>
-                SoV {selected.sovCodes.join(", ")}
+                SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
                 {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}`}
               </span>
               {selected.escrow && (
