@@ -1,0 +1,15 @@
+{
+  "name": "xrlp-hack",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.15.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "dev": "pnpm --filter @xrlp/web dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+*.log
+.DS_Store
+# secrets — repo is PUBLIC
+.env
+.env.*
+!.env.example
+.data/
+*.seed
+wallets.json
+.pnpm-store/
