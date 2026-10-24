@@ -267,6 +267,22 @@ Observations:
 - Client-side guard: `validateBrokerRates` rejects `CoverRateMinimum 10000 / CoverRateLiquidation 0` before
   submission (the ledger would return `temINVALID`, which is not on-ledger).
 
+Full `pnpm demo` through `setupProjectOnChain` / `closeLoanAndCreateEscrows` (bootstrap wallets, multisig SPV, 30000
+principal, 4 × 300 s): default cover **3300.007849** (minimum 3000.007135) deposited; builder paid the 450 origination
+shortfall into the SPV; multisig LoanSet with `LoanOriginationFee 450`; 3 escrows; **SPV liquid RLUSD after escrows = 0**.
+
+| step | result | explorer |
+|---|---|---|
+| LoanBrokerSet (default rates) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/352178626E211BA65E693B543C4ED7C6ACA973AFB48AB519F0AF04B5A0BEE522 |
+| LoanBrokerCoverDeposit 3300.007849 (mandatory, default) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/75C6777AC164EB3EB589F53C7627A79583861D585E27BDC85215F93EAF87DEC5 |
+| builder → SPV 450 (origination fee shortfall) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/060C4832103A851D006A0992A01A22E4615B20CCB2A6DE7E400275C7EC9C99C2 |
+| LoanSet multisig countersign, `LoanOriginationFee 450` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0CF84E10A53C5B30BA433050BA87344AA698F4522769731E1E7A2E5DCB72A62F |
+| LoanPay 9000 (escrow refund, overpayment) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/7395A3FC078351AA15389DE58778E63D8535DF949A830A4B4B0C43CDB6F1B2AB |
+
+- Confirms the share-price finding: `Vault.AssetsTotal` was **30000** after LoanSet and **30000.02568** only after the
+  LoanPay. **On devnet, interest reaches the vault (and the share price) as it is paid, not at LoanSet.** The "booked at
+  origination" demo tooltip should become "share value rises as interest is repaid".
+
 ---
 
 ## 4. (e) Reserves and fees per project (devnet: base 1 XRP, owner 0.2 XRP, fee 1 drop)
