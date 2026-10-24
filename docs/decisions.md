@@ -41,6 +41,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] **Verification fee: 250 RLUSD in the demo.** In the product the fee **scales with project size** (e.g. bps of principal with a floor); the UI and the business slide must say so. (Jalil)
 - [10-24] Tickets v2 in `docs/06-tickets.md`; GitHub issues synced. Retired: INS-04/05/08/09 v1. New: XRPL-14, VER-13, VER-14, INS-06/07 v2, CORE-12, DEMO-01, PITCH-09.
 - [10-24] XRPL-01 proven with the v2 SPV list (3-of-4 counterparty countersign incl. platform as both Account and signer); no master-key fallback needed. Spikes use fresh throwaway faucet wallets (`scripts/spike-lib.ts`), not the bootstrap store. (Jalil's agent)
+- [10-24] XRPL-02 proven on devnet with the v2 SPV: multisig IOU EscrowCreate, finish by a separate releaseService, `tecCRYPTOCONDITION_ERROR` / `tecNO_LINE` / `tecNO_PERMISSION` all on-ledger; a failed finish publishes the fulfillment, so preflight (XRPL-14) is mandatory before any fulfillment is signed (Jalil's agent, XRPL-02)
 
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
 

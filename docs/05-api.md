@@ -86,6 +86,19 @@ type LoanSnapshot = { principalOutstanding: Rlusd; totalValueOutstanding: Rlusd;
 
 ## 3. Ports (core ⇄ adapters) — `packages/shared/src/ports.ts`
 
+**`ports.ts` is the source of truth** (CORE-01, #53); the sketch below is the summary. Concrete choices made there:
+- Adapters return `TxResult { hash, explorerUrl, result, kind?, at? }`, not `ChainEvent`s. Core adds project/milestone context
+  and turns them into `ChainEvent`s. Composite calls return `txs: TxResult[]` (`ProjectChainSetup`, `CloseResult`).
+- Failures throw `LedgerError { code: "too_soon" | "ledger_error" | "unsafe_release", txResult?, txHash? }`; `TooSoonError` extends it.
+- `closeLoanAndCreateEscrows` also takes `project` + `builder`; `conditions[i]` / `cancelAfters[i]` map to `project.milestones[i]`.
+- `attest` takes the SPV as memo destination: `attest({ signer, spv, memo })`.
+- Added `tryFinishWithWrongFulfillment({ owner, offerSequence, condition })` for route 23: platform-signed `EscrowFinish` with
+  random bytes; **resolves** with the `tec` result instead of throwing, and never sees a stored preimage.
+- `policyFor(project, milestone)` returns `ReleasePolicy { riskTier, requiredChecks, optionalChecks, minConfidence, requiredAudits }`.
+- Status enums are a **superset** during migration: `MilestoneStatus` still accepts `ai_reviewed | inspected | rejected`
+  (`LEGACY_MILESTONE_STATUSES`, deprecated). New code uses `MILESTONE_STATUSES_V2` and `MILESTONE_TRANSITIONS_V2` /
+  `PROJECT_TRANSITIONS_V2` from `packages/shared/src/states.ts`. Legacy values are removed once core (CORE-03) and web stop emitting them.
+
 ```ts
 interface LedgerPort {
   // onboarding / compliance
