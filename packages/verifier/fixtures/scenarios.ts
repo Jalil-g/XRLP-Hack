@@ -117,11 +117,21 @@ export const project: Project = Project.parse({
   description: "Two-family new build on a 25x100 lot.",
   terms: { principal: "100000.00", interestRateBps: 900, termDays: 365, paymentIntervalDays: 30, fundingDeadline: "2026-10-14T00:00:00Z" },
   status: "escrowed",
+  sov: [
+    { code: "F-01", title: "Footings and stem walls", amount: "10000.00", trade: "concrete", evidence: [], visualCriteria: ["Foundation walls visible"] },
+    { code: "F-02", title: "Slab", amount: "10000.00", trade: "concrete", evidence: [], visualCriteria: ["Completed slab"] },
+    { code: "F-03", title: "Anchor bolts", amount: "5000.00", trade: "concrete", evidence: [], visualCriteria: ["Anchor bolts visible"] },
+    { code: "FR-01", title: "Wall framing", amount: "18000.00", trade: "framing", evidence: [], visualCriteria: ["Wall framing visible"] },
+    { code: "FR-02", title: "Roof trusses", amount: "8000.00", trade: "framing", evidence: [], visualCriteria: ["Roof trusses installed"] },
+    { code: "FR-03", title: "Sheathing", amount: "4000.00", trade: "framing", evidence: [], visualCriteria: ["Sheathing complete"] },
+    { code: "R-01", title: "Roof and dry-in", amount: "20000.00", trade: "roofing", evidence: [], visualCriteria: ["Roof dried in"] },
+    { code: "FN-01", title: "Finishes", amount: "25000.00", trade: "finish", evidence: [], visualCriteria: ["Finishes complete"] },
+  ],
   milestones: [
-    { id: "ms_maple_1", index: 0, templateKey: "foundation", title: "Foundation", amount: "25000.00", requiredInspectors: 1, status: "evidence_submitted" },
-    { id: "ms_maple_2", index: 1, templateKey: "framing", title: "Framing", amount: "30000.00", requiredInspectors: 1, status: "evidence_submitted" },
-    { id: "ms_maple_3", index: 2, templateKey: "dry_in", title: "Roof & Dry-in", amount: "20000.00", requiredInspectors: 1, status: "escrowed" },
-    { id: "ms_maple_4", index: 3, templateKey: "finish", title: "Finishes & CO", amount: "25000.00", requiredInspectors: 1, status: "escrowed" },
+    { id: "ms_maple_1", index: 0, templateKey: "foundation", title: "Foundation", amount: "25000.00", requiredInspectors: 1, status: "evidence_submitted", sovCodes: ["F-01", "F-02", "F-03"] },
+    { id: "ms_maple_2", index: 1, templateKey: "framing", title: "Framing", amount: "30000.00", requiredInspectors: 1, status: "evidence_submitted", sovCodes: ["FR-01", "FR-02", "FR-03"] },
+    { id: "ms_maple_3", index: 2, templateKey: "dry_in", title: "Roof & Dry-in", amount: "20000.00", requiredInspectors: 1, status: "escrowed", sovCodes: ["R-01"] },
+    { id: "ms_maple_4", index: 3, templateKey: "finish", title: "Finishes & CO", amount: "25000.00", requiredInspectors: 1, status: "escrowed", sovCodes: ["FN-01"] },
   ],
 });
 

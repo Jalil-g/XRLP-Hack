@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { Verdict } from "@xrlp/shared";
+import { Inspector, InspectorAudit, Verdict } from "@xrlp/shared";
 import { verifyBuilder, verifyMilestone, verifyMilestoneDetailed, type MilestoneJudge } from "../src/index.ts";
 import { unavailableJudgement } from "../src/llm/types.ts";
 import { evidenceBundleHash } from "../src/audit.ts";
-import { builder, builderOnboardingInput, FIXTURES_DIR, SCENARIOS } from "../fixtures/scenarios.ts";
+import { builder, builderOnboardingInput, FIXTURES_DIR, project, SCENARIOS } from "../fixtures/scenarios.ts";
 
 for (const s of SCENARIOS) {
   test(`scenario ${s.key}: ${s.title} -> ${s.expect}`, { skip: s.pending && `needs ${s.pending}` }, async () => {
@@ -69,6 +69,25 @@ test("changing one evidence file breaks the audit binding", async () => {
   const [audit] = await s.audits();
   const bundle = (await s.input()).evidence.slice(1);
   assert.notEqual(audit!.evidenceBundleHash, evidenceBundleHash(bundle));
+});
+
+test("fixture panel and audits parse against shared v2 and cover the milestone SoV", async () => {
+  const panel = JSON.parse(await readFile(join(FIXTURES_DIR, "inspectors.json"), "utf8"));
+  const inspectors = panel.inspectors.map((i: unknown) => Inspector.parse(i));
+  assert.equal(inspectors.length, 3);
+  assert.ok(inspectors.every((i: Inspector) => i.verified && i.homeGeo));
+  for (const s of SCENARIOS.filter((x) => x.auditPath)) {
+    const [audit] = await s.audits();
+    InspectorAudit.parse(audit);
+    const milestone = (await s.input()).milestone;
+    assert.deepEqual(audit!.checklist.map((line) => line.sovCode), milestone.sovCodes);
+    assert.ok(audit!.checklist.every((line) => project.sov!.some((sov) => sov.code === line.sovCode)));
+  }
+  const cents = (s: string) => BigInt(s.replace(".", ""));
+  assert.equal(project.sov!.reduce((sum, line) => sum + cents(line.amount), 0n), cents(project.terms.principal));
+  for (const milestone of project.milestones) {
+    assert.equal(project.sov!.filter((line) => milestone.sovCodes!.includes(line.code)).reduce((sum, line) => sum + cents(line.amount), 0n), cents(milestone.amount));
+  }
 });
 
 test("detailed result returns recomputed meta to persist for future dedupe", async () => {

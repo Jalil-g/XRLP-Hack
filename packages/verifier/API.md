@@ -10,7 +10,7 @@ releases money by itself. The inspector still has to sign (`verdict.policy.requi
 pnpm --filter @xrlp/verifier demo        # 4 scenarios + builder onboarding + policy matrix (mock, no key)
 pnpm --filter @xrlp/verifier test        # node --test via tsx
 pnpm --filter @xrlp/verifier typecheck
-pnpm --filter @xrlp/verifier fixtures    # regenerate synthetic fixtures (deterministic)
+pnpm --filter @xrlp/verifier fixtures    # re-stamp real photos and regenerate synthetic audits/docs
 VERIFIER_MODE=live ANTHROPIC_API_KEY=... pnpm --filter @xrlp/verifier demo   # real Claude
 ```
 
@@ -138,6 +138,13 @@ bundle by `evidenceBundleHash`, with inspector photos under `audits/photos/`), `
 - **C** one photo geotagged 2.6 km away → needs_human (`gps_within_site`)
 - **D** invoices cover 73.6% of the draw → fail (`invoice_matches_budget`)
 - **E** honest evidence, **no inspector audit** → fail (`inspector_audit_present`); marked `pending: "VER-03"` until that check exists
+
+Manifest expectations currently describe **mock mode**. Live Claude has not been validated against these
+photos. The sources span different sites; the wide foundation photo shows walls and a gravel floor,
+not proof of a finished slab, and the inspector rebar photo depicts work in progress. Do not present
+scenario A as a demonstrated live vision pass. VER-04/VER-10 must validate or replace the photos for
+the exact visual criteria before enabling a live demo. The demo reports E as pending rather than
+silently claiming its missing-audit check already exists.
 
 Measured pHash distances (64-bit): the copy is 4 from the Oak Ave original; every other pair of distinct fixture photos
 is 24 or more. Threshold: 10 = fail. Core/web can use these as seed data.
