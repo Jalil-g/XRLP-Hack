@@ -65,7 +65,7 @@ export interface SpvInfo {
 
 export async function getSpvInfo(address: string): Promise<SpvInfo> {
   const client = await getClient();
-  const info = await client.request({ command: "account_info", account: address, signer_lists: true, ledger_index: "validated" } as never);
+  const info = await client.request({ command: "account_info", account: address, signer_lists: true, ledger_index: "validated" } as Parameters<typeof client.request>[0]) as { result: unknown };
   const r = info.result as unknown as {
     account_data: { Flags: number; signer_lists?: SignerListNode[] };
     signer_lists?: SignerListNode[];

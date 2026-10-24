@@ -8,8 +8,8 @@
   "exports": { ".": "./src/index.ts" },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",
-    "bootstrap": "tsx scripts/bootstrap.ts",
-    "demo": "tsx scripts/demo.ts",
+    "bootstrap": "NODE_USE_ENV_PROXY=1 tsx scripts/bootstrap.ts",
+    "demo": "NODE_USE_ENV_PROXY=1 tsx scripts/demo.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

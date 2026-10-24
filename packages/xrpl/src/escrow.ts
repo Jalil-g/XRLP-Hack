@@ -16,7 +16,9 @@ export interface CreateEscrowParams {
   /** Ripple-epoch seconds. Required for token escrows. */
   cancelAfter: number;
   /** SPV signers reaching quorum (e.g. inspectorA + aiAgent). */
-  signers: Wallet[];
+  signers?: Wallet[];
+  /** Fallback: SPV master key (only before the SPV is locked). */
+  singleKey?: Wallet;
 }
 
 export interface CreatedEscrow {
@@ -27,17 +29,15 @@ export interface CreatedEscrow {
 }
 
 export async function createMilestoneEscrow(p: CreateEscrowParams): Promise<CreatedEscrow> {
-  const tx = await multisignAndSubmit(
-    {
-      TransactionType: "EscrowCreate",
-      Account: p.spv,
-      Destination: p.builder,
-      Amount: rlusdAmount(p.issuer, p.amount),
-      Condition: p.condition,
-      CancelAfter: p.cancelAfter,
-    },
-    p.signers,
-  );
+  const ec = {
+    TransactionType: "EscrowCreate" as const,
+    Account: p.spv,
+    Destination: p.builder,
+    Amount: rlusdAmount(p.issuer, p.amount),
+    Condition: p.condition,
+    CancelAfter: p.cancelAfter,
+  };
+  const tx = p.singleKey ? await signAndSubmit(p.singleKey, ec) : await multisignAndSubmit(ec, p.signers ?? []);
   const seq = Number(tx.tx.Sequence);
   return { tx, owner: p.spv, offerSequence: seq };
 }

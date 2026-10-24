@@ -60,8 +60,14 @@ export function loadWallets(): DemoWallets {
   return walletsFromFile(f);
 }
 
-export function resolveWallet(w: WalletRole | Wallet): Wallet {
-  return typeof w === "string" ? loadWallets()[w] : w;
+/** Resolve a role name, a known demo address (r...), or pass a Wallet through. */
+export function resolveWallet(w: WalletRole | string | Wallet): Wallet {
+  if (typeof w !== "string") return w;
+  const all = loadWallets();
+  if ((WALLET_ROLES as readonly string[]).includes(w)) return all[w as WalletRole];
+  const hit = Object.values(all).find((x) => x.classicAddress === w);
+  if (!hit) throw new Error(`no demo wallet for ${w} (role name or address from .data/wallets.json expected)`);
+  return hit;
 }
 
 export async function xrpBalance(address: string): Promise<number> {

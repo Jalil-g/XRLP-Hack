@@ -92,11 +92,11 @@ export async function withdrawFromVaultTx(investor: Wallet, vaultId: string, iss
 export async function getShareBalance(holder: string, shareMptIssuanceId: string): Promise<string> {
   const client = await getClient();
   try {
-    const res = await client.request({
+    const res = (await client.request({
       command: "ledger_entry",
       mptoken: { mpt_issuance_id: shareMptIssuanceId, account: holder },
       ledger_index: "validated",
-    } as never);
+    } as Parameters<typeof client.request>[0])) as { result: unknown };
     const node = (res.result as { node?: { MPTAmount?: string } }).node;
     return node?.MPTAmount ?? "0";
   } catch (e) {
