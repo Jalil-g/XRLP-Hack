@@ -129,7 +129,7 @@ function scene(key: SceneKey, seed: number): string {
       break;
   }
   // Off-centre light falloff (sun + lens vignette). Real photos have this; without it, flat synthetic
-  // regions make dHash bits unstable under recompression.
+  // regions make perceptual-hash bits less stable under recompression.
   const cx = (0.2 + r() * 0.6).toFixed(2);
   const vignette =
     `<defs><radialGradient id="v" cx="${cx}" cy="0.3" r="0.9"><stop offset="0" stop-color="#fff" stop-opacity="0.12"/>` +

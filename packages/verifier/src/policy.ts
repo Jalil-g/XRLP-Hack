@@ -23,9 +23,9 @@ export interface PolicyThresholds {
   maxPhotoAgeDays: number;
   /** Allowed clock skew for "taken in the future". */
   futureSkewMinutes: number;
-  /** dHash Hamming distance at or below which two photos are the same image. */
+  /** pHash Hamming distance (of 64 bits) at or below which two photos are the same image. */
   phashFailDistance: number;
-  /** dHash distance at or below which two photos are suspiciously similar (warn). */
+  /** pHash distance at or below which two photos are suspiciously similar (warn). */
   phashWarnDistance: number;
   /** Invoices may cover as little as (100 - x)% of the requested draw. */
   invoiceUnderTolerancePct: number;
@@ -55,8 +55,8 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     minGpsCoverage: 0.5,
     maxPhotoAgeDays: 45,
     futureSkewMinutes: 10,
-    phashFailDistance: 8,
-    phashWarnDistance: 10,
+    phashFailDistance: 10,
+    phashWarnDistance: 14,
     invoiceUnderTolerancePct: 10,
     invoiceOverTolerancePct: 30,
     minLlmConfidence: 0.6,
@@ -66,8 +66,8 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     minGpsCoverage: 0.67,
     maxPhotoAgeDays: 30,
     futureSkewMinutes: 10,
-    phashFailDistance: 8,
-    phashWarnDistance: 10,
+    phashFailDistance: 10,
+    phashWarnDistance: 14,
     invoiceUnderTolerancePct: 5,
     invoiceOverTolerancePct: 25,
     minLlmConfidence: 0.7,
@@ -77,8 +77,8 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     minGpsCoverage: 1,
     maxPhotoAgeDays: 14,
     futureSkewMinutes: 5,
-    phashFailDistance: 10,
-    phashWarnDistance: 12,
+    phashFailDistance: 12,
+    phashWarnDistance: 16,
     invoiceUnderTolerancePct: 2,
     invoiceOverTolerancePct: 15,
     minLlmConfidence: 0.8,

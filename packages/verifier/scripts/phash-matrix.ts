@@ -1,4 +1,4 @@
-// Prints pairwise dHash distances for every fixture photo (calibrate phash thresholds).
+// Prints pairwise pHash distances for every fixture photo (calibrate phash thresholds in policy.ts).
 //   pnpm --filter @xrlp/verifier exec tsx scripts/phash-matrix.ts [dir]
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";

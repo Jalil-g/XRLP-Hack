@@ -1,4 +1,4 @@
-// Evidence preprocessing: sha256, perceptual hash (dHash), EXIF time + GPS, invoice totals.
+// Evidence preprocessing: sha256, perceptual hash (DCT pHash), EXIF time + GPS, invoice totals.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -43,11 +43,47 @@ export function isTextLike(mimeType: string, filename = ""): boolean {
   );
 }
 
+const DCT_N = 32;
+const COS: number[][] = Array.from({ length: 8 }, (_, u) =>
+  Array.from({ length: DCT_N }, (_, x) => Math.cos(((2 * x + 1) * u * Math.PI) / (2 * DCT_N))),
+);
+
 /**
- * dHash ("difference hash"): grayscale 9x8, compare horizontal neighbours -> 64 bits -> 16 hex chars.
- * Robust to re-compression, resizing, small crops and brightness changes — exactly what a reused photo looks like.
+ * pHash (DCT perceptual hash): grayscale 32x32 -> 2D DCT -> top-left 8x8 low frequencies (DC excluded
+ * from the median) -> bit = coeff > median -> 64 bits -> 16 hex chars. Robust to re-compression,
+ * resizing, small crops and brightness/contrast changes — exactly what a reused photo looks like.
  */
 export async function perceptualHash(bytes: Uint8Array): Promise<string> {
+  const px = await sharp(bytes)
+    .rotate() // respect EXIF orientation
+    .greyscale()
+    .resize(DCT_N, DCT_N, { fit: "fill", kernel: "lanczos3" })
+    .raw()
+    .toBuffer();
+  // separable DCT-II, only the 8x8 low-frequency block we need
+  const rows: number[][] = Array.from({ length: DCT_N }, (_, y) =>
+    Array.from({ length: 8 }, (_, u) => {
+      let s = 0;
+      for (let x = 0; x < DCT_N; x++) s += px[y * DCT_N + x]! * COS[u]![x]!;
+      return s;
+    }),
+  );
+  const coeffs: number[] = [];
+  for (let v = 0; v < 8; v++) {
+    for (let u = 0; u < 8; u++) {
+      let s = 0;
+      for (let y = 0; y < DCT_N; y++) s += rows[y]![u]! * COS[v]![y]!;
+      coeffs.push(s);
+    }
+  }
+  const median = [...coeffs.slice(1)].sort((a, b) => a - b)[31]!;
+  let bits = 0n;
+  for (const c of coeffs) bits = (bits << 1n) | (c > median ? 1n : 0n);
+  return bits.toString(16).padStart(16, "0");
+}
+
+/** dHash ("difference hash"), kept for comparison/experiments. pHash above is what the checks use. */
+export async function differenceHash(bytes: Uint8Array): Promise<string> {
   const px = await sharp(bytes)
     .rotate() // respect EXIF orientation
     .greyscale()
