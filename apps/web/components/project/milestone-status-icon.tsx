@@ -12,6 +12,11 @@ const ICONS = {
   rejected: XCircle,
   expired: RotateCcw,
   refunded: RotateCcw,
+  // v2
+  audited: HardHat,
+  verified: ScanSearch,
+  failed: XCircle,
+  needs_human: Clock,
 } as const;
 
 const TINT: Record<Milestone["status"], string> = {
@@ -24,6 +29,11 @@ const TINT: Record<Milestone["status"], string> = {
   rejected: "bg-bad-bg text-bad ring-bad-line",
   expired: "bg-warn-bg text-warn ring-warn-line",
   refunded: "bg-warn-bg text-warn ring-warn-line",
+  // v2
+  audited: "bg-info-bg text-info ring-info-line",
+  verified: "bg-ok-bg text-ok ring-ok-line",
+  failed: "bg-bad-bg text-bad ring-bad-line",
+  needs_human: "bg-warn-bg text-warn ring-warn-line",
 };
 
 export function MilestoneStatusIcon({ status, className }: { status: Milestone["status"]; className?: string }) {
