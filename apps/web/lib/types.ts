@@ -88,6 +88,11 @@ export interface MilestoneView {
   verdict: Verdict | null;
   attestations: Attestation[];
   quorum: Quorum;
+  /**
+   * Inspector who generated this escrow's crypto-condition preimage. Only they can reveal the
+   * fulfillment, so only their "Sign approval" can finish the escrow. The platform never sees it.
+   */
+  releaseKeyHolder: Party | null;
   /** Quorum met and escrow still open. */
   canRelease: boolean;
 }
@@ -203,6 +208,12 @@ export interface AttestInput {
   notes: string;
   /** Detached signature over sha256({milestoneId, decision, notes, verdictHash}). */
   signature?: { scheme: "local-mock" | "ledger"; payloadHash: string; signature: string; publicKey?: string };
+}
+
+export interface AttestResult {
+  attestation: Attestation;
+  /** Set when this signature completed the quorum and the key holder's fulfillment finished the escrow. */
+  release: ChainEvent | null;
 }
 
 export interface MilestoneRef {
