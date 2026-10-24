@@ -2,7 +2,7 @@
 
 > Script, slides and demo beats live in `docs/08-pitch-storyline.md` and `docs/04-demo-script.md`. This file keeps the hook, the
 > "why XRPL" table, the business model, regulation, and the judge Q&A. Numbers must be sourced in `docs/01-problem.md`.
-> Working name **[NAME]** (recommendation: Drawproof).
+> Working name **Drawproof** (recommendation: Drawproof).
 
 ## The hook
 

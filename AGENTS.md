@@ -5,12 +5,12 @@ We are 5 people, each with their own AI, building one XRPL Lending-track hackath
 
 ## What we're building
 
-A construction-lending marketplace: verified builders list projects, investors pool RLUSD into an XRPL
-Vault, the Lending Protocol lends to a per-project account, and each milestone's money sits in an XRPL
-escrow released only after an AI evidence check + a human inspector sign off.
+**Drawproof**: a construction-lending marketplace. Builders pay to have a project verified (AI-first), investors pool RLUSD into
+an XRPL Vault per project, the Lending Protocol lends to a per-project multisig account, and each milestone's money sits in an
+XRPL escrow released only when the milestone's **test suite** passes: a licensed inspector's signed audit + the AI's checks.
 
-Read in order: `docs/01-problem.md` → `docs/02-product.md` → `docs/03-architecture.md` →
-`docs/04-demo-script.md` → `docs/decisions.md`.
+Read in order: `docs/00-overview.md` → `docs/decisions.md` (**Direction v2**) → `docs/02-product.md` → `docs/03-architecture.md` →
+`docs/05-api.md` → your lane in `docs/06-tickets.md` → `docs/04-demo-script.md`. Launch steps: `docs/09-agent-launch.md`.
 
 ## Repo layout & ownership
 

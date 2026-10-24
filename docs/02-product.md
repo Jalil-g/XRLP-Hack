@@ -1,6 +1,6 @@
 # 02 — Product
 
-**Working name:** TBD (see `docs/ideas/names.md`, recommendation: Drawproof) · **Track:** XRPL Lending & Borrowing ·
+**Name:** **Drawproof** (decided 2026-10-24; see `docs/ideas/names.md`) · **Track:** XRPL Lending & Borrowing ·
 **Event:** AI & Fintech XRPL Hackathon NYC, Oct 24–25 2026 (36h)
 
 **Pitch line:** *Investors fund verified projects, and the money moves only when each stage passes its tests.*

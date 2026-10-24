@@ -37,6 +37,8 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] **No hardware-wallet (Ledger device) work.** Software inspector key; `packages/ledger-signer` keeps the interface. (Jalil)
 - [10-24] Sponsor stance: Lending & Borrowing track; AWS only as Bedrock provider swap if confirmed at booth; no Quicknode (no devnet), no Mastercard AP4M. (Jalil)
 - [10-24] Marketplace framing kept: KYC'd investors choose verified projects; institutional lender = same rail, one depositor. (Jalil)
+- [10-24] **Name: Drawproof.** (Jalil)
+- [10-24] **Verification fee: 250 RLUSD in the demo.** In the product the fee **scales with project size** (e.g. bps of principal with a floor); the UI and the business slide must say so. (Jalil)
 - [10-24] Tickets v2 in `docs/06-tickets.md`; GitHub issues synced. Retired: INS-04/05/08/09 v1. New: XRPL-14, VER-13, VER-14, INS-06/07 v2, CORE-12, DEMO-01, PITCH-09.
 
 ## Open
@@ -50,6 +52,4 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - Verify on devnet in hour 1: multisig-counterparty `LoanSet` (XRPL-01). If it fails → fallback documented in xrpl-protocol-notes §2.
 - Per-payee escrows (subcontractors + lien waivers): roadmap line only (VER-12 stretch).
 - Default handling for already-released money (collateral / lien story for the pitch).
-- Product name (recommendation: Drawproof). Decide by T+6h.
-- Verification fee amount for the demo (proposal: 250 RLUSD).
-- Does the AWS Lending slice accept "verifier runs on Bedrock"? Ask at booth (PITCH-01).
+- AWS Lending slice: undecided (Jalil not sure). Only do the Bedrock swap (VER-14) if the booth confirms it qualifies and the demo is green at T+24h.

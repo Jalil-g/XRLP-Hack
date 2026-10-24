@@ -32,7 +32,7 @@ with one depositor; say that to Soil/Evernorth.
 
 | # | Slide | On screen | Purpose |
 |---|---|---|---|
-| 1 | **Title** | "[NAME] · Construction money that moves only when the building does." Team. "XRPL Lending & Borrowing · devnet prototype" | Hook |
+| 1 | **Title** | "Drawproof · Construction money that moves only when the building does." Team. "XRPL Lending & Borrowing · devnet prototype" | Hook |
 | 2 | **The failure** | "$63M wired to the sponsor before a single deal closed." · "Draws: 5–14 business days, email + PDFs, one party's say-so." · "18 straight quarters of tighter builder credit." | Real need |
 | 3 | **The money path (one picture)** | Builder pays **verification fee** → AI verifies → Investors → **Vault** (XLS-65) → **Loan** (XLS-66) → **Project account** (3-of-4) → **Escrow per milestone** (XLS-85) → Builder. Caption: "Once locked, nobody can redirect it. Not even us." | Innovation + why XRPL |
 | 4 | **The release pipeline** | A GitHub-checks mock: rows `inspector audit ✔ signed r…`, `gps within site ✔`, `photos fresh ✔`, `no duplicate photo ✔`, `invoice = SoV line ✔`, `stage consistent (AI) ✔ 0.93` → **Released**. Caption: "A licensed inspector is one of the tests. All green, or the money stays locked." | The idea judges remember |
@@ -82,7 +82,7 @@ uploaded; **Project B** with an already-expired escrow. Nothing live waits on a 
 |---|---|---|---|
 | 0:00–0:20 | Hook | "In 2023, eight hundred investors put sixty-three million dollars into two real-estate deals on CrowdStreet. It was wired to the sponsor's own account and most of it was gone before a single deal closed. Nothing stopped it, because construction money still moves on PDFs and one party's say-so. **Construction money should move only when the building does.**" | Slides 1–2 |
 | 0:20–0:35 | Gap | "Builders have reported eighteen straight quarters of tighter credit. Private credit fills the gap at twelve to fifteen percent, and the people supplying it can't see where a dollar goes. A bank draw takes five to fourteen business days." | Slide 2 |
-| 0:35–0:55 | Mechanism | "[NAME]. A builder pays to have the project verified. Investors fund it through a native XRPL vault. The loan goes to a project account no single party controls, which locks each milestone in an escrow that can only pay the builder or go back. And every milestone has a test suite: a licensed inspector's signed audit plus the AI's checks on the evidence. All green, release." | Slides 3–4 |
+| 0:35–0:55 | Mechanism | "Drawproof. A builder pays to have the project verified. Investors fund it through a native XRPL vault. The loan goes to a project account no single party controls, which locks each milestone in an escrow that can only pay the builder or go back. And every milestone has a test suite: a licensed inspector's signed audit plus the AI's checks on the evidence. All green, release." | Slides 3–4 |
 | 0:55–1:05 | D1 | (D1 line) | Marketplace → builder |
 | 1:05–1:15 | D2 | (D2 line) | Project A |
 | 1:15–1:50 | D3 | (D3 line) | Inspector app → Run checks → explorer |
@@ -90,7 +90,7 @@ uploaded; **Project B** with an already-expired escrow. Nothing live waits on a 
 | 2:05–2:15 | D5 | (D5 line) | Explorer `tec` |
 | 2:15–2:30 | D6 | (D6 line) | Project B |
 | 2:30–2:45 | Honesty + potential | "Who can move the money? A live escrow: nobody. A release: the test suite, with a licensed inspector as a required check, attested on-chain first. The project account: three of four. Next: any building through its Schedule of Values, any auditor through the same signed-audit interface, including drones and sensors, and the suite itself as an on-chain rule with Smart Escrows." | Slides 6–7 |
-| 2:45–3:00 | Business + close | "Builders pay a verification fee; we earn origination and a management fee, both native Lending Protocol fields, plus inspections. We post first-loss, so we lose first if we verify badly. Launch is accredited-only through credential-gated vaults. Devnet prototype, not an offer to invest. **[NAME]: investors fund verified projects, and the money moves only when each stage passes its tests.**" | Slide 8 |
+| 2:45–3:00 | Business + close | "Builders pay a verification fee; we earn origination and a management fee, both native Lending Protocol fields, plus inspections. We post first-loss, so we lose first if we verify badly. Launch is accredited-only through credential-gated vaults. Devnet prototype, not an offer to invest. **Drawproof: investors fund verified projects, and the money moves only when each stage passes its tests.**" | Slide 8 |
 
 **Cut order:** D5 → D6 to one sentence → drop the 12–15% line → compress Mechanism. **Never cut D3 or D4.**
 **Pre-flight:** prestage A/B(/C), warm verifier cache, builder trust line verified, explorer tabs, backup video, 1280×720.
