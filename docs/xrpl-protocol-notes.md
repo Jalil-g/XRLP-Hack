@@ -235,6 +235,36 @@ Observations:
 - With this toy rate/interval (10 %/yr, 240 s) the booked interest is below the vault's precision: `AssetsTotal` stayed 1000. For a visible share-price move in the demo use realistic terms (days, not seconds).
 - `AssetsAvailable` is omitted from the Vault entry when 0 (read it as `"0"`).
 
+### 2b. XRPL-05 devnet results (SPV signer list + multisig submit)
+
+`pnpm --filter @xrlp/xrpl spike:spv` (fresh throwaway faucet wallets). `createSpv()` gives SPV `rGfACDRPDofveyiTUj6aZaufb4JoPDLme8`:
+fund, RLUSD `TrustSet`, `SignerListSet {platform, builder, inspector, trustee}` w1 quorum 3, `asfDisableMaster`. Every attempt is a
+small XRP `Payment` from the SPV.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | SPV TrustSet RLUSD | `tesSUCCESS` | https://devnet.xrpl.org/transactions/9A6FD10025548970476676B01E26249A3F2DF407E7B6DDFE9E5292E6BDBEE4FD |
+| 2 | SPV SignerListSet {platform, builder, inspector, trustee} w1, quorum 3 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/8F04A0F25140F2A314C50E1EBFBEC8269EF48816735332F4F1C1EE7B09F4D30E |
+| 3 | SPV AccountSet asfDisableMaster | `tesSUCCESS` | https://devnet.xrpl.org/transactions/F491B509B6EE1E0E072B4B2D1DCEA2C702BB0C9F38F38992AE056D397056E4D4 |
+| 4 | master key single-sign | **`tefMASTER_DISABLED`** (expected) | — (not on ledger) |
+| 5 | multisig **2 of 4** (platform + builder) | **`tefBAD_QUORUM`** (expected) | — (not on ledger) |
+| 6 | platform + builder + **aiAgent** (AI not on the list) | **`tefBAD_SIGNATURE`** (expected) | — (not on ledger) |
+| 7 | `submitMultisigned` 2 of 4: local fast-fail, nothing submitted | `tefBAD_QUORUM` (local) | — |
+| 8 | multisig **3 of 4** (platform + builder + inspector) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BE908263747379191BB0C79A1CFB9EEF7B506B926715116200455CD79560D464 |
+| 9 | 3 of 4 without the inspector (platform + builder + trustee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/979B020D7F417AB44993DC6EAB64705F85AB1A3AAA64CEA6D4B6CFC10EF503AA |
+| 10 | 3 of 4 without the platform (builder + inspector + trustee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C0353715A7D5CDF835F03A00FFBF16FBCBCFB5FBAB14FF6DAB83C4BFDF3C0C25 |
+
+Observations:
+- **`tef*` results are not on-ledger**: they are rejected at submit, not applied, not relayed, no fee charged and no sequence used, so
+  there is **no explorer link** for rows 4–6. Right after submit the node may still answer `tx <hash>` from its local cache
+  (`validated: false`, no meta). Later it returns `txnNotFound`. To show "ledger says no" on the explorer, use a `tec` case (e.g. wrong
+  fulfillment → `tecCRYPTOCONDITION_ERROR`, XRPL-02), not a short multisig.
+- **xrpl.js `submitAndWait` does not throw on `tef*`** (only on `tem*`). It polls until `LastLedgerSequence` passes (~1 min), then throws
+  "latest ledger sequence … Preliminary result: tefBAD_QUORUM". `submitMultisigned()` therefore checks the signers against the on-ledger
+  SignerList first (`checkSignerQuorum`) and throws `XrplTxError("tefBAD_QUORUM"|"tefBAD_SIGNATURE" …)` at once.
+- Any 3 of 4 work, so no single party (including the platform) can block. The AI key is not a signer.
+- Fee: `autofill(tx, signers.length)` = base × (1 + 3) = 4 drops. Enough.
+
 ---
 
 ## 3. (c) Vault mechanics, and the V1_1 closed-ended lifecycle
@@ -284,6 +314,50 @@ Observations:
 3. LoanPay raises `Vault.AssetsAvailable`. Investors can `VaultWithdraw` **from `RedemptionDate` on** (closed-ended).
 4. The released-but-unrepaid part is real credit loss. The platform can `LoanManage tfLoanDefault` after
    due+grace. First-loss cover absorbs `DefaultCovered`, and the vault writes down the rest.
+
+### 3b. XRPL-08 devnet results (credentials, domain, private vault)
+
+`pnpm --filter @xrlp/xrpl compliance` (2026-10-24, fresh faucet wallets, `scripts/compliance.ts`). All green on the first run.
+Accounts: platform `rfXuWyuiDB6YebmqkmGPFVkgX5VzoSYXQ5` · builder `rMiCidC2QvSt5Eqxv7AFxQF2Y3WJX4B6eB` · investor1 `rpq36NP8EqGCMYmD4FjVk94qX9AoC9rt9v` ·
+investor2 `rsPRm5t57J4AFNagPbqLZD1eqZcyHg44sc` · investor3 `r3BiGirvzzcSVhqc6cTZ7UpvLstdjhSiWw` · inspector1 `r3KYuCJCpircLrFJuKq2fcKxBqpCM1VixN` ·
+aiAgent `rHw8ajV19p3i79Z6GXAPXyCPCpgnqUodij` · releaseService `rnGRf8Xi1XJYRMLZGg7mvEamYfBwrJRpZH` · attestation target ("SPV") `rhemmtSz5vbYkvSv4pSV9d6VZBjGX5B4tU`.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | CredentialCreate VERIFIED_BUILDER → builder | `tesSUCCESS` | https://devnet.xrpl.org/transactions/2093B0D492B5C4304CD09BD31DDC72354C1258EFD0B5B7FE93BED224CAF8541C |
+| 2 | CredentialAccept VERIFIED_BUILDER (builder) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/FA22A7DE4DB77DC11CA8F6DD23AC3C66618FB25B85024541E3EE3711CABCD8B3 |
+| 3 | CredentialCreate VERIFIED_INSPECTOR → inspector1 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/FAEC2E6EA06F90E286FC4C370B14BDBEAD87CBA6AB1F3E4D43EC9F910A26D3A5 |
+| 4 | CredentialAccept VERIFIED_INSPECTOR (inspector1) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/05A4F6AA5BA5055730A1F8C169C4BBEEA5ADE8686A8BCA50DE813095B0F77754 |
+| 5 | CredentialCreate KYC_INVESTOR → investor1 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/B95BE5BA5F9032529B011608F6CDCF70210BDB80DBC06696A47CD0782FB79495 |
+| 6 | CredentialAccept KYC_INVESTOR (investor1) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/AB14DEF8EF092869C54EB4724F7EBBB5592DCA029D6DC2795452ED13E41E1453 |
+| 7 | CredentialCreate KYC_INVESTOR → investor2 (never accepted) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/89CC6458441CF825144633BC20E12B29BE8F531E4DD9C0A26F8EC46FE69DC964 |
+| 8 | PermissionedDomainSet, AcceptedCredentials = [platform, KYC_INVESTOR] | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BBC688F9D2F6037497C18B0549237EFC874393934F0D1BEBF2DD9A7B686BE9F8 |
+| 9 | VaultCreate closed-ended + `tfVaultPrivate` + `tfVaultShareNonTransferable` + `DomainID` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/848F08C55D34109007F58FC0793AFE570C57308AE9FFEAF42F0FAD9307E7A276 |
+| 10 | VaultDeposit investor1 (KYC accepted) 400 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/263E1954289F75FCB6D1B0F3AEFE6384EE22158A7E29E60C74814EF670049751 |
+| 11 | VaultDeposit investor2 (KYC issued, **not accepted**) 400 | `tecNO_AUTH` (expected) | https://devnet.xrpl.org/transactions/918DA41A978CD40E4B2F10FEAC491301895A3F5D0A8F5AD4F77BC86531C9F445 |
+| 12 | VaultDeposit investor3 (**no KYC**) 400 | `tecNO_AUTH` (expected) | https://devnet.xrpl.org/transactions/D1917499C930BFAEDBB1A4B4E56266A8BD9EA7E1C3AFC5CFC9240ECD6CE3BFD2 |
+| 13 | Payment verification fee builder → platform 250 RLUSD | `tesSUCCESS` | https://devnet.xrpl.org/transactions/9568897585BA6DB7D02FB97B360A82A5FC3E10F52BA91A526AC4AFC54245D30F |
+| 14 | attest `audit` (inspector1: prepare → sign offline → `submitSignedBlob`) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/1B41FAC014072A13E81171B80F7E37F7836E7CA581E69FBC80F556AF766225AB |
+| 15 | attest `verdict` (aiAgent) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0CFBA141DC9A1D61D260CD4847D65985D127FD1F170A894673D201600DE39499 |
+| 16 | attest `decision` (platform, with reason) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/11CD030C7FFDD4A423351270F850807BF97BE16C927D08E1F7CC6F37022E6117 |
+| 17 | attest `release` (releaseService) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/02BAD5D0FAE4C0B1043E945696F8F4A7EBC5031EC3EF134C0C90A7781736E9A0 |
+
+(Issuer `AccountSet`/`TrustSet`/RLUSD funding txs omitted; full table in the script output and `.data/xrpl08-compliance-*.json`.)
+
+What devnet showed:
+- **`tecNO_AUTH` is on-ledger** (a tec, fee charged, has an explorer link), both for "no credential" and for "credential issued
+  but not accepted". So `CredentialAccept` is mandatory for investors (the KYC button must do issue **and** accept).
+- **Where the flags land:** `Vault.Flags = 0x10000` (`lsfVaultPrivate`), but **`DomainID` is not on the `Vault` object** — it sits on
+  the share `MPTokenIssuance` (`DomainID = <domain>`, `Flags = 0x4` = `lsfMPTRequireAuth`, no `lsfMPTCanTransfer` because of
+  `tfVaultShareNonTransferable`). Read the domain from the share issuance, not the vault.
+- A KYC'd depositor needs **no `MPTokenAuthorize`**: the first `VaultDeposit` creates and authorizes the share MPToken
+  (investor1 got `400000000` shares for 400 RLUSD, scale 6).
+- `CredentialType` on the ledger is the hex of the ASCII name (`KYC_INVESTOR` → `4B59435F494E564553544F52`).
+- Idempotency: re-running `grantCredential` for an accepted credential sends 0 txs; re-running `createDomain` with the same
+  `AcceptedCredentials` reuses the existing `PermissionedDomain` (one domain per platform, shared by all project vaults).
+- Attestation = 1-drop XRP `Payment` attester → SPV, one memo `xrlp/attest/v1` (`application/json`). The validated tx JSON (#16) is a
+  test fixture (`packages/xrpl/test/fixtures/devnet-attest-decision-tx.json`): it decodes, re-encodes to the same hash, and its
+  signature verifies offline. API v2 `tx` responses show `DeliverMax`, not `Amount`, for Payments.
 
 ---
 

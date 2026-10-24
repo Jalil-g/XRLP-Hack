@@ -16,7 +16,7 @@ export interface CreateEscrowParams {
   condition: string;
   /** Ripple-epoch seconds. Required for token escrows. */
   cancelAfter: number;
-  /** SPV signers reaching quorum (e.g. inspectorA + aiAgent). */
+  /** SPV signers reaching quorum: any 3 of {platform, builder, inspector, trustee}. */
   signers?: Wallet[];
   /** Fallback: SPV master key (only before the SPV is locked). */
   singleKey?: Wallet;

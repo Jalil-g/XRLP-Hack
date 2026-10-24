@@ -5,6 +5,8 @@ export {
   bootstrapWallets,
   setupProjectOnChain,
   lockSpvAccount,
+  spvSignersFor,
+  defaultSpvSignerWallets,
   depositToVault,
   withdrawFromVault,
   getVaultStatus,
@@ -37,12 +39,16 @@ export { getClient, disconnect, ledgerTime, waitForLedgerTimeAfter, signAndSubmi
 export type { TxResult } from "./client.ts";
 export { config, RLUSD_CURRENCY } from "./config.ts";
 export { loadWallets, resolveWallet, WALLET_ROLES } from "./wallets.ts";
+export { RLUSD_HOLDERS, LEGACY_ROLE_RENAMES, migrateWalletFile, rlusdTopUpPlan } from "./wallets.ts";
 export type { WalletRole, DemoWallets } from "./wallets.ts";
+export type { WalletFile, WalletFileMigration, StoredWallet, RlusdTarget } from "./wallets.ts";
 export { rlusdBalance, rlusdAmount, issueRlusd, payRlusd } from "./rlusd.ts";
 export { getVault, vaultPhase } from "./vault.ts";
 export type { VaultLedgerEntry, VaultPhase } from "./vault.ts";
 export { getSpvInfo, multisignAndSubmit, SPV_QUORUM } from "./spv.ts";
+export { createSpv, lockSpv, submitMultisigned, multisignBlob, checkSignerQuorum, spvSignerEntries, SPV_SIGNER_WEIGHT } from "./spv.ts";
 export type { SpvInfo } from "./spv.ts";
+export type { SpvSigners, CreatedSpv, QuorumCheck } from "./spv.ts";
 export { listEscrows } from "./escrow.ts";
 export { decodeAttestation, sha256Hex, ATTESTATION_MEMO_TYPE } from "./attest.ts";
 export type { AttestationPayload } from "./attest.ts";
@@ -64,3 +70,50 @@ export {
   DEFAULT_LAST_LEDGER_OFFSET,
 } from "./preflight.ts";
 export type { PreflightRequest, PreflightResult, PreflightReason, PreflightSnapshot, PreflightDetails, LedgerNow } from "./preflight.ts";
+// XRPL-08: fee, credentials x3, permissioned domain, private vault, attestations (xrlp/attest/v1)
+export { payVerificationFee, grantCredential, createDomain, attest, submitSignedBlob, ATTEST_EVENT_KIND, VERIFICATION_FEE_RLUSD } from "./compliance.ts";
+export {
+  ATTEST_MEMO_TYPE,
+  ATTEST_KINDS,
+  validateAttestMemo,
+  encodeAttestMemo,
+  decodeAttestMemo,
+  decodeAnyAttestation,
+  buildAttestTx,
+  prepareAttestTx,
+  verifyAttestBlob,
+} from "./attest.ts";
+export type { AttestMemo, AttestKind, VerifiedAttestBlob } from "./attest.ts";
+export { CREDENTIAL_TYPES, credentialTypeHex, credentialTypeFromHex, ensureCredential, ensureDomain, listDomains } from "./credentials.ts";
+export type { CredentialStatus, PermissionedDomainEntry } from "./credentials.ts";
+export { vaultPrivacyFields } from "./vault.ts";
+// XRPL-09: read models (pure parsers over raw rippled JSON + thin validated-ledger fetches)
+export {
+  getVaultSnapshot,
+  getLoanSnapshot,
+  getEscrow,
+  listEscrowsParsed,
+  getBalance,
+  hasRlusdTrustline,
+  fetchVaultSnapshotRaw,
+  parseVaultSnapshot,
+  parseLoanSnapshot,
+  parseEscrow,
+  parseEscrowNode,
+  parseEscrowList,
+  parseRlusdTrustline,
+  parseRlusdBalance,
+  parseHasRlusdTrustline,
+  parseXrpBalance,
+  snapshotPhase,
+  toRlusd,
+  toPlainDecimal,
+  divDecimal,
+  dropsToXrpDecimal,
+} from "./reads.ts";
+export type { VaultSnapshot, LoanSnapshot, EscrowView, RlusdTrustline, VaultSnapshotRaw, RawResult } from "./reads.ts";
+// Submission hardening (XRPL-12): per-account lock, retries, typed errors → API ErrorCode
+export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErrorCode } from "./client.ts";
+export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
+export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
+export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
