@@ -42,6 +42,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] Tickets v2 in `docs/06-tickets.md`; GitHub issues synced. Retired: INS-04/05/08/09 v1. New: XRPL-14, VER-13, VER-14, INS-06/07 v2, CORE-12, DEMO-01, PITCH-09.
 - [10-24] XRPL-01 proven with the v2 SPV list (3-of-4 counterparty countersign incl. platform as both Account and signer); no master-key fallback needed. Spikes use fresh throwaway faucet wallets (`scripts/spike-lib.ts`), not the bootstrap store. (Jalil's agent)
 - [10-24] `preflightFinish` defaults: margin = max(120s, LastLedgerSequence offset 20 × 5s/ledger) to `CancelAfter`, all reads pinned to one validated ledger; refuses on **any** freeze, missing/insufficient trust-line headroom, RequireAuth, DepositAuth, or a condition/fulfillment that doesn't match the **on-ledger** Condition. `finishEscrow` preflights by default (`skipPreflight` opt-out) and uses preflight's Fee/LLS — a failed finish leaks the preimage, so false refusals are the cheaper error. (Jalil's agent, XRPL-14)
+- [10-24] XRPL-02 proven on devnet with the v2 SPV: multisig IOU EscrowCreate, finish by a separate releaseService, `tecCRYPTOCONDITION_ERROR` / `tecNO_LINE` / `tecNO_PERMISSION` all on-ledger; a failed finish publishes the fulfillment, so preflight (XRPL-14) is mandatory before any fulfillment is signed (Jalil's agent, XRPL-02)
 
 ## Open
 

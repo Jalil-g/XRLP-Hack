@@ -14,6 +14,11 @@ export const MILESTONE_STATUS: Record<Milestone["status"], { label: string; tone
   rejected: { label: "Rejected · funds stay locked", short: "Rejected", tone: "bad" },
   expired: { label: "Escrow expired", short: "Expired", tone: "warn" },
   refunded: { label: "Expired · repaid to vault", short: "Refunded", tone: "warn" },
+  // v2 (shared contract v2; wired up in WEB tickets)
+  audited: { label: "Inspector audit signed · running checks", short: "Audited", tone: "info" },
+  verified: { label: "All checks passed · releasing", short: "Verified", tone: "ok" },
+  failed: { label: "Check failed · funds stay locked", short: "Failed", tone: "bad" },
+  needs_human: { label: "Needs operator decision", short: "Needs human", tone: "warn" },
 };
 
 export function projectStatus(p: Project): { label: string; tone: Tone } {
@@ -21,6 +26,12 @@ export function projectStatus(p: Project): { label: string; tone: Tone } {
   switch (p.status) {
     case "draft":
       return { label: "Draft", tone: "neutral" };
+    case "verifying":
+      return { label: "Verifying", tone: "info" };
+    case "verified":
+      return { label: "Verified", tone: "ok" };
+    case "rejected":
+      return { label: "Verification failed", tone: "bad" };
     case "terms_locked":
       return { label: "Terms locked", tone: "neutral" };
     case "funding":
@@ -80,6 +91,16 @@ export const EVENT_LABEL: Record<ChainEvent["kind"], string> = {
   escrow_cancelled: "Escrow cancelled",
   loan_payment: "Loan payment",
   vault_withdraw: "Vault withdrawal",
+  verification_fee_paid: "Verification fee paid",
+  project_verified: "Project verified",
+  inspector_assigned: "Inspector assigned",
+  audit_attested: "Inspector audit attested",
+  verdict_attested: "AI verdict attested",
+  decision_attested: "Operator decision attested",
+  cover_deposited: "First-loss cover deposited",
+  credential_accepted: "Credential accepted",
+  loan_default: "Loan defaulted",
+  release_refused: "Release refused by ledger",
 };
 
 export const EVENT_TX: Record<ChainEvent["kind"], string> = {
@@ -94,6 +115,16 @@ export const EVENT_TX: Record<ChainEvent["kind"], string> = {
   escrow_cancelled: "EscrowCancel",
   loan_payment: "LoanPay",
   vault_withdraw: "VaultWithdraw",
+  verification_fee_paid: "Payment",
+  project_verified: "Payment + memo",
+  inspector_assigned: "Payment + memo",
+  audit_attested: "Payment + memo",
+  verdict_attested: "Payment + memo",
+  decision_attested: "Payment + memo",
+  cover_deposited: "LoanBrokerCoverDeposit",
+  credential_accepted: "CredentialAccept",
+  loan_default: "LoanManage",
+  release_refused: "EscrowFinish",
 };
 
 /** One-line human description of a chain event. */
@@ -124,6 +155,26 @@ export function describeEvent(e: ChainEvent, dir: Record<string, Party>, milesto
       return e.milestoneId ? `Unreleased ${amt} repaid to the vault` : `Instalment of ${amt} repaid to the vault`;
     case "vault_withdraw":
       return `${who} withdrew ${amt}`;
+    case "verification_fee_paid":
+      return `${who} paid the ${amt} verification fee`;
+    case "project_verified":
+      return "Project verification attested on-chain";
+    case "inspector_assigned":
+      return "Inspector assigned to the project";
+    case "audit_attested":
+      return `${who} signed the site audit for ${ms}`;
+    case "verdict_attested":
+      return `AI verdict for ${ms} attested on-chain`;
+    case "decision_attested":
+      return `Operator decision for ${ms} attested on-chain`;
+    case "cover_deposited":
+      return `Platform deposited ${amt} first-loss cover`;
+    case "credential_accepted":
+      return `${who} accepted a credential`;
+    case "loan_default":
+      return "Loan marked in default";
+    case "release_refused":
+      return `Ledger refused a release attempt on ${ms}`;
   }
 }
 
