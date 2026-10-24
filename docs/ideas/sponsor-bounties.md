@@ -21,8 +21,9 @@ Rubric still unpublished. Past XRPL Commons events scored Innovation · Executio
 ### AWS — $5,000 (Agentic $2,000 · **Lending & Borrowing $2,000** · Why Not $1,000). **Maybe, if honest.**
 - Agentic slice text: "Build a solution using our agentic payments stack (AgentCore + x402/RLUSD)". **Skip**: different product, not our story.
 - Lending slice: **no criteria published** beyond being an AWS prize inside our track.
-- Honest fit: the verifier already uses the Anthropic SDK. Amazon Bedrock serves the same Claude models via `AnthropicBedrock`. A
-  `VERIFIER_PROVIDER=bedrock` flag (same prompts, same zod schemas, mock mode untouched) is a provider swap, ~1–2h for the AI owner.
+- Honest fit: the verifier already uses the Anthropic SDK. Amazon Bedrock serves the same Claude models via the `AnthropicBedrockMantle` client (`@anthropic-ai/bedrock-sdk`), same
+  `messages` surface, model IDs prefixed `anthropic.`. A `VERIFIER_PROVIDER=bedrock` flag (same prompts, same zod schemas, mock mode untouched)
+  is a provider swap, ~1–2h for the AI owner. Exact steps on issue #77.
 - **Do it only if** the AWS booth confirms that "the AI verifier runs on Amazon Bedrock" qualifies for the Lending slice and hands out credits.
   Credentials go in `.env` only. Don't host anything on AgentCore for the sake of it.
 
