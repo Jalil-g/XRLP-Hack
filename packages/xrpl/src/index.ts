@@ -5,6 +5,8 @@ export {
   bootstrapWallets,
   setupProjectOnChain,
   lockSpvAccount,
+  spvSignersFor,
+  defaultSpvSignerWallets,
   depositToVault,
   withdrawFromVault,
   getVaultStatus,
@@ -37,12 +39,16 @@ export { getClient, disconnect, ledgerTime, waitForLedgerTimeAfter, signAndSubmi
 export type { TxResult } from "./client.ts";
 export { config, RLUSD_CURRENCY } from "./config.ts";
 export { loadWallets, resolveWallet, WALLET_ROLES } from "./wallets.ts";
+export { RLUSD_HOLDERS, LEGACY_ROLE_RENAMES, migrateWalletFile, rlusdTopUpPlan } from "./wallets.ts";
 export type { WalletRole, DemoWallets } from "./wallets.ts";
+export type { WalletFile, WalletFileMigration, StoredWallet, RlusdTarget } from "./wallets.ts";
 export { rlusdBalance, rlusdAmount, issueRlusd, payRlusd } from "./rlusd.ts";
 export { getVault, vaultPhase } from "./vault.ts";
 export type { VaultLedgerEntry, VaultPhase } from "./vault.ts";
 export { getSpvInfo, multisignAndSubmit, SPV_QUORUM } from "./spv.ts";
+export { createSpv, lockSpv, submitMultisigned, multisignBlob, checkSignerQuorum, spvSignerEntries, SPV_SIGNER_WEIGHT } from "./spv.ts";
 export type { SpvInfo } from "./spv.ts";
+export type { SpvSigners, CreatedSpv, QuorumCheck } from "./spv.ts";
 export { listEscrows } from "./escrow.ts";
 export { decodeAttestation, sha256Hex, ATTESTATION_MEMO_TYPE } from "./attest.ts";
 export type { AttestationPayload } from "./attest.ts";

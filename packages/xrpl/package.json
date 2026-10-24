@@ -13,6 +13,7 @@
     "spike:loanset": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-loanset.ts",
     "capture:reads": "NODE_USE_ENV_PROXY=1 tsx scripts/capture-read-fixtures.ts",
     "spike:escrow": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-escrow.ts",
+    "spike:spv": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-spv.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
