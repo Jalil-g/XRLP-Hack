@@ -56,7 +56,7 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     maxPhotoAgeDays: 45,
     futureSkewMinutes: 10,
     phashFailDistance: 8,
-    phashWarnDistance: 13,
+    phashWarnDistance: 10,
     invoiceUnderTolerancePct: 10,
     invoiceOverTolerancePct: 30,
     minLlmConfidence: 0.6,
@@ -67,7 +67,7 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     maxPhotoAgeDays: 30,
     futureSkewMinutes: 10,
     phashFailDistance: 8,
-    phashWarnDistance: 13,
+    phashWarnDistance: 10,
     invoiceUnderTolerancePct: 5,
     invoiceOverTolerancePct: 25,
     minLlmConfidence: 0.7,
@@ -78,7 +78,7 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     maxPhotoAgeDays: 14,
     futureSkewMinutes: 5,
     phashFailDistance: 10,
-    phashWarnDistance: 16,
+    phashWarnDistance: 12,
     invoiceUnderTolerancePct: 2,
     invoiceOverTolerancePct: 15,
     minLlmConfidence: 0.8,
@@ -105,6 +105,9 @@ export function policyFor(project: Project, builder: Builder, milestone: Milesto
   // Under-documented draw is a hard fail unless the builder is low risk.
   checks.invoice_matches_budget.onFail = tier === "low" ? "needs_human" : "fail";
   checks.invoice_matches_budget.onWarn = "ignore"; // overrun on builder's own dime: informational
+  // Lien waivers aren't in the shared templates yet (TODO), so a mismatch goes to a human for now.
+  checks.lien_waiver_matches_invoices.onFail = "needs_human";
+  checks.lien_waiver_matches_invoices.onWarn = "ignore";
   // Document mismatches (typos, DBA names) usually need a human, except for high-risk builders.
   checks.document_consistency.onFail = tier === "high" ? "fail" : "needs_human";
   checks.document_consistency.onWarn = tier === "high" ? "needs_human" : "ignore";
@@ -130,7 +133,7 @@ export function policyFor(project: Project, builder: Builder, milestone: Milesto
 
   if (highValue) {
     t.invoiceUnderTolerancePct = Math.min(t.invoiceUnderTolerancePct, 3);
-    t.minLlmConfidence = Math.min(0.95, t.minLlmConfidence + 0.05);
+    t.minLlmConfidence = Math.round(Math.min(0.95, t.minLlmConfidence + 0.05) * 100) / 100;
     checks.invoice_matches_budget.onWarn = "needs_human";
     checks.document_consistency.onWarn = "needs_human";
     notes.push(

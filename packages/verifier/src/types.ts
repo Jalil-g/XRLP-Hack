@@ -7,19 +7,28 @@ export const MILESTONE_CHECKS = [
   "photo_fresh",
   "no_duplicate_photo",
   "invoice_matches_budget",
+  "lien_waiver_matches_invoices",
   "stage_visually_consistent",
   "document_consistency",
 ] as const;
 export type MilestoneCheckName = (typeof MILESTONE_CHECKS)[number];
 
-/** Checks decided by code (hard evidence). LLM checks contribute judgments + reasons. */
+/**
+ * Checks decided by code. Strength differs — be honest about it in the pitch:
+ * - STRONG: no_duplicate_photo (cross-project perceptual-hash dedupe), invoice_matches_budget,
+ *   lien_waiver_matches_invoices, required_evidence_present.
+ * - CATCHES LAZY FRAUD ONLY: gps_within_site, photo_fresh. EXIF GPS/time are trivially spoofable;
+ *   they catch someone re-uploading an old phone photo, not a determined fraudster.
+ */
 export const DETERMINISTIC_CHECKS: readonly MilestoneCheckName[] = [
   "required_evidence_present",
   "gps_within_site",
   "photo_fresh",
   "no_duplicate_photo",
   "invoice_matches_budget",
+  "lien_waiver_matches_invoices",
 ];
+export const LAZY_FRAUD_ONLY_CHECKS: readonly MilestoneCheckName[] = ["gps_within_site", "photo_fresh"];
 export const LLM_CHECKS: readonly MilestoneCheckName[] = ["stage_visually_consistent", "document_consistency"];
 
 export type VerifierMode = "mock" | "live";
