@@ -12,6 +12,7 @@
     "demo": "NODE_USE_ENV_PROXY=1 tsx scripts/demo.ts",
     "spike:loanset": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-loanset.ts",
     "spike:broker": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-broker.ts",
+    "spike:escrow": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-escrow.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

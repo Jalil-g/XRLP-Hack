@@ -61,7 +61,8 @@ export interface ProjectSummary {
 }
 
 export interface SignerSlot {
-  role: Attestation["role"];
+  /** v1 quorum signers. The v2 `release_service` role never signs a quorum slot. */
+  role: Exclude<Attestation["role"], "release_service">;
   address: XrplAddress;
   name: string;
   weight: number;

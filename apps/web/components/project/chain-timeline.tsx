@@ -30,6 +30,17 @@ const META: Record<ChainEvent["kind"], { icon: LucideIcon; className: string }> 
   escrow_cancelled: { icon: RotateCcw, className: "bg-warn-bg text-warn" },
   loan_payment: { icon: Banknote, className: "bg-emerald-50 text-emerald-700" },
   vault_withdraw: { icon: ShieldCheck, className: "bg-subtle text-ink-2" },
+  // v2
+  verification_fee_paid: { icon: Banknote, className: "bg-subtle text-ink-2" },
+  project_verified: { icon: BadgeCheck, className: "bg-ok-bg text-ok" },
+  inspector_assigned: { icon: FileSignature, className: "bg-subtle text-ink-2" },
+  audit_attested: { icon: FileSignature, className: "bg-amber-50 text-amber-700" },
+  verdict_attested: { icon: FileSignature, className: "bg-amber-50 text-amber-700" },
+  decision_attested: { icon: FileSignature, className: "bg-amber-50 text-amber-700" },
+  cover_deposited: { icon: ShieldCheck, className: "bg-subtle text-ink-2" },
+  credential_accepted: { icon: BadgeCheck, className: "bg-ok-bg text-ok" },
+  loan_default: { icon: RotateCcw, className: "bg-bad-bg text-bad" },
+  release_refused: { icon: Lock, className: "bg-bad-bg text-bad" },
 };
 
 export function ChainTimeline({
