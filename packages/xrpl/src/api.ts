@@ -1,17 +1,32 @@
 // High-level API for @xrlp/core. Each call does real devnet txs and returns ChainEvents.
 // Wallets come from .data/wallets.json (bootstrapWallets). Pass a Wallet to override a role.
-import type { ChainEvent, Milestone, Project } from "@xrlp/shared";
+import { ChainEvent as ChainEventSchema, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
 import { isoTimeToRippleTime, rippleTimeToISOTime, type Wallet } from "xrpl";
 import { ledgerTime, waitForLedgerTimeAfter, type TxResult } from "./client.ts";
 import { submitAttestation, type AttestationPayload } from "./attest.ts";
 import { acceptCredential, createCredential, type CredentialType } from "./credentials.ts";
 import { cancelEscrow, createMilestoneEscrow, finishEscrow } from "./escrow.ts";
-import { toChainEvent } from "./events.ts";
+import { toChainEvent, type ChainEventKind } from "./events.ts";
+import {
+  COVER_RATE_LIQUIDATION,
+  COVER_RATE_MINIMUM,
+  defaultCoverDeposit,
+  expectedInterest,
+  fromMicro,
+  loanScheduleFromTerms,
+  MANAGEMENT_FEE_RATE,
+  minimumCover,
+  originationFeeFor,
+  toMicro,
+  validateBrokerRates,
+  validateVaultDates,
+  vaultDatesFor,
+} from "./lending-math.ts";
 import { createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet, type LoanPayMode } from "./loan.ts";
-import { configureIssuer, ensureTrustline, topUpRlusd } from "./rlusd.ts";
-import { createSpvAccount, disableMasterKey, setSpvSignerList } from "./spv.ts";
+import { configureIssuer, ensureTrustline, payRlusd, rlusdBalance, topUpRlusd } from "./rlusd.ts";
+import { createSpvAccount, lockSpv, type SpvSigners } from "./spv.ts";
 import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx } from "./vault.ts";
-import { ensureFundedWallets, loadWallets, rememberSpv, resolveWallet, WALLET_ROLES, type DemoWallets, type WalletRole } from "./wallets.ts";
+import { ensureFundedWallets, loadWallets, rememberSpv, resolveWallet, RLUSD_HOLDERS, rlusdTopUpPlan, type DemoWallets, type WalletRole } from "./wallets.ts";
 
 /** Role name ("investor1"), a demo-wallet address (r...), or a Wallet. */
 type WalletRef = WalletRole | string | Wallet;
@@ -24,37 +39,43 @@ export const PLATFORM_SCOPE = "_platform";
 
 export interface BootstrapOptions {
   fresh?: boolean;
-  /** RLUSD each investor is topped up to. */
+  /** RLUSD each investor is topped up to. Default 50 000. */
   investorRlusd?: number;
-  /** RLUSD the platform holds for first-loss cover. */
+  /** RLUSD the platform holds for first-loss cover across projects. Default 25 000. */
   platformRlusd?: number;
+  /** RLUSD the builder holds for the verification fee (250 in the demo). Default 1 000. */
+  builderRlusd?: number;
   log?: (s: string) => void;
 }
 
 /**
- * Fund all demo roles from the faucet (reusing .data/wallets.json), configure the RLUSD issuer
- * (DefaultRipple + AllowTrustLineLocking), open trust lines, and top up investors/platform. Idempotent.
+ * Fund all demo roles from the faucet (reusing/migrating the wallet file), configure the RLUSD issuer
+ * (DefaultRipple + AllowTrustLineLocking), open trust lines for RLUSD_HOLDERS, and top up investors/platform/builder.
+ * Idempotent: a second run submits 0 txs.
  */
 export async function bootstrapWallets(opts: BootstrapOptions = {}): Promise<{ wallets: DemoWallets; txs: TxResult[] }> {
   const log = opts.log ?? (() => {});
   const wallets = await ensureFundedWallets({ fresh: opts.fresh, log });
   const issuer = wallets.issuer;
   const txs: TxResult[] = [];
-  txs.push(...(await configureIssuer(issuer)));
-  for (const role of WALLET_ROLES) {
-    if (role === "issuer") continue;
+  for (const t of await configureIssuer(issuer)) {
+    txs.push(t);
+    log(`issuer AccountSet ${t.explorerUrl}`);
+  }
+  for (const role of RLUSD_HOLDERS) {
     const t = await ensureTrustline(wallets[role], issuer.classicAddress);
     if (t) {
       txs.push(t);
-      log(`trustline ${role}`);
+      log(`trustline ${role} ${t.explorerUrl}`);
     }
   }
-  for (const role of ["investor1", "investor2", "investor3"] as const) {
-    const t = await topUpRlusd(issuer, wallets[role].classicAddress, opts.investorRlusd ?? 50_000);
-    if (t) txs.push(t);
+  for (const { role, target } of rlusdTopUpPlan(opts)) {
+    const t = await topUpRlusd(issuer, wallets[role].classicAddress, target);
+    if (t) {
+      txs.push(t);
+      log(`RLUSD ${role} -> ${target} ${t.explorerUrl}`);
+    }
   }
-  const t = await topUpRlusd(issuer, wallets.platform.classicAddress, opts.platformRlusd ?? 10_000);
-  if (t) txs.push(t);
   return { wallets, txs };
 }
 
@@ -63,12 +84,28 @@ export async function bootstrapWallets(opts: BootstrapOptions = {}): Promise<{ w
 export interface SetupProjectOptions {
   /** End of funding (vault Subscription). Default: project.terms.fundingDeadline. */
   subscriptionEndsAt?: Date;
-  /** Start of Redemption (withdrawals reopen). Default: subscription end + termDays + 2 days. */
+  /**
+   * Start of Redemption (withdrawals reopen). Default: subscription end + paymentIntervalS x paymentTotal + 60s + 2 days.
+   * Validated to fit the loan schedule (else LoanSet would fail with tecNO_PERMISSION).
+   */
   redemptionAt?: Date;
-  /** Platform first-loss capital deposited into the LoanBroker cover pool (RLUSD). Omit to skip. */
+  /** Loan schedule the vault must fit and the cover is sized for. Default: from terms (same as closeLoanAndCreateEscrows). */
+  paymentTotal?: number;
+  paymentIntervalS?: number;
+  /**
+   * Platform first-loss capital (RLUSD) for the mandatory LoanBrokerCoverDeposit. Default: defaultCoverDeposit() =
+   * max(10% of principal, ceil((principal + expected interest) x CoverRateMinimum) + 10% headroom).
+   * Rejected if below the protocol minimum (LoanSet would fail with tecINSUFFICIENT_FUNDS).
+   */
   coverDeposit?: string;
+  /** LoanBrokerSet rates (1/10 bps). Defaults: COVER_RATE_MINIMUM 10000, COVER_RATE_LIQUIDATION 100000, MANAGEMENT_FEE_RATE 10000. */
+  coverRateMinimum?: number;
+  coverRateLiquidation?: number;
+  managementFeeRate?: number;
   /** Lock the SPV (SignerListSet + disable master) now. Default true. */
   lockSpv?: boolean;
+  /** SPV signer addresses. Pass the project's builder + assigned inspector; defaults come from the demo roles (builder, inspector1). */
+  spvSigners?: Partial<SpvSigners>;
 }
 
 export interface ProjectChainSetup {
@@ -79,14 +116,25 @@ export interface ProjectChainSetup {
   vaultPseudoAccount: string;
   subscriptionEndsAt: string; // ISO
   redemptionAt: string; // ISO
+  /** What LoanBrokerSet + LoanBrokerCoverDeposit put on the ledger. */
+  cover: { amount: string; minimum: string; coverRateMinimum: number; coverRateLiquidation: number; managementFeeRate: number; txHash: string };
+  /**
+   * The `cover_deposited` event. TODO(#53): also in `events` only once shared ChainEvent.kind includes it
+   * (detected at runtime), so strict ChainEvent.parse() in core never sees an unknown kind.
+   */
+  coverEvent: ChainEvent;
   events: ChainEvent[];
   txs: Record<string, TxResult>;
   /** SPV wallet (master key disabled if lockSpv). Only useful when lockSpv=false. */
   spvWallet: Wallet;
 }
 
+// TODO(#53): remove once packages/shared ChainEvent.kind has "cover_deposited" (CORE-01 / shared v2).
+const SHARED_HAS_COVER_KIND = (ChainEventSchema.shape.kind.options as readonly string[]).includes("cover_deposited");
+
 /**
- * Create the per-project SPV (+ signer list, master disabled), a closed-ended RLUSD vault and its LoanBroker.
+ * Create the per-project SPV (+ signer list, master disabled), a closed-ended RLUSD vault (AssetsMaximum = principal),
+ * its LoanBroker (cover rates + management fee) and the platform's mandatory first-loss cover deposit.
  * Run while the project is in `funding`; investors deposit until `subscriptionEndsAt`.
  */
 export async function setupProjectOnChain(project: Project, opts: SetupProjectOptions = {}): Promise<ProjectChainSetup> {
@@ -95,17 +143,42 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   const txs: Record<string, TxResult> = {};
   const events: ChainEvent[] = [];
 
+  // Validate rates, schedule and cover before any tx, so a bad input never leaves a half-built project.
+  const rates = validateBrokerRates({
+    coverRateMinimum: opts.coverRateMinimum ?? COVER_RATE_MINIMUM,
+    coverRateLiquidation: opts.coverRateLiquidation ?? COVER_RATE_LIQUIDATION,
+    managementFeeRate: opts.managementFeeRate ?? MANAGEMENT_FEE_RATE,
+  });
+  const termsSchedule = loanScheduleFromTerms(project.terms);
+  const schedule = { paymentTotal: opts.paymentTotal ?? termsSchedule.paymentTotal, paymentIntervalS: opts.paymentIntervalS ?? termsSchedule.paymentIntervalS };
+  const interest = expectedInterest({ principal: project.terms.principal, interestRate: project.terms.interestRateBps * 10, ...schedule });
+  const coverMin = minimumCover({ principal: project.terms.principal, interest, coverRateMinimum: rates.coverRateMinimum });
+  const coverAmount = opts.coverDeposit ?? defaultCoverDeposit({ principal: project.terms.principal, interest, coverRateMinimum: rates.coverRateMinimum });
+  if (!(Number(coverAmount) > 0)) throw new Error(`coverDeposit must be > 0 (first-loss cover is mandatory), got ${coverAmount}`);
+  if (Number(coverAmount) < Number(coverMin)) {
+    throw new Error(`coverDeposit ${coverAmount} < protocol minimum ${coverMin} for principal ${project.terms.principal} + interest (LoanSet would fail tecINSUFFICIENT_FUNDS)`);
+  }
+  if (opts.redemptionAt) {
+    const sub = isoTimeToRippleTime((opts.subscriptionEndsAt?.toISOString() ?? project.terms.fundingDeadline));
+    validateVaultDates({ subscriptionDate: sub, redemptionDate: isoTimeToRippleTime(opts.redemptionAt.toISOString()), ...schedule });
+  }
+  const platformRlusd = await rlusdBalance(w.platform.classicAddress, issuer);
+  if (Number(platformRlusd) < Number(coverAmount)) throw new Error(`platform holds ${platformRlusd} RLUSD < cover deposit ${coverAmount}; top it up (bootstrapWallets platformRlusd)`);
+
   const { wallet: spv, trustTx } = await createSpvAccount(issuer);
   rememberSpv(project.id, spv);
   if (trustTx) txs.spvTrustSet = trustTx;
   if (opts.lockSpv !== false) {
-    txs.spvSignerListSet = await lockSpvAccount(spv);
-    txs.spvDisableMaster = await disableMasterKey(spv);
+    const lock = await lockSpv(spv, spvSignersFor(opts.spvSigners));
+    txs.spvSignerListSet = lock.signerListSet;
+    txs.spvDisableMaster = lock.disableMaster;
   }
 
   const now = await ledgerTime();
   const subEnd = opts.subscriptionEndsAt ? isoTimeToRippleTime(opts.subscriptionEndsAt.toISOString()) : isoTimeToRippleTime(project.terms.fundingDeadline);
-  const redemption = opts.redemptionAt ? isoTimeToRippleTime(opts.redemptionAt.toISOString()) : subEnd + (project.terms.termDays + 2) * DAY;
+  const redemption = opts.redemptionAt
+    ? isoTimeToRippleTime(opts.redemptionAt.toISOString())
+    : vaultDatesFor({ subscriptionDate: subEnd, ...schedule }).redemptionDate;
   if (subEnd <= now) throw new Error(`subscription end ${rippleTimeToISOTime(subEnd)} is not in the future (ledger now ${rippleTimeToISOTime(now)})`);
 
   const vault = await createVault({
@@ -114,19 +187,24 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
     subscriptionDate: subEnd,
     redemptionDate: redemption,
     assetsMaximum: project.terms.principal,
+    loanSchedule: schedule,
     data: `xrlp:${project.id}`,
   });
   txs.vaultCreate = vault.tx;
   events.push(toChainEvent(vault.tx, { projectId: project.id, kind: "vault_created", actor: w.platform.classicAddress }));
 
-  const broker = await createLoanBroker({ owner: w.platform, vaultId: vault.vaultId, data: `xrlp:${project.id}` });
+  const broker = await createLoanBroker({ owner: w.platform, vaultId: vault.vaultId, ...rates, data: `xrlp:${project.id}` });
   txs.loanBrokerSet = broker.tx;
   events.push(toChainEvent(broker.tx, { projectId: project.id, kind: "loan_broker_created", actor: w.platform.classicAddress }));
 
-  if (opts.coverDeposit) {
-    // No dedicated ChainEvent kind for cover; reported via txs.loanBrokerCoverDeposit.
-    txs.loanBrokerCoverDeposit = await depositBrokerCover(w.platform, broker.loanBrokerId, issuer, opts.coverDeposit);
-  }
+  txs.loanBrokerCoverDeposit = await depositBrokerCover(w.platform, broker.loanBrokerId, issuer, coverAmount);
+  const coverEvent = toChainEvent(txs.loanBrokerCoverDeposit, {
+    projectId: project.id,
+    kind: "cover_deposited" as ChainEventKind, // TODO(#53): drop the cast once shared has the kind
+    actor: w.platform.classicAddress,
+    amount: coverAmount,
+  });
+  if (SHARED_HAS_COVER_KIND) events.push(coverEvent);
 
   return {
     spv: spv.classicAddress,
@@ -136,21 +214,37 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
     vaultPseudoAccount: vault.pseudoAccount,
     subscriptionEndsAt: rippleTimeToISOTime(subEnd),
     redemptionAt: rippleTimeToISOTime(redemption),
+    cover: { amount: coverAmount, minimum: coverMin, ...rates, txHash: txs.loanBrokerCoverDeposit.hash },
+    coverEvent,
     events,
     txs,
     spvWallet: spv,
   };
 }
 
-/** SignerListSet on the SPV using the demo roles (inspectorA/B w2, aiAgent w1, platform w1, quorum 3). */
-export async function lockSpvAccount(spv: Wallet): Promise<TxResult> {
+/** v2 SPV signer list with demo-role defaults: platform, builder, inspector1, trustee (override any). */
+export function spvSignersFor(o: Partial<SpvSigners> = {}): SpvSigners {
   const w = loadWallets();
-  return setSpvSignerList(spv, {
-    inspectorA: w.inspectorA.classicAddress,
-    inspectorB: w.inspectorB.classicAddress,
-    aiAgent: w.aiAgent.classicAddress,
-    platform: w.platform.classicAddress,
-  });
+  return {
+    platform: o.platform ?? w.platform.classicAddress,
+    builder: o.builder ?? w.builder.classicAddress,
+    inspector: o.inspector ?? w.inspector1.classicAddress,
+    trustee: o.trustee ?? w.trustee.classicAddress,
+  };
+}
+
+/**
+ * Default SPV multisig quorum: platform + builder + trustee (3 of 4). Independent of which inspector was assigned,
+ * so it works for every project; pass `spvSigners`/`signers` to use the inspector instead.
+ */
+export function defaultSpvSignerWallets(): Wallet[] {
+  const w = loadWallets();
+  return [w.platform, w.builder, w.trustee];
+}
+
+/** SignerListSet {platform, builder, inspector, trustee} w1 quorum 3 + disable master (fallback path: lock after LoanSet). */
+export async function lockSpvAccount(spv: Wallet, signers: Partial<SpvSigners> = {}): Promise<{ signerListSet: TxResult; disableMaster: TxResult }> {
+  return lockSpv(spv, spvSignersFor(signers));
 }
 
 // ---------------------------------------------------------------- vault
@@ -201,11 +295,18 @@ export interface CloseLoanOptions {
   defaultCancelAfter?: Date;
   /** Wait for the vault to leave Subscription before LoanSet (polls ledger time). Default true. */
   waitForInvestmentPhase?: boolean;
-  /** SPV signers that countersign LoanSet + EscrowCreate. Default inspectorA + aiAgent (weight 3). */
+  /** SPV signers that countersign LoanSet + EscrowCreate (3 of the SPV list). Default platform + builder + trustee. AI is never a signer. */
   spvSigners?: Wallet[];
   /** If the SPV master key is still enabled, countersign with it instead of multisig (fallback path). */
   spvSingleKey?: Wallet;
   allowOverpayment?: boolean;
+  /** RLUSD LoanOriginationFee (taken from the principal, paid to the platform). Default: originationFeeFor(principal) = 1.5%. "0" disables. */
+  originationFee?: string;
+  /**
+   * The fee leaves the SPV short of the milestone escrows (sum = principal). This wallet pays the shortfall into the SPV
+   * before LoanSet ("points paid at closing"). Default: the demo "builder" wallet.
+   */
+  originationFeePayer?: WalletRef;
   /**
    * Escrow destination. Shared Project only carries builderId, so core should resolve Builder.address
    * and pass it here. Default: the demo "builder" wallet.
@@ -229,6 +330,9 @@ export interface MilestoneEscrowInfo {
 export interface CloseLoanResult {
   loanId: string;
   loanSetTx: TxResult;
+  originationFee: string;
+  /** Payer -> SPV RLUSD Payment covering the origination fee shortfall, if one was needed. */
+  originationFeeTopUpTx?: TxResult;
   escrows: MilestoneEscrowInfo[];
   events: ChainEvent[];
 }
@@ -254,7 +358,21 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
 
   const paymentTotal = opts.paymentTotal ?? Math.max(1, Math.round(project.terms.termDays / project.terms.paymentIntervalDays));
   const paymentIntervalS = opts.paymentIntervalS ?? project.terms.paymentIntervalDays * DAY;
-  const signers = opts.spvSigners ?? [w.inspectorA, w.aiAgent];
+  const signers = opts.spvSigners ?? defaultSpvSignerWallets();
+
+  const originationFee = opts.originationFee ?? originationFeeFor(project.terms.principal);
+  const escrowTotal = project.milestones.reduce((a, m) => a + toMicro(m.amount), 0n);
+  const spvHeld = BigInt(Math.floor(Number(await rlusdBalance(spv, w.issuer.classicAddress)) * 1e6));
+  const shortfall = escrowTotal - (toMicro(project.terms.principal) - toMicro(originationFee)) - spvHeld;
+  let originationFeeTopUpTx: TxResult | undefined;
+  if (shortfall > 0n) {
+    const payer = resolveWallet(opts.originationFeePayer ?? "builder");
+    const held = await rlusdBalance(payer.classicAddress, w.issuer.classicAddress);
+    if (Number(held) * 1e6 < Number(shortfall)) {
+      throw new Error(`origination fee: ${payer.classicAddress} holds ${held} RLUSD, needs ${fromMicro(shortfall)} to pay it into the SPV (or pass originationFee: "0")`);
+    }
+    originationFeeTopUpTx = await payRlusd(payer, spv, w.issuer.classicAddress, fromMicro(shortfall));
+  }
 
   const loan = await loanSet({
     brokerOwner: w.platform,
@@ -265,6 +383,7 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
     paymentTotal,
     paymentIntervalS,
     allowOverpayment: opts.allowOverpayment ?? true,
+    ...(Number(originationFee) > 0 ? { originationFee } : {}),
     data: `xrlp:${project.id}`,
     borrowerSig: opts.spvSingleKey ? { single: opts.spvSingleKey } : { multisig: signers },
   });
@@ -299,7 +418,7 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
     });
     events.push(toChainEvent(esc.tx, { projectId: project.id, milestoneId: m.id, kind: "escrow_created", actor: spv, amount: m.amount }));
   }
-  return { loanId: loan.loanId, loanSetTx: loan.tx, escrows, events };
+  return { loanId: loan.loanId, loanSetTx: loan.tx, originationFee, ...(originationFeeTopUpTx ? { originationFeeTopUpTx } : {}), escrows, events };
 }
 
 // ---------------------------------------------------------------- approvals + release
@@ -395,7 +514,7 @@ export async function repayLoan(p: {
     const now = await ledgerTime();
     mode = loan.NextPaymentDueDate != null && now > loan.NextPaymentDueDate ? "late" : "regular";
   }
-  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount, signers: p.signers ?? [w.inspectorA, w.platform], mode });
+  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount, signers: p.signers ?? defaultSpvSignerWallets(), mode });
   return { tx, amount, mode, event: toChainEvent(tx, { projectId: p.projectId, kind: "loan_payment", actor: p.spv, amount }) };
 }
 

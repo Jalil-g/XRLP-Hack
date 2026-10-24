@@ -9,6 +9,7 @@ import {
   type Wallet,
 } from "xrpl";
 import { createdNodeId, getClient, getLedgerEntry, signAndSubmit, submitBlob, type TxResult } from "./client.ts";
+import { COVER_RATE_LIQUIDATION, COVER_RATE_MINIMUM, MANAGEMENT_FEE_RATE, validateBrokerRates } from "./lending-math.ts";
 import { rlusdAmount } from "./rlusd.ts";
 import { multisignAndSubmit } from "./spv.ts";
 
@@ -40,21 +41,29 @@ export interface LoanEntry {
 export interface CreateLoanBrokerParams {
   owner: Wallet; // must be the Vault owner
   vaultId: string;
-  /** 1/10 bps of DebtTotal that first-loss capital must cover (0 = none). Paired with coverRateLiquidation. */
+  /** 1/10 bps of DebtTotal that first-loss cover must stay above. Default COVER_RATE_MINIMUM (10000 = 10%). */
   coverRateMinimum?: number;
+  /** 1/10 bps of the minimum cover liquidated on default. Default COVER_RATE_LIQUIDATION (100000 = 100%). Both-zero or both-non-zero. */
   coverRateLiquidation?: number;
+  /** 1/10 bps of interest paid to the broker owner. Default MANAGEMENT_FEE_RATE (10000 = 10%, protocol max). */
   managementFeeRate?: number;
   debtMaximum?: string;
   data?: string;
 }
 
+/** LoanBrokerSet (create) with Drawproof's rates: first-loss cover 10% / 100% and a management fee, unless overridden. */
 export async function createLoanBroker(p: CreateLoanBrokerParams): Promise<{ tx: TxResult; loanBrokerId: string; pseudoAccount: string }> {
+  const rates = validateBrokerRates({
+    coverRateMinimum: p.coverRateMinimum ?? COVER_RATE_MINIMUM,
+    coverRateLiquidation: p.coverRateLiquidation ?? COVER_RATE_LIQUIDATION,
+    managementFeeRate: p.managementFeeRate ?? MANAGEMENT_FEE_RATE,
+  });
   const tx = await signAndSubmit(p.owner, {
     TransactionType: "LoanBrokerSet",
     Account: p.owner.classicAddress,
     VaultID: p.vaultId,
-    ...(p.coverRateMinimum ? { CoverRateMinimum: p.coverRateMinimum, CoverRateLiquidation: p.coverRateLiquidation ?? p.coverRateMinimum } : {}),
-    ...(p.managementFeeRate ? { ManagementFeeRate: p.managementFeeRate } : {}),
+    ...(rates.coverRateMinimum ? { CoverRateMinimum: rates.coverRateMinimum, CoverRateLiquidation: rates.coverRateLiquidation } : {}),
+    ...(rates.managementFeeRate ? { ManagementFeeRate: rates.managementFeeRate } : {}),
     ...(p.debtMaximum ? { DebtMaximum: p.debtMaximum } : {}),
     ...(p.data ? { Data: convertStringToHex(p.data.slice(0, 200)) } : {}),
   });

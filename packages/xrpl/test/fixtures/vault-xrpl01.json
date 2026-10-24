@@ -1,0 +1,71 @@
+{
+  "capturedAt": "2026-10-24T22:57:35.993Z",
+  "network": "devnet",
+  "description": "XRPL-01 spike vault after LoanSet (AssetsAvailable omitted = 0)",
+  "ledger": {
+    "account_hash": "3B9483FA0CE379D5A3B9CF33668331419632101117702882BBF5B1A79BAC7D5F",
+    "close_flags": 0,
+    "close_time": 846197851,
+    "close_time_human": "2026-Oct-24 22:57:31.000000000 UTC",
+    "close_time_iso": "2026-10-24T22:57:31Z",
+    "close_time_resolution": 10,
+    "closed": true,
+    "ledger_hash": "70D1042E3381CD6AC57AC498751C470BE603A38C5E0F0EB532889E130811A239",
+    "ledger_index": 6390119,
+    "parent_close_time": 846197850,
+    "parent_hash": "9FE18E52DA6E9BFEFA009F0C562D4739413E4B6997B829F50C838110C43626B3",
+    "total_coins": "99999210470733502",
+    "transaction_hash": "180D8EF8F3E19BA4B12A7B0A0BA263D4DA07716FE776D7E19ADF03C3472B5DD0"
+  },
+  "vault": {
+    "index": "A46959D50C659F8D0904FF19CC6FAC06336E90C38C49612E86D4BD403CB8E653",
+    "ledger_hash": "70D1042E3381CD6AC57AC498751C470BE603A38C5E0F0EB532889E130811A239",
+    "ledger_index": 6390119,
+    "node": {
+      "Account": "rMYBvyTfAYqaUHtA4nkYrGVPd7pYtFjddj",
+      "Asset": {
+        "currency": "524C555344000000000000000000000000000000",
+        "issuer": "rB6JduyV9Y9yPT3kjfojUpcda9peVSsSEB"
+      },
+      "AssetsMaximum": "1000",
+      "AssetsTotal": "1000",
+      "Data": "78726C703A7370696B652D7872706C3031",
+      "Flags": 0,
+      "LEVersion": 1,
+      "LedgerEntryType": "Vault",
+      "Owner": "rNDmVQSoYoDF1K6gBre8DVQPoXAKKsRN55",
+      "OwnerNode": "0",
+      "PreviousTxnID": "A927ECA82FEDF97889BF49DEFF70A885CCBE3BB9FDC01E70927FFD1FEBB9CC7B",
+      "PreviousTxnLgrSeq": 6390013,
+      "RedemptionDate": 846198021,
+      "Scale": 6,
+      "Sequence": 6389969,
+      "ShareMPTID": "00000001E14888ED89CAC3727BC07D2B7FEBA3A32E3B37EC",
+      "SubscriptionDate": 846197481,
+      "VaultKind": 1,
+      "WithdrawalPolicy": 1,
+      "index": "A46959D50C659F8D0904FF19CC6FAC06336E90C38C49612E86D4BD403CB8E653"
+    },
+    "validated": true
+  },
+  "shareIssuance": {
+    "index": "6C9314737900A1FB10A8D7F432C72176A00F5B79FDB972465EA1C709915ECD86",
+    "ledger_hash": "70D1042E3381CD6AC57AC498751C470BE603A38C5E0F0EB532889E130811A239",
+    "ledger_index": 6390119,
+    "node": {
+      "AssetScale": 6,
+      "Flags": 56,
+      "Issuer": "rMYBvyTfAYqaUHtA4nkYrGVPd7pYtFjddj",
+      "LedgerEntryType": "MPTokenIssuance",
+      "OutstandingAmount": "1000000000",
+      "OwnerNode": "0",
+      "PreviousTxnID": "A192C73521C648F5776410E4C7CCCFAAC4839B3DA89A6F928DD2DB85C7437E58",
+      "PreviousTxnLgrSeq": 6389996,
+      "ReferenceHolding": "9E23B8557EA85D2F7C6537295166B0901F079D55FFFB1609119BA571120F8F84",
+      "Sequence": 1,
+      "index": "6C9314737900A1FB10A8D7F432C72176A00F5B79FDB972465EA1C709915ECD86",
+      "mpt_issuance_id": "00000001E14888ED89CAC3727BC07D2B7FEBA3A32E3B37EC"
+    },
+    "validated": true
+  }
+}
