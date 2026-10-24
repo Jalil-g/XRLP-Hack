@@ -49,3 +49,23 @@ export type { AttestationPayload } from "./attest.ts";
 export { credentialStatus } from "./credentials.ts";
 export type { CredentialType } from "./credentials.ts";
 export { toChainEvent } from "./events.ts";
+// XRPL-04: broker rates, first-loss cover sizing, fees, closed-ended vault dates (pure)
+export {
+  COVER_RATE_MINIMUM,
+  COVER_RATE_LIQUIDATION,
+  MANAGEMENT_FEE_RATE,
+  ORIGINATION_FEE_BPS,
+  COVER_HEADROOM_BPS,
+  REDEMPTION_BUFFER_S,
+  MIN_LOANSET_WINDOW_S,
+  validateBrokerRates,
+  loanScheduleFromTerms,
+  expectedInterest,
+  minimumCover,
+  defaultCoverDeposit,
+  originationFeeFor,
+  managementFeeOn,
+  vaultDatesFor,
+  validateVaultDates,
+} from "./lending-math.ts";
+export type { BrokerRates, LoanSchedule, VaultDates } from "./lending-math.ts";

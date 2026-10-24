@@ -3,11 +3,11 @@
 // -> Redemption (withdrawals). Phase is derived from the parent ledger close time.
 import { convertStringToHex, type Wallet } from "xrpl";
 import { createdNodeId, getClient, isNotFound, getLedgerEntry, signAndSubmit, type TxResult } from "./client.ts";
+import { validateVaultDates, type LoanSchedule } from "./lending-math.ts";
 import { rlusdAmount, rlusdAsset } from "./rlusd.ts";
 
 export const VAULT_KIND_CLOSED_ENDED = 1;
-/** Spec minimum: RedemptionDate - SubscriptionDate >= 180s. */
-export const MIN_INVESTMENT_PERIOD_S = 180;
+export { MIN_INVESTMENT_PERIOD_S, vaultDatesFor, validateVaultDates } from "./lending-math.ts";
 
 export interface VaultLedgerEntry {
   index: string;
@@ -35,6 +35,13 @@ export interface CreateVaultParams {
   assetsMaximum?: string;
   /** Short label stored in Vault.Data (<=256 bytes). */
   data?: string;
+  /**
+   * The loan schedule this vault will back. If given, RedemptionDate is checked to fit
+   * SubscriptionDate + PaymentInterval x PaymentTotal + 60 + LoanSet window (else LoanSet -> tecNO_PERMISSION later).
+   */
+  loanSchedule?: LoanSchedule;
+  /** Slack after SubscriptionDate for the LoanSet to land (default MIN_LOANSET_WINDOW_S = 60). */
+  minLoanSetWindowS?: number;
 }
 
 export interface CreateVaultResult {
@@ -45,9 +52,7 @@ export interface CreateVaultResult {
 }
 
 export async function createVault(p: CreateVaultParams): Promise<CreateVaultResult> {
-  if (p.redemptionDate - p.subscriptionDate < MIN_INVESTMENT_PERIOD_S) {
-    throw new Error(`RedemptionDate must be >= SubscriptionDate + ${MIN_INVESTMENT_PERIOD_S}s`);
-  }
+  validateVaultDates({ subscriptionDate: p.subscriptionDate, redemptionDate: p.redemptionDate, ...p.loanSchedule, minLoanSetWindowS: p.minLoanSetWindowS });
   const tx = await signAndSubmit(p.owner, {
     TransactionType: "VaultCreate",
     Account: p.owner.classicAddress,
