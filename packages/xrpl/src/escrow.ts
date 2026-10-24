@@ -3,6 +3,7 @@
 import type { Wallet } from "xrpl";
 import { getClient, signAndSubmit, type TxResult } from "./client.ts";
 import { fulfillmentMatches } from "./condition.ts";
+import { assertPreflightOk, preflightFinish } from "./preflight.ts";
 import { rlusdAmount } from "./rlusd.ts";
 import { multisignAndSubmit } from "./spv.ts";
 
@@ -42,10 +43,16 @@ export async function createMilestoneEscrow(p: CreateEscrowParams): Promise<Crea
   return { tx, owner: p.spv, offerSequence: seq };
 }
 
-/** EscrowFinish — anyone may submit; the fulfillment is the gate. `submitter` pays the fee. */
-export async function finishEscrow(p: { submitter: Wallet; owner: string; offerSequence: number; condition: string; fulfillment: string }): Promise<TxResult> {
+/**
+ * EscrowFinish — anyone may submit; the fulfillment is the gate. `submitter` pays the fee.
+ * Runs preflightFinish first (throws UnsafeReleaseError, nothing submitted) unless `skipPreflight`.
+ */
+export async function finishEscrow(p: { submitter: Wallet; owner: string; offerSequence: number; condition: string; fulfillment: string; skipPreflight?: boolean }): Promise<TxResult> {
   if (!fulfillmentMatches(p.condition, p.fulfillment)) throw new Error("fulfillment does not match escrow condition");
+  const pf = p.skipPreflight ? undefined : await preflightFinish({ ...p, submitter: p.submitter.classicAddress });
+  if (pf) assertPreflightOk(pf);
   return signAndSubmit(p.submitter, {
+    ...(pf ? { Fee: pf.details.recommendedFee, LastLedgerSequence: pf.details.lastLedgerSequence } : {}),
     TransactionType: "EscrowFinish",
     Account: p.submitter.classicAddress,
     Owner: p.owner,

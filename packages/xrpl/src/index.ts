@@ -49,3 +49,18 @@ export type { AttestationPayload } from "./attest.ts";
 export { credentialStatus } from "./credentials.ts";
 export type { CredentialType } from "./credentials.ts";
 export { toChainEvent } from "./events.ts";
+
+// XRPL-14
+export {
+  preflightFinish,
+  evaluatePreflight,
+  fetchPreflightSnapshot,
+  assertPreflightOk,
+  unsafeReleaseError,
+  escrowFinishFee,
+  UnsafeReleaseError,
+  UNSAFE_RELEASE,
+  DEFAULT_MARGIN_S,
+  DEFAULT_LAST_LEDGER_OFFSET,
+} from "./preflight.ts";
+export type { PreflightRequest, PreflightResult, PreflightReason, PreflightSnapshot, PreflightDetails, LedgerNow } from "./preflight.ts";
