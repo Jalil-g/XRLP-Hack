@@ -73,11 +73,14 @@ Every tx: explorer link visible for ≥ 3 s. Never narrate a spinner: if a tx is
 
 **Demo devices worth the hours** (owner → ticket):
 1. **"Ledger says no" button** (D4): one route + one button; the only beat that *shows* the core claim instead of asserting it. → area:core (route) + area:web (button). ~1.5h.
-2. **Inspector app visible on a second window / phone-sized viewport** with the Ledger device under the document camera (or the Speculos screen mirrored). The automated-vs-human boundary becomes literal. → area:inspector, 0h code.
+2. **Inspector app visible on a second window / phone-sized viewport** with the Ledger device under the document camera (or the Speculos screen mirrored). The automated-vs-human boundary becomes literal. → area:inspector, 0h code *once `apps/inspector` exists* (it has 0 lines today). If INS-01..07 slip, put the Ledger button in the existing `/demo` inspector pane instead.
 3. **"Condition matches your key ✔"** read straight from devnet JSON-RPC in the inspector browser (INS-05). Say "the inspector app verifies the ledger, not our server." → already ticketed.
 4. **Verdict reasons written for a projector** ("taken 41 days before this escrow existed", "matches Oak Ave project photo"). Cross-project duplicate > same-project duplicate. → area:verifier (VER-03 wording).
 5. **Money map with live balances** (vault · project account · 3 escrows · builder) animating on D2 and D5. → WEB-05, already ticketed.
 6. **Share price > 1.00 at close** shown in the vault panel with a tooltip "contracted interest booked at origination". Pre-empts the "where's the yield" question without a wrong claim. → WEB-03.
+7. **Strongest Ledger 20 seconds** (from the ledger-signer review): the device clear-signs the `EscrowFinish` itself, carrying the fulfillment **and** an attestation memo whose `verdictHash` matches the one on the verdict card. Approve → RLUSD lands → explorer link. Then press **Reject** on milestone 2 and it stays locked. Verify memo display on `EscrowFinish` in Speculos first, then one devnet submission (TESTING.md §5). → INS-09.
+
+**Skip:** a "failed 2-of-4 multisig" beat. It fails with a `tef` code, never reaches the ledger, has no explorer link, and invites "what about 3 of 4". A wrong-fulfillment `EscrowFinish` (D4) fails with `tecCRYPTOCONDITION_ERROR`, which *is* recorded. Never submit a finish with the real fulfillment that you expect to fail: a failed finish publishes the preimage while the escrow stays open (design review §B7).
 
 ## 4. Script skeleton (3:00; cut order at the bottom)
 
