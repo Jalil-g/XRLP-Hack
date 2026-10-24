@@ -23,6 +23,22 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] LoanSet: platform = `Account` (single-sig), SPV = `Counterparty` multisig (xrpl.js helper constraint); `tfLoanOverpayment`, `PaymentTotal >= 2`, non-zero interest, zero late fees.
 - [10-24] Platform posts first-loss cover via `LoanBrokerCoverDeposit` (CoverRateMinimum 10%, liquidation 100%).
 
+## Direction v2 (Jalil, 2026-10-24 evening) — supersedes the inspector-held-key model
+
+- [10-24] **Release = milestone test suite.** Like a GitHub release: a licensed inspector audits the site and files a signed report; the AI runs
+  the suite (deterministic checks + judgement) over builder evidence + inspector audit; all required checks pass → the platform's release
+  service finishes the escrow. Inspectors do **not** hold a release key. `needs_human` → platform operator decides with a signed reason. (Jalil)
+- [10-24] **Preimages are held by core's release service** (unique per escrow, encrypted at rest), disclosed on slide 6. Ledger enforces
+  destination + expiry; the suite + on-chain attestations make release timing auditable. Smart Escrows (XLS-100) = roadmap. (Jalil)
+- [10-24] **Per-project verification fee** paid by the builder in RLUSD on-chain; AI-first verification of builder identity, project feasibility
+  and builder capability; inspectors only when the AI escalates (`needs_human` → pre-construction site visit). `VERIFIED_BUILDER` on first pass. (Jalil)
+- [10-24] **Schedule of Values** (AIA G702/G703) defines milestones for any project size; residential templates are pre-filled SoVs. Demo = Maple St. (Jalil)
+- [10-24] **Inspector assignment fully automated by AI** from a verified panel (`VERIFIED_INSPECTOR`), at lock-terms. Roadmap: robots/sensors through the same signed-audit interface. (Jalil)
+- [10-24] **No hardware-wallet (Ledger device) work.** Software inspector key; `packages/ledger-signer` keeps the interface. (Jalil)
+- [10-24] Sponsor stance: Lending & Borrowing track; AWS only as Bedrock provider swap if confirmed at booth; no Quicknode (no devnet), no Mastercard AP4M. (Jalil)
+- [10-24] Marketplace framing kept: KYC'd investors choose verified projects; institutional lender = same rail, one depositor. (Jalil)
+- [10-24] Tickets v2 in `docs/06-tickets.md`; GitHub issues synced. Retired: INS-04/05/08/09 v1. New: XRPL-14, VER-13, VER-14, INS-06/07 v2, CORE-12, DEMO-01, PITCH-09.
+
 ## Open
 
 - Product name.
@@ -30,7 +46,10 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - Who has a Ledger device (Ledger bounty: inspector signs on device)?
 - Interest on full principal from day one (design B) — acceptable for demo? Note `InterestRate=0` risks `tecPRECISION_LOSS`; use a small rate.
 - Under-funded at `SubscriptionDate` → investor money locked until `RedemptionDate`. Policy: platform tops up? short redemption window? cap with `AssetsMaximum`?
-- Trustee identity for the 4th SPV signer (investor rep? second inspector?).
+- Trustee identity for the 4th SPV signer (investor rep). Demo: server-held, disclosed.
 - Verify on devnet in hour 1: multisig-counterparty `LoanSet` (XRPL-01). If it fails → fallback documented in xrpl-protocol-notes §2.
-- Product pivot under consideration: per-payee escrows (builder + subcontractors, lien waivers) and institutional lender framing — see 06-tickets "If we pivot".
+- Per-payee escrows (subcontractors + lien waivers): roadmap line only (VER-12 stretch).
 - Default handling for already-released money (collateral / lien story for the pitch).
+- Product name (recommendation: Drawproof). Decide by T+6h.
+- Verification fee amount for the demo (proposal: 250 RLUSD).
+- Does the AWS Lending slice accept "verifier runs on Bedrock"? Ask at booth (PITCH-01).

@@ -149,3 +149,16 @@ demoing the thing we say we are not.
 - **INS-09 AC change:** strongest 20 s = device clear-signs the `EscrowFinish` carrying fulfillment **and** an attestation memo whose `verdictHash` matches the verdict card; press Reject on a second milestone → stays locked. Verify memo display on `EscrowFinish` in Speculos first.
 - **PITCH-01 add:** ask Ledger booth whether devnet counts; ask organizers for rubric and demo length (past XRPL Commons events: Innovation · Execution · Impact · Pitch).
 - **decisions.md:** log the framing decision (institutional-first narrative, demo unchanged) and the name by T+6h.
+
+## Addendum (same day, after direction v2)
+
+The team direction changed to the **test-suite release model** (`docs/02-product.md`, `docs/03-architecture.md`, `docs/decisions.md`
+"Direction v2"). Effect on the findings above:
+- **Superseded:** B1/B2 as stated (inspector = release key). The platform's release service now holds preimages *by design*, disclosed on
+  slide 6; the honest line is Q&A #2 in `docs/07-pitch.md`. INS-04/05/08 v1 are retired, so §A rows about the keyring/condition check are moot.
+- **Still true and now more important:** B7 (failed finish leaks preimage → XRPL-14 + CORE-12 `preflightFinish`), B3 (3-of-4 capture bound),
+  B6 (cover rates 0 in code), §D prestage fixes, §E scope, §F hour-1 verifications, the web/verifier copy and route drift.
+- **New risk introduced by v2:** the AI is now the gate, so Q&A #1 ("AI is your oracle") is the most dangerous question. Mitigation is
+  architectural, not rhetorical: most checks deterministic, inspector audit mandatory, every result attested before the finish, `needs_human`
+  resolved by a named operator with a signed reason. If VER-04 (AI judgement) is late, the demo still works on deterministic checks + audit.
+- Tickets v2 and the issue sync replace §G.
