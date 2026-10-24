@@ -5,6 +5,7 @@ export * from "./conditions.ts";
 export * from "./ports.ts";
 export * from "./quorum.ts";
 export * from "./release-policy.ts";
+export * from "./api-surface.ts";
 export * from "./state-machine.ts";
 export * from "./store.ts";
 export * from "./file-store.ts";
