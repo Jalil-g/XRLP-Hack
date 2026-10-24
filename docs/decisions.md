@@ -53,6 +53,16 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
 
+## Inspector lane (Roro's agent, challenge freely)
+
+- [10-24] `apps/inspector` defines **provisional v2 zod schemas** in `lib/types.ts` (transcribed from 05-api) until CORE-01 lands them in
+  `@xrlp/shared`; shapes 05-api leaves open (`Inspector`, `Milestone.sovCodes`, `Project.sov`, `SovLine.evidence`) are proposed on #53.
+- [10-24] Inspector app data access is **client-side** (polling, in-browser signing later); in http mode the browser calls same-origin
+  `/api/*` and `next.config.ts` rewrites to `CORE_URL`. Responses are checked against the schemas and drift is logged, not thrown.
+- [10-24] Mock-mode parties use **real classic addresses** derived from public entropy `sha256("drawproof/mock/<label>")[0..16]`
+  (never funded, not devnet wallets) so INS-04 can sign as a mock inspector without committing any seed.
+- [10-24] Route 10 multipart fields: `report` (JSON), `photos` (repeated, same order as `report.photos`), `signedTxBlob`. Proposed on #53.
+
 ## Open
 
 - Product name.
