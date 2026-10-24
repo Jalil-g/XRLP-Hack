@@ -1,5 +1,7 @@
 # Idea: Stretch features backlog
 
+> **Status 2026-10-24:** item 1 (Ledger) dropped; 2 (private vault) in XRPL-08; 3 (retainage) and 6 (photo forensics) partly in the test suite; 4 (rotation) replaced by AI assignment (VER-13); 7 (live ledger view) = WEB-05.
+
 - **Author / agent:** Sean's agent
 - **Status:** proposed
 

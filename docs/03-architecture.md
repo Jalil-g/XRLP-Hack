@@ -1,160 +1,174 @@
 # 03 — Technical Architecture
 
-> Markers: **[Verified]** = checked against the spec or devnet, **[Changed]** = design changed after protocol review.
-> Evidence and citations are in `docs/xrpl-protocol-notes.md`.
+> Markers: **[Verified]** = checked against the spec or devnet, **[Changed]** = design changed after review.
+> Evidence and citations are in `docs/xrpl-protocol-notes.md`. Direction change 2026-10-24 (Jalil): **release = milestone test
+> suite run by the platform's AI; inspectors audit and sign, they do not hold a release key.** Marked **[Direction]**.
 
 Network: **XRPL Devnet** (`wss://s.devnet.rippletest.net:51233`). Verified 2026-10-24: `SingleAssetVault`,
 `LendingProtocol`, **`LendingProtocolV1_1`**, `TokenEscrow`, `Credentials`, `PermissionedDomains`, `MultiSignReserve`,
 `ExpandedSignerList`, `BatchV1_1` are all **enabled on devnet** (rippled 3.4.1; reserves 1 / 0.2 XRP; base fee 1 drop;
 faucet 100 XRP). Vault + LendingProtocol are **NOT** enabled on testnet. **[Verified]**
 
-Library: `xrpl` (xrpl.js) **5.3.0**. It has typed `VaultCreate/Deposit/Withdraw` (including `VaultKind`, `SubscriptionDate`,
-`RedemptionDate`), `LoanBrokerSet`, `LoanBrokerCoverDeposit`, `LoanSet`, `LoanPay`, `LoanManage`,
-`EscrowCreate/Finish/Cancel`, `SignerListSet`, `Batch`, `Credential*`, `PermissionedDomainSet`, plus
-`signLoanSetByCounterparty` / `combineLoanSetCounterpartySigners`. **[Verified in source]**
+Library: `xrpl` (xrpl.js) **5.3.0**: typed `VaultCreate/Deposit/Withdraw` (incl. `VaultKind`, `SubscriptionDate`, `RedemptionDate`),
+`LoanBrokerSet`, `LoanBrokerCoverDeposit`, `LoanSet`, `LoanPay`, `LoanManage`, `EscrowCreate/Finish/Cancel`, `SignerListSet`,
+`Batch`, `Credential*`, `PermissionedDomainSet`, plus `signLoanSetByCounterparty` / `combineLoanSetCounterpartySigners`. **[Verified in source]**
 
 ## Key protocol facts that shaped the design
 
-1. XLS-66 `LoanSet` sends the **entire principal to the borrower at once**. There are no draws or tranches.
-   So staged release comes from **escrow**, and the borrower is a **project account** (SPV), not the builder. **[Verified]**
-2. **[Changed]** Under `LendingProtocolV1_1` (live on devnet), a LoanBroker can only be created on a
-   **closed-ended Vault** (`VaultKind=1`). Its immutable `SubscriptionDate` and `RedemptionDate` map to our
-   **funding deadline** and **maturity**:
-   - Deposits are allowed only during Subscription.
-   - `LoanSet` is allowed only after `SubscriptionDate`, and the loan must mature at least 60s before `RedemptionDate`.
-   - `VaultWithdraw` is **blocked** between the two dates.
-3. **[Changed]** `EscrowFinish` can be submitted by **anyone** who has the fulfillment. No signer list gates it.
-   So **the person who holds the preimage is the release key**.
+1. XLS-66 `LoanSet` sends the **entire principal to the borrower at once**. No draws. So staged release comes from **escrow**,
+   and the borrower is a **project account** (SPV), not the builder. **[Verified]**
+2. Under `LendingProtocolV1_1` (devnet) a LoanBroker needs a **closed-ended Vault** (`VaultKind=1`): `SubscriptionDate` =
+   funding deadline, `RedemptionDate` = maturity + buffer. Deposits only during Subscription; `LoanSet` only after it; withdrawals
+   blocked between the dates. **[Verified]**
+3. `EscrowFinish` can be submitted by **anyone** with the fulfillment. No signer list gates release. **Whoever holds the preimage
+   is the release key.** **[Verified]**
+4. **[Direction]** We *choose* the platform's **release service** as the preimage holder, gated by the milestone test suite.
+   The ledger guarantees **where** money can go (builder or back to the SPV); the test suite plus on-chain attestations make
+   **when** it moves auditable. We say this out loud (slide 6).
 
 ## Accounts
 
 | Account | Purpose | Key control |
 |---|---|---|
-| `issuer` | Issues mock `RLUSD` IOU (hex currency `524C555344000000000000000000000000000000`). Sets `asfAllowTrustLineLocking` (flag 17) so IOU escrow works, and `asfDefaultRipple` **before** any trust lines exist. **No TransferRate.** **[Verified]** | platform-held (demo) |
-| `platform` | Vault owner **=** LoanBroker owner (the protocol requires the same account), first-loss cover provider, Credential issuer, PermissionedDomain owner. Countersigns LoanSet as `Account`. **[Verified]** | platform |
-| `project:<id>` (SPV) | Borrower of the loan. Creates the milestone escrows and repays the loan. **Master key disabled**, SignerList only. **[Verified: a multisig borrower is allowed]** | SignerList (below) |
-| `builder` | Receives milestone payouts and repays. **Must hold an RLUSD trust line before the first release** (`tecNO_LINE`). **[Verified]** | builder |
-| `investor[1..n]` | Vault depositors. Hold `KYC_INVESTOR` (accepted) for the private vault | investor |
-| `inspector[1..2]` | **Release-key holder:** generates the preimage per milestone escrow. Signs attestations. Signer on the SPV | inspector (Ledger device = stretch) |
-| `aiAgent` | **[Changed]** Signs on-chain *attestation* txs (verdict hash in a memo). **Not** an SPV signer | verifier service |
-| `trustee` | **[Changed]** Independent 4th SPV signer (investor representative). In the demo it's a server-held key, and we disclose that | trustee |
+| `issuer` | Mock `RLUSD` IOU (hex `524C555344000000000000000000000000000000`). `asfDefaultRipple` then `asfAllowTrustLineLocking` (flag 17), **before** any trust line. No TransferRate. **[Verified]** | platform (demo) |
+| `platform` | Vault owner **=** LoanBroker owner (protocol requirement), first-loss cover provider, Credential issuer (`VERIFIED_BUILDER`, `VERIFIED_INSPECTOR`, `KYC_INVESTOR`), PermissionedDomain owner, receives **project verification fees**, countersigns `LoanSet` as `Account` | platform |
+| `releaseService` **[Direction]** | Holds one random 32-byte preimage per milestone escrow. Submits `EscrowFinish` only when `evaluateRelease()` passes. Submits `EscrowCancel` after expiry (keeper). Separate key from `platform` so its actions are distinguishable on the explorer | platform (disclosed) |
+| `project:<id>` (SPV) | Loan borrower. Creates milestone escrows, repays the loan. **Master key disabled**, SignerList only | SignerList (below) |
+| `builder` | Pays verification fee; receives milestone payouts; repays. **RLUSD trust line before first release** (`tecNO_LINE`) | builder |
+| `investor[1..n]` | Vault depositors with accepted `KYC_INVESTOR` | investor |
+| `inspector[1..n]` | Panel of licensed inspectors with `VERIFIED_INSPECTOR`. **AI-assigned** per project at lock-terms. Signs **audit attestations**. Signer on the SPV | inspector |
+| `aiAgent` | Signs **verdict attestations** (verdict hash + per-check results digest). Not an SPV signer | verifier service |
+| `trustee` | Independent 4th SPV signer (investor representative). Server-held in the demo, disclosed | trustee |
 
-### SPV signer list **[Changed]** (old: inspectors w2 / AI w1 / platform w1 / quorum 3)
+### SPV signer list
 
-`SignerQuorum = 3`; `platform 1, builder 1, inspector 1, trustee 1`.
-- The platform always needs **two** outside parties. With the old list the platform held the AI and platform keys,
-  so **platform + any 1 inspector** could empty the SPV or `SignerListSet` to take it over.
-- No single party can block the SPV, because the other three meet quorum.
-- The SPV signer list governs `LoanSet` (countersign), `EscrowCreate`, `LoanPay` and `SignerListSet`. It does **not** govern release.
-- **Collusion bound (say it in the pitch):** 3 of 4 colluding signers can move only the SPV's *liquid* RLUSD.
-  The design keeps that near 0: escrows are created right after LoanSet, and refunds are LoanPay'd right after cancel.
-  **Nobody can redirect a live escrow.**
+`SignerQuorum = 3`; `platform 1, builder 1, inspector 1, trustee 1`. The platform always needs two outside parties; no single
+party can block (the other three meet quorum). Governs `LoanSet` countersign, `EscrowCreate`, `LoanPay`, `SignerListSet`.
+**Does not govern release.** Collusion bound: 3 of 4 can move only the SPV's *liquid* RLUSD, kept near 0 by creating escrows
+right after `LoanSet` and `LoanPay`-ing refunds right after cancel. **Nobody can redirect a live escrow.** **[Verified]**
 
 ## Money flow (happy path)
 
 ```
+builder   --Payment(fee RLUSD)--> platform                      project verification fee   [Direction]
+platform  --CredentialCreate(VERIFIED_BUILDER)--> builder accepts                           (first verified project)
 platform  --VaultCreate(closed-ended, private+DomainID, AssetsMaximum=principal,
-                         SubscriptionDate=fundingDeadline, RedemptionDate=maturity+buffer)--> Vault   [Changed]
-platform  --LoanBrokerSet(CoverRateMinimum=10000, CoverRateLiquidation=100000)--> LoanBroker(vault)  [Changed]
-platform  --LoanBrokerCoverDeposit(10% of principal)--> first-loss cover                               [Changed]
-investors --VaultDeposit(RLUSD) during Subscription--> Vault  (investors get share MPTs)              [Verified]
-   ... SubscriptionDate passes (Investment phase) ...
-platform(Account, single-sig) + SPV(Counterparty, CounterpartySignature.Signers multisig)
-          --LoanSet(tfLoanOverpayment, PaymentTotal>=2, InterestRate>0, late fees 0)--> RLUSD principal -> SPV  [Changed]
-SPV(multisig) --EscrowCreate x N IMMEDIATELY (milestone i: Amount_i, Destination=builder,
-                Condition_i from inspector, CancelAfter_i < loan maturity)                            [Changed]
-      ... builder submits evidence; AI verdict + attestation tx; inspector attestation tx ...
-inspector (or core, given the fulfillment at approval) --EscrowFinish(Condition_i, Fulfillment_i)--> RLUSD -> builder
-builder --Payment--> SPV ; SPV --LoanPay (multisig)--> Vault  (AssetsAvailable up)
+                         SubscriptionDate=fundingDeadline, RedemptionDate=maturity+buffer)--> Vault
+platform  --LoanBrokerSet(CoverRateMinimum=10000, CoverRateLiquidation=100000)--> LoanBroker(vault)
+platform  --LoanBrokerCoverDeposit(10% of principal)--> first-loss cover
+investors --VaultDeposit(RLUSD) during Subscription--> Vault  (share MPTs)
+platform(Account) + SPV(Counterparty multisig) --LoanSet(tfLoanOverpayment, PaymentTotal>=2, InterestRate>0)--> RLUSD -> SPV
+SPV(multisig) --EscrowCreate x N immediately (Amount_i, Destination=builder, Condition_i, CancelAfter_i < maturity)
+      per milestone: builder evidence -> inspector audit attestation -> aiAgent verdict attestation
+releaseService --EscrowFinish(Condition_i, Fulfillment_i)--> RLUSD -> builder      (only if evaluateRelease() == pass)
+builder --Payment--> SPV ; SPV --LoanPay(multisig)--> Vault  (AssetsAvailable up)
 ```
 
-**[Changed]** Share value (`AssetsTotal/shares`) goes up at **LoanSet**, because the protocol books the contracted
-interest at origination. Repayments turn that value into withdrawable liquidity (`AssetsAvailable`).
-Investors redeem from `RedemptionDate` on.
+Share value (`AssetsTotal/shares`) rises at **LoanSet** (protocol books contracted interest). Repayments restore liquidity.
+Investors redeem from `RedemptionDate`.
 
-Optional stretch: wrap `LoanSet + EscrowCreate×N` (N ≤ 7) in an `ALLORNOTHING` **Batch** so the SPV never
-holds liquid principal at a ledger boundary.
+## Stall path
 
-## Stall path **[Changed]**
+`CancelAfter_i` passes → `releaseService` (keeper; anyone could) submits `EscrowCancel` → RLUSD back to the **SPV** → SPV multisig
+`LoanPay` with `tfLoanOverpayment` (on time, ≥ one periodic payment) → vault `AssetsAvailable` up → investors `VaultWithdraw`
+from `RedemptionDate`. Released-but-unrepaid money is credit loss: `LoanManage(tfLoanDefault)` after due+grace, first-loss cover
+absorbs `DefaultCovered`, vault writes down the rest. None of this is automatic; the keeper runs it, idempotently per step.
 
-`CancelAfter_i` passes → **anyone** submits `EscrowCancel` → RLUSD goes back to the **SPV** (not to investors)
-→ the SPV sends a multisig `LoanPay` with `tfLoanOverpayment`. The payment must be on time and at least one periodic
-payment; the excess goes to principal → vault `AssetsAvailable` goes up → investors `VaultWithdraw` **from `RedemptionDate`**.
-Money already released and not repaid is credit loss. The platform can `LoanManage(tfLoanDefault)` after due+grace;
-first-loss cover absorbs part of it, and the vault writes down the rest.
+## Release = the milestone test suite **[Direction]**
 
-None of this is automatic: core runs a **keeper** that submits the cancel and the LoanPay.
+Think GitHub checks on a release PR. Each milestone (one SoV line or group) carries a **check list** fixed at lock-terms:
 
-## Escrow gating — the subtle part **[Changed: Shamir dropped]**
+| Check | Kind | Required? | Source |
+|---|---|---|---|
+| `required_evidence_present` | deterministic | yes | SoV line's evidence list |
+| `gps_within_site` | deterministic (EXIF + geofence) | yes (needs_human if missing) | builder photos |
+| `photo_fresh` | deterministic (EXIF time > escrow created) | yes | builder photos |
+| `no_duplicate_photo` | deterministic (sha256 + pHash across **all** projects) | yes | builder photos |
+| `invoice_matches_budget` | deterministic on extracted totals vs SoV line (±10% pass / ±25% warn) | yes | invoices |
+| `inspector_audit_present` | deterministic: attestation tx exists, signed by the **assigned** inspector, references this milestone + evidence bundle hash | yes | inspector |
+| `audit_matches_evidence` | AI judgement: inspector checklist vs builder claims vs photos | yes | inspector + builder |
+| `stage_visually_consistent` | AI vision vs SoV line's visual criteria | yes | builder + inspector photos |
+| `document_consistency` | AI: dates, parties, addresses agree | yes | documents |
+| `lien_waiver_matches_invoices` | deterministic/AI | stretch | waivers |
 
-`EscrowFinish` can be submitted by **anyone** once its conditions are met. So gating comes from a
-crypto-condition (`PREIMAGE-SHA-256`), and **whoever holds the preimage releases**. Plan:
+Policy per risk tier / amount: `minConfidence` (0.7/0.8/0.9), **two inspector audits** for milestones ≥ `TWO_INSPECTOR_THRESHOLD`
+or high-risk builders, stricter visual criteria for new builders.
 
-1. Inspectors are assigned **before loan close**. The condition is immutable once the escrow exists.
-2. The inspector's client (browser WebCrypto; later Ledger-backed) generates a **fresh 32-byte random preimage `P_i`
-   per milestone escrow**. It keeps `P_i` (with an encrypted backup export) and sends **only**
-   `Condition_i = A0258020‖SHA256(P_i)‖810120` to core. Core **rejects duplicate conditions**: the preimage becomes public
-   on finish, so a reused condition would let anyone release the other escrow.
-3. The SPV multisig puts `Condition_i` into `EscrowCreate`. The inspector UI then reads the escrow back from the ledger and
-   shows "condition matches your key". This catches a colluding quorum swapping in a condition it knows.
-4. Approvals are **on-chain attestations**: memo'd txs signed by `aiAgent` (verdict hash), the inspector, and the platform.
-   This is the audit trail of *who* approved *what* and *when*.
-5. On approval, the inspector client reveals `Fulfillment_i = A0228020‖P_i`. It either submits `EscrowFinish` itself, or passes it
-   to core, which checks it against the stored condition and submits immediately. The platform never holds a
-   fulfillment before approval.
-   - Policy: the inspector client won't reveal without an AI `pass` unless the inspector posts an on-chain
-     override attestation with a reason.
-   - 2-inspector milestones: `P = a XOR b`. A's client generates both, sends `b` to B encrypted, then deletes it.
-     This relies on trusting A's client at creation time, and we disclose that.
+`evaluateRelease(milestone)`:
+1. every required check `pass` **and** verdict confidence ≥ `minConfidence` → **release** (`releaseService` finishes the escrow);
+2. any required check `fail` → **locked**, state `failed`; builder resubmits (→ `evidence_submitted`) or inspector re-audits (→ `audited`);
+3. otherwise → `needs_human`: a platform operator approves or rejects with a signed reason (on-chain attestation, role `platform`). Approval here is the **only** human override, and it is visible.
 
-Honest trust statement: **the inspector is the release key.** AI and platform approvals are recorded on-chain but are not
-enforced by the ledger. Enforced multi-party release needs Smart Escrows (XLS-100), which is **not on devnet**.
-That's our "what's next" slide.
+Before any finish, **pre-reveal safety**: escrow exists and is open, `CancelAfter` not passed, destination has an RLUSD trust
+line, fee sized for the fulfillment, generous `LastLedgerSequence`. A failed finish with the right fulfillment would publish the
+preimage while the escrow stays open. Never submit a finish expected to fail.
 
-Value of escrow even so: once created, milestone money can **only** go to that builder or back to
-the SPV. Nobody can redirect it, including signers, the platform and the inspector. **[Verified]**
+### Escrow gating and what the ledger enforces
 
-## Stretch on-chain features (cheap wins for judges)
+- Condition `A0258020‖SHA256(P_i)‖810120`, fulfillment `A0228020‖P_i`, `P_i` = 32 CSPRNG bytes **unique per escrow** (reuse
+  would let anyone finish the second escrow once the first fulfillment is public). Core rejects duplicate conditions.
+- `P_i` lives in the release service's store (encrypted at rest; demo: `DATA_DIR`, disclosed).
+- **Honest trust statement (say it):** the ledger enforces *destination* (builder or SPV) and *expiry*. Release *timing* is the
+  platform's published test suite with the inspector's signed audit as a mandatory input, and every check result is attested
+  on-chain **before** the finish, so anyone can verify that the money moved only after the suite went green.
+  Ledger-enforced multi-party release (the suite result as an on-chain rule) is Smart Escrows (XLS-100), not on devnet: roadmap.
+- Worst case if the release service is compromised: an **early release to the correct builder**, never a redirection.
 
-- **Credentials**: `VERIFIED_BUILDER`, `KYC_INVESTOR` issued by the platform. The subject must `CredentialAccept`, otherwise
-  the credential isn't valid. **[Verified]**
-- **Permissioned Domain + private Vault**: `tfVaultPrivate` + `DomainID`. Only accepted `KYC_INVESTOR` holders can
-  deposit. Withdraw ignores the domain, so investors can't be locked out. Add `tfVaultShareNonTransferable`. **[Verified]**
-- **Ledger device**: the inspector signs their attestation, and holds/derives the preimage, on a Ledger (Ledger bounty: "human approval for high-risk actions").
-- **Batch**: atomic `LoanSet + EscrowCreate×N`. **[Verified: enabled; multisig BatchSigners allowed; ≤8 inner txs]**
+## Project verification (AI-first, inspectors when necessary) **[Direction]**
+
+Input: builder documents (licence, insurance, entity), the SoV, site geo, prior platform history. Output `ProjectVerification`:
+`identity`, `feasibility`, `capability` each with checks + reasons, overall `pass | fail | needs_human`, `riskTier`.
+- `needs_human` on feasibility → an inspector is auto-assigned for a pre-construction site visit; their signed report re-enters the AI.
+- `pass` → `VERIFIED_BUILDER` credential (first time), project **verified** and listed. Paid by the per-project fee (route 15).
+Registries are mocks, labelled MOCK in the UI.
+
+## Inspector assignment **[Direction]**
+
+Fully automated: the AI scores the verified inspector panel by region, trade match to the SoV, availability, open load, and
+prior agreement with the test suite (inspectors whose audits are often contradicted by the checks score down). Top match is
+assigned at lock-terms (before `EscrowCreate`, so they can be an SPV signer). Rotation is across projects.
+Roadmap: robots/sensors file audits through the same `InspectorAudit` interface.
+
+## Stretch on-chain features
+
+Credentials for all three roles, Permissioned Domain + private vault (`tfVaultPrivate`, `tfVaultShareNonTransferable`), Batch
+atomic close (`LoanSet + EscrowCreate×N`), "Ledger says no" demo tx (platform submits a wrong-fulfillment finish →
+`tecCRYPTOCONDITION_ERROR`, recorded on-ledger).
 
 ## Software components
 
 ```
-apps/web            Next.js UI: marketplace, project detail (demo screen), invest, portfolio, builder, /demo control room.
-apps/inspector      Separate Next.js app: inspector queue, review, client-side preimage keyring, attest, release.
-packages/shared     Domain types, zod schemas, milestone templates, state machine. THE CONTRACT. Change via PR only.
-packages/xrpl       All ledger ops (typed functions) + devnet scripts (bootstrap, full demo flow).
-packages/verifier   AI verification (Claude API, vision) with policy-per-project-type; mock mode without API key.
-packages/core       Orchestrator + HTTP server (docs/05-api.md): workflow, release policy, JSON store, keeper, adapter factory.
-packages/ledger-signer  Inspector signing (software key now, Ledger/Speculos stretch).
+apps/web            Next.js: marketplace (verified projects), project detail = demo screen (milestone checks panel, money map,
+                    timeline), invest, portfolio, builder onboarding (fee → verification), create project from SoV, /demo control room.
+apps/inspector      Next.js (:3001): inspector queue (assigned audits), audit form (checklist per SoV line + photos + notes),
+                    signed submission, audit history with the checks it fed.
+packages/shared     Domain types, zod schemas, SoV + templates, state machine, ports. THE CONTRACT. PR only.
+packages/xrpl       All ledger ops + devnet scripts (bootstrap, demo, prestage, compliance). LedgerPort adapter.
+packages/verifier   Project verification + milestone test suite (deterministic checks + Claude), inspector matching, mock mode.
+packages/core       Orchestrator + HTTP server: workflows, release service (preimages, evaluateRelease, pre-reveal safety),
+                    keeper, JSON store, adapter factory.
+packages/ledger-signer  Attestation signing (software key). Hardware-wallet backend parked.
 ```
 
-Dependency direction: `web, inspector →(HTTP)→ core → (xrpl, verifier) → shared`. Port interfaces live in `shared`, and the adapters live in xrpl/verifier. HTTP + port contract: `docs/05-api.md`.
+Dependency direction: `web, inspector →(HTTP)→ core → (xrpl, verifier) → shared`. HTTP + port contract: `docs/05-api.md`.
 
-## Milestone state machine (in `packages/shared`)
+## State machines (in `packages/shared`)
 
 ```
-draft -> terms_locked -> funding -> funded -> escrowed
-escrowed -> evidence_submitted -> ai_reviewed -> inspected -> released
-                                      |              |
-                                      v              v
-                                   rejected <--- rejected   (builder can resubmit -> evidence_submitted)
-escrowed/evidence_* -> expired (CancelAfter passed) -> refunded (EscrowCancel ok) [-> repaid via LoanPay, project-level]
+Project:   draft -> verifying -> verified -> terms_locked -> funding -> funded -> escrowed -> repaying -> completed
+                       |-> rejected                                              '-> stalled (any milestone refunded; others continue)
+Milestone: pending -> escrowed -> evidence_submitted -> audited -> verified -> released
+                                       ^                  |          |
+                                       '---- failed <-----'----------'   (resubmit evidence or re-audit)
+                                                          needs_human -> verified | failed   (platform operator, signed reason)
+           escrowed/evidence_submitted/audited/failed -> expired (CancelAfter passed) -> refunded
 ```
 
-**[Changed]** Project-level additions: `funding` lasts until `SubscriptionDate`. `funded → escrowed` can only happen after
-`SubscriptionDate` (LoanSet `tecTOO_SOON` before that). Investor withdrawals open at `RedemptionDate`.
+`funded → escrowed` only after `SubscriptionDate` (`tecTOO_SOON` before). Withdrawals only from `RedemptionDate`.
 
-## AI verifier contract
+## Verifier contract
 
-Input: milestone template (required evidence), evidence bundle (photos w/ EXIF, invoices, docs), project
-context (site geo, budget line, builder risk tier). Output: `Verdict` — `decision: pass | fail | needs_human`,
-`confidence`, per-check results with reasons and evidence refs. Policy varies by project type and risk tier
-(e.g. high-value milestone → require 2 inspectors, stricter thresholds). See `packages/shared/src/verdict.ts`.
-**[Changed]** The verdict hash is attested on-chain by `aiAgent`. It is a *signal to the inspector*, not a release key.
+`verifyProject(input) → ProjectVerification` · `verifyMilestone(input) → Verdict` (per-check `CheckResult`s, `decision`,
+`confidence`, `policy`) · `assignInspector(project, panel) → InspectorAssignment` · `verdictHash(v)` canonical sha256.
+Mock mode is deterministic for the demo fixtures: Maple St foundation → `pass`, framing with a reused photo → `fail`
+(`no_duplicate_photo`), a milestone with a missing audit → `fail` (`inspector_audit_present`).

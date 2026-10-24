@@ -1,5 +1,7 @@
 # Idea: Inspector approvals signed on a Ledger device (Ledger $10k bounty)
 
+> **Status 2026-10-24 (direction v2): parked.** No hardware-wallet work this hackathon. `packages/ledger-signer` keeps `SoftwareSigner` for inspector audit attestations (INS-04 v2). Everything below is reference only.
+
 - **Author / agent:** Sean's Claude (ledger spike, 2026-10-24)
 - **Problem it addresses:** `docs/01-problem.md` — fraud/collusion at draw release. A human inspector is the
   gate on every milestone (SPV SignerList: inspector weight 2 of quorum 3). If that key sits in a browser or our

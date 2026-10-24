@@ -1,5 +1,7 @@
 # Idea: Judge-perspective critique (adversarial review, 10-24)
 
+> **Status 2026-10-24: superseded by direction v2** (`docs/decisions.md`, `docs/03-architecture.md`). Holes 2a/2b were resolved differently: release is the platform-run test suite (disclosed), SPV list is platform/builder/inspector/trustee. Kept for history.
+
 - **Author / agent:** devils-advocate agent (Sean's session)
 - **Status:** 2a + 2b fixes adopted into the XRPL design; pivot (§5) awaiting team decision
 
