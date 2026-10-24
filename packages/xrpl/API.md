@@ -7,7 +7,8 @@ throws `XrplTxError` (with the engine result + explorer link) unless `tesSUCCESS
 ```bash
 pnpm --filter @xrlp/xrpl bootstrap      # fund + configure demo wallets -> .data/wallets.json (gitignored)
 pnpm --filter @xrlp/xrpl demo           # full money path on devnet, prints a tx table with explorer links
-pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding)
+pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding, read-model parsers on recorded devnet JSON)
+pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
 pnpm --filter @xrlp/xrpl typecheck
 ```
 
@@ -87,6 +88,33 @@ is a follow-up ticket. It maps 1:1:
 - `repayLoan({project, amount, source})` → `repayLoan({spv, loanId, amount, mode: amount > periodic ? "overpayment" : undefined})`.
 - `issueCredential` returns `projectId = "_platform"` (`PLATFORM_SCOPE`) by default.
 
+## Read models (`src/reads.ts`, XRPL-09)
+
+Each read = a **pure parser** (raw rippled JSON → model, unit-tested on recorded devnet responses in
+`test/fixtures/`) + a **thin fetch** that reads one validated ledger. "Now" is that ledger's `close_time`.
+RLUSD values are shared `Rlusd` strings (plain decimal, ≤ 6 decimals, **truncated**). Fields rippled omits
+(zero/default) read as `"0"` / `0`.
+
+| Function | Returns | Notes |
+|---|---|---|
+| `getVaultSnapshot(vaultId)` | `VaultSnapshot \| undefined` | `{assetsTotal, assetsAvailable, sharesOutstanding, sharePrice, subscriptionDate, redemptionDate, phase}` (05-api §2). `sharesOutstanding` = raw share-MPT units (`OutstandingAmount`); `sharePrice` = `assetsTotal / (sharesOutstanding / 10^Vault.Scale)`, 6 dp, `"1"` with no shares. `phase` from ledger time: `subscription` (now ≤ SubscriptionDate), `investment`, `redemption` (now ≥ RedemptionDate); an open-ended vault reads as `subscription`. |
+| `getLoanSnapshot(loanId)` | `LoanSnapshot \| undefined` | `{principalOutstanding, totalValueOutstanding, periodicPayment, paymentRemaining, nextPaymentDueDate}`. A paid-off loan has `paymentRemaining 0`, outstanding `"0"`, `nextPaymentDueDate ""` (rippled drops the field). |
+| `getEscrow(owner, offerSequence)` | `EscrowView \| undefined` | `ledger_entry {escrow:{owner, seq}}`. `undefined` = consumed (finished/cancelled) or never created. `{index, owner, offerSequence, destination, currency: "RLUSD"\|"XRP"\|…, issuer?, amount, condition?, cancelAfter?, finishAfter? (ISO + *Ripple), status: "open"\|"expired", finishable, cancellable}`. `expired` = now > CancelAfter (finish fails, anyone can cancel). |
+| `listEscrowsParsed(owner)` | `EscrowView[]` | Escrows **owned** by `owner` (incoming ones dropped), paginated `account_objects`. `offerSequence` comes from `Escrow.Sequence` (present on devnet). |
+| `getBalance(account, "RLUSD"\|"XRP", {issuer?})` | decimal string | RLUSD from `account_lines` (any RLUSD line, or the given issuer); XRP = total incl. reserve. Unfunded / no line → `"0"`; issuer-side negative → `"0"`. |
+| `hasRlusdTrustline(account, issuer?)` | `boolean` | Line exists, own limit > 0, not frozen by the issuer. For `preflightFinish` (XRPL-14). |
+
+Pure parsers (no network; feed them recorded or fetched `result` objects, rippled error payloads like
+`{error:"entryNotFound"}` included): `parseVaultSnapshot({ledger, vault, shareIssuance})`, `parseLoanSnapshot(result)`,
+`parseEscrow(result, now, seq?)`, `parseEscrowNode(node, now)`, `parseEscrowList(accountObjects, now)`,
+`parseRlusdTrustline(accountLines, issuer?)`, `parseRlusdBalance`, `parseHasRlusdTrustline`, `parseXrpBalance(accountInfo)`.
+Decimal helpers: `toRlusd`, `toPlainDecimal` (expands `1.5e-7`), `divDecimal`, `dropsToXrpDecimal`.
+
+`VaultSnapshot` / `LoanSnapshot` are defined locally in `reads.ts` (mirror of 05-api §2) until they land in `@xrlp/shared`.
+
+Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr over 90 s) `AssetsTotal` did not move at
+`LoanSet` but rose by the interest at payoff (`1234.5 → 1234.501426940925`), so `sharePrice` went `1 → 1.000001`.
+
 ## Low-level modules (`src/`)
 
 | File | Concern |
@@ -103,3 +131,4 @@ is a follow-up ticket. It maps 1:1:
 | `attest.ts` | memo attestations encode/decode |
 | `credentials.ts` | `CredentialCreate` / `CredentialAccept` / status |
 | `events.ts` | `TxResult` → shared `ChainEvent` |
+| `reads.ts` | read models: vault/loan snapshots, escrows, balances, trust lines (pure parsers + thin fetches) |

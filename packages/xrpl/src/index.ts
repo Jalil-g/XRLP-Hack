@@ -49,3 +49,29 @@ export type { AttestationPayload } from "./attest.ts";
 export { credentialStatus } from "./credentials.ts";
 export type { CredentialType } from "./credentials.ts";
 export { toChainEvent } from "./events.ts";
+
+// XRPL-09: read models (pure parsers over raw rippled JSON + thin validated-ledger fetches)
+export {
+  getVaultSnapshot,
+  getLoanSnapshot,
+  getEscrow,
+  listEscrowsParsed,
+  getBalance,
+  hasRlusdTrustline,
+  fetchVaultSnapshotRaw,
+  parseVaultSnapshot,
+  parseLoanSnapshot,
+  parseEscrow,
+  parseEscrowNode,
+  parseEscrowList,
+  parseRlusdTrustline,
+  parseRlusdBalance,
+  parseHasRlusdTrustline,
+  parseXrpBalance,
+  snapshotPhase,
+  toRlusd,
+  toPlainDecimal,
+  divDecimal,
+  dropsToXrpDecimal,
+} from "./reads.ts";
+export type { VaultSnapshot, LoanSnapshot, EscrowView, RlusdTrustline, VaultSnapshotRaw, RawResult } from "./reads.ts";

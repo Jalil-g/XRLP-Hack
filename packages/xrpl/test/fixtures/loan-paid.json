@@ -1,0 +1,46 @@
+{
+  "capturedAt": "2026-10-24T23:00:08.020Z",
+  "network": "devnet",
+  "description": "same loan after paying TotalValueOutstanding",
+  "ledger": {
+    "account_hash": "B0CD73123C0A0F5D151DBDDCEC4D5C5A951B72F927290194355289D6541EDDC8",
+    "close_flags": 0,
+    "close_time": 846198002,
+    "close_time_human": "2026-Oct-24 23:00:02.000000000 UTC",
+    "close_time_iso": "2026-10-24T23:00:02Z",
+    "close_time_resolution": 10,
+    "closed": true,
+    "ledger_hash": "A25049042EEBCB89158FF14F1106B752F231A3C442B23E4724CF784082750229",
+    "ledger_index": 6390165,
+    "parent_close_time": 846198001,
+    "parent_hash": "8CEEF76A1BD8230185751E66B8CA81CC5F3AEED2074411CF602B5EE0DC987894",
+    "total_coins": "99999210470280102",
+    "transaction_hash": "B03179F1AA4332CDA91C643BF5D78A182A96BD4A6C9908EF794D340900286B85"
+  },
+  "loan": {
+    "index": "014204FF059202F16F9C51C51A52633DAE58B1BC17A26D1C4946858E0C36B87A",
+    "ledger_hash": "A25049042EEBCB89158FF14F1106B752F231A3C442B23E4724CF784082750229",
+    "ledger_index": 6390165,
+    "node": {
+      "Borrower": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+      "Flags": 262144,
+      "GracePeriod": 60,
+      "InterestRate": 50000,
+      "LedgerEntryType": "Loan",
+      "LoanBrokerID": "28AA2A56780CFC1029A3F8B99035A7183C994422611425039B57C7D94293946C",
+      "LoanBrokerNode": "0",
+      "LoanOriginationFee": "5",
+      "LoanScale": -12,
+      "LoanSequence": 1,
+      "OwnerNode": "0",
+      "PaymentInterval": 90,
+      "PeriodicPayment": "1000.00142694092407",
+      "PreviousPaymentDueDate": 846198071,
+      "PreviousTxnID": "E484D22A722AC0382882F58B762AA617DEFEA73D569117F2AE7F765181E96AF3",
+      "PreviousTxnLgrSeq": 6390165,
+      "StartDate": 846197981,
+      "index": "014204FF059202F16F9C51C51A52633DAE58B1BC17A26D1C4946858E0C36B87A"
+    },
+    "validated": true
+  }
+}

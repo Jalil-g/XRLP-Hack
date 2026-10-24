@@ -11,6 +11,7 @@
     "bootstrap": "NODE_USE_ENV_PROXY=1 tsx scripts/bootstrap.ts",
     "demo": "NODE_USE_ENV_PROXY=1 tsx scripts/demo.ts",
     "spike:loanset": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-loanset.ts",
+    "capture:reads": "NODE_USE_ENV_PROXY=1 tsx scripts/capture-read-fixtures.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
