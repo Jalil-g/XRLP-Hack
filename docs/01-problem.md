@@ -157,9 +157,13 @@ Make the draw itself the trust mechanism, enforced on a public ledger:
 1. Pooled investor money sits in an XRPL **Vault** and is lent through the native **Lending Protocol**.
 2. Each milestone's money is locked in an XRPL **escrow** that can only go to *that contractor* or back
    to the project. **Not even the platform can redirect it.** (This is the anti-Nightingale guarantee.)
-3. Release needs a **mandatory human inspector + an independent AI evidence check** (multi-sig).
-4. Every approval is signed and timestamped on-chain, so anyone can audit it.
-5. If a project stalls, escrows expire and unreleased money flows back to investors automatically.
+3. Release works like a software release: each milestone has a **test suite**. A platform-assigned, licensed **inspector audits
+   the site and files a signed report**; the **AI verifies** the builder's evidence and the inspector's audit against the
+   locked Schedule of Values; when every required check passes, the milestone's escrow is released.
+4. Every check result, audit and release is signed and timestamped on-chain, so anyone can audit it.
+5. If a project stalls, escrows expire; unreleased money can only return to the project account, which repays the
+   vault (multi-sig `LoanPay`), and investors redeem at the vault's redemption date. Not automatic, but nobody can
+   divert it.
 
 ## Who we're serving (personas)
 
@@ -174,8 +178,12 @@ Make the draw itself the trust mechanism, enforced on a public ledger:
 
 - Offering loan participations to the public is a regulated activity. This is a **prototype, not an offer to invest**.
   On-chain Credentials + Permissioned Domains show how we'd restrict participation to KYC'd / accredited investors.
-- The AI checks that evidence is **consistent** (time, place, documents, budget). The human inspector confirms **quality**.
-- Money already released to a builder is at risk if they default. That's lending. Unreleased money is protected.
+- The AI checks that evidence is **consistent** (time, place, documents, budget) and that the inspector's audit matches it.
+  The licensed inspector is the eyes on site; the AI is the release gate. The ledger guarantees *where* money can go, not
+  *when*: release timing is a published, auditable test suite run by the platform, with the inspector's signed audit as a
+  mandatory input (ledger-enforced multi-party release needs Smart Escrows, not yet on devnet).
+- Money already released to a builder is at risk if they default. That's lending (platform first-loss cover absorbs
+  part of it). Unreleased money is protected: it can only go to the builder on release or back toward the vault.
 - Much of the draw-delay data comes from vendors who sell draw software (Built, Rabbet, Siteline). The
   independent anchors are NAHB/FDIC (credit), FinCEN/DOJ (fraud), and press coverage of Nightingale/Yieldstreet (investor harm).
 - XLS-65/66 are **not on mainnet yet**. The LendingProtocolV1_1 validator vote opened ~Oct 1 2026, and the amendments
