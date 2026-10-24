@@ -86,6 +86,12 @@ export interface LoanSetParams {
   gracePeriodS?: number;
   /** Allow overpayments (early principal paydown) — needed for the stall path. */
   allowOverpayment?: boolean;
+  /** RLUSD taken from the principal at LoanSet and paid to the broker owner (platform). */
+  originationFee?: string;
+  /** RLUSD added to every LoanPay, paid to the broker owner. */
+  serviceFee?: string;
+  /** Drops. Default: xrpl.js autofill (counts the borrower's SignerList entries for LoanSet). */
+  fee?: string;
   data?: string;
   /**
    * How the borrower countersigns:
@@ -112,6 +118,9 @@ export async function loanSet(p: LoanSetParams): Promise<{ tx: TxResult; loanId:
     PaymentInterval: p.paymentIntervalS,
     GracePeriod: p.gracePeriodS ?? Math.min(p.paymentIntervalS, 60),
     ...(p.allowOverpayment ? { Flags: LoanSetFlags.tfLoanOverpayment } : {}),
+    ...(p.originationFee ? { LoanOriginationFee: p.originationFee } : {}),
+    ...(p.serviceFee ? { LoanServiceFee: p.serviceFee } : {}),
+    ...(p.fee ? { Fee: p.fee } : {}),
     ...(p.data ? { Data: convertStringToHex(p.data.slice(0, 200)) } : {}),
   };
   const prepared = await client.autofill(base);
