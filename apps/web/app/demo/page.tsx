@@ -91,6 +91,9 @@ export default async function DemoPage() {
             action={
               maple && m3 && platform ? (
                 <div className="flex gap-2">
+                  <ActionButton size="sm" variant="secondary" disabled={!["evidence_submitted", "audited"].includes(m3.status)} action={{ kind: "runChecks", projectId: maple.project.id, milestoneId: m3.id }}>
+                    Run checks
+                  </ActionButton>
                   <ActionButton size="sm" disabled={m3.status !== "needs_human"} action={{ kind: "decide", projectId: maple.project.id, milestoneId: m3.id, actor: platform, decision: "approve", reason: "North-side windows confirmed by the inspector's photos." }}>
                     Approve
                   </ActionButton>

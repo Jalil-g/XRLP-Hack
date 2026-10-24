@@ -9,7 +9,8 @@ export const SESSION_COOKIES = { role: "dp_role", investor: "dp_investor", build
 
 export async function getSession() {
   const jar = await cookies();
-  const [parties, builders] = await Promise.all([api.listParties(), api.listBuilders().catch(() => [] as Builder[])]);
+  // Never throw from the layout: if core is down, pages show the error, the header just has no identities.
+  const [parties, builders] = await Promise.all([api.listParties().catch(() => [] as Party[]), api.listBuilders().catch(() => [] as Builder[])]);
   const investors = parties.filter((p) => p.role === "investor");
   const roleCookie = jar.get(SESSION_COOKIES.role)?.value as Role | undefined;
   const investorId = jar.get(SESSION_COOKIES.investor)?.value;
@@ -21,7 +22,7 @@ export async function getSession() {
     platform: parties.find((p) => p.role === "platform"),
     investors,
     builders,
-    parties: parties as Party[],
+    parties,
   };
 }
 

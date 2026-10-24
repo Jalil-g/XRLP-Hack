@@ -434,11 +434,11 @@ export function seed(): { db: MockDb; script: MockScript } {
     milestones: [
       ms("maple-st", 0, "Foundation", "36000.00", ["31-200", "03-300"], "audited", iso("2027-01-15T00:00:00Z")),
       ms("maple-st", 1, "Framing", "42000.00", ["06-100", "06-160"], "audited", iso("2027-03-15T00:00:00Z")),
-      ms("maple-st", 2, "Roof & dry-in", "42000.00", ["07-310", "08-500"], "escrowed", iso("2027-05-15T00:00:00Z")),
+      ms("maple-st", 2, "Roof & dry-in", "42000.00", ["07-310", "08-500"], "audited", iso("2027-05-15T00:00:00Z")),
     ],
     chain: chainIds("maple-st"),
   };
-  const [mm1, mm2] = maple.milestones as [Milestone, Milestone, Milestone];
+  const [mm1, mm2, mm3] = maple.milestones as [Milestone, Milestone, Milestone];
   onboarding(maple, HVB, iso("2026-10-17T14:00:00Z"), true);
   openFunding(maple, iso("2026-10-18T15:00:00Z"), "12000.00");
   deposit(maple.id, AVA, "45000.00", iso("2026-10-19T16:41:00Z"));
@@ -479,6 +479,21 @@ export function seed(): { db: MockDb; script: MockScript } {
     { sovCode: "06-160", status: "partial", note: "Roof deck sheathed; north wall sheathing ~70%" },
   ], [photo("maple-st-m2-a1", "framing", 5, "okafor-site-03.jpg", iso("2026-10-23T18:05:00Z"), { takenAt: iso("2026-10-23T17:10:00Z"), gps: { lat: 41.93126, lng: -74.00048 } })],
   "Framing complete; sheathing in progress on the north elevation.");
+
+  // M3 (off-script): evidence + audit present; the suite comes back below its confidence minimum → operator decision
+  const m3At = iso("2026-10-24T13:20:00Z");
+  evidence[mm3.id] = [
+    photo("maple-st-m3-p1", "dry_in", 1, "IMG_2301.jpg", m3At, { takenAt: iso("2026-10-24T12:10:00Z"), gps: { lat: 41.93122, lng: -74.00038 } }),
+    photo("maple-st-m3-p2", "dry_in", 2, "IMG_2304.jpg", m3At, { takenAt: iso("2026-10-24T12:14:00Z"), gps: { lat: 41.93114, lng: -74.00049 } }),
+    photo("maple-st-m3-p3", "dry_in", 3, "IMG_2309.jpg", m3At, { takenAt: iso("2026-10-24T12:19:00Z"), gps: { lat: 41.93129, lng: -74.00033 } }),
+    photo("maple-st-m3-p4", "dry_in", 4, "IMG_2312.jpg", m3At, { takenAt: iso("2026-10-24T12:25:00Z"), gps: { lat: 41.93118, lng: -74.00044 } }),
+    invoice("maple-st-m3-i1", "hudson-roofing-1188.pdf", "21400.00", m3At),
+    invoice("maple-st-m3-i2", "valley-windows-3307.pdf", "19650.00", m3At),
+  ];
+  audit(maple, mm3, DANA, iso("2026-10-24T15:00:00Z"), [
+    { sovCode: "07-310", status: "done" },
+    { sovCode: "08-500", status: "done", note: "North-side windows installed; photographed from inside" },
+  ], [], "Roof covering complete. All windows and exterior doors installed.");
 
   // ======================================================== B · Birch Rd Cottage (stall → refund)
   const birch: Project = {
