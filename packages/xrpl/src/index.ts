@@ -81,3 +81,8 @@ export {
   dropsToXrpDecimal,
 } from "./reads.ts";
 export type { VaultSnapshot, LoanSnapshot, EscrowView, RlusdTrustline, VaultSnapshotRaw, RawResult } from "./reads.ts";
+// Submission hardening (XRPL-12): per-account lock, retries, typed errors → API ErrorCode
+export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErrorCode } from "./client.ts";
+export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
+export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
+export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
