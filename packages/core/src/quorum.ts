@@ -4,7 +4,7 @@
 // Policy may additionally require 2 distinct inspectors (big milestones).
 import type { Attestation } from "@xrlp/shared";
 
-export const SIGNER_WEIGHTS: Record<Attestation["role"], number> = { inspector: 2, ai_agent: 1, platform: 1 };
+export const SIGNER_WEIGHTS: Record<Attestation["role"], number> = { inspector: 2, ai_agent: 1, platform: 1, release_service: 0 /* v2 role; quorum model removed in CORE-02 */ };
 export const SIGNER_QUORUM = 3;
 
 export interface QuorumStatus {
