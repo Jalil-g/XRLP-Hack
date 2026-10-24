@@ -41,6 +41,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] **Verification fee: 250 RLUSD in the demo.** In the product the fee **scales with project size** (e.g. bps of principal with a floor); the UI and the business slide must say so. (Jalil)
 - [10-24] Tickets v2 in `docs/06-tickets.md`; GitHub issues synced. Retired: INS-04/05/08/09 v1. New: XRPL-14, VER-13, VER-14, INS-06/07 v2, CORE-12, DEMO-01, PITCH-09.
 - [10-24] XRPL-01 proven with the v2 SPV list (3-of-4 counterparty countersign incl. platform as both Account and signer); no master-key fallback needed. Spikes use fresh throwaway faucet wallets (`scripts/spike-lib.ts`), not the bootstrap store. (Jalil's agent)
+- [10-24] Bootstrap roles v2: `issuer, platform, releaseService, builder, investor1..3, inspector1..3, aiAgent, trustee`. RLUSD trust lines only for holders (`platform, builder, investor1..3`); signer-only roles (releaseService, trustee, inspectors, aiAgent) get none. Mint: investors 50k, platform 25k (cover for several prestaged projects), builder 1k (≥ 250 fee). v1 `inspectorA/B` renamed to `inspector1/2` (same account), unknown roles kept under `retired`. Until XRPL-05, SPV list stays v1-shaped with inspector1/2 in the inspector slots and default signers platform + inspector1 (builder isn't on that list yet). (Jalil's agent, XRPL-03)
 
 ## Open
 

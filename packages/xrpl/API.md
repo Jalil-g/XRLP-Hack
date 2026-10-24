@@ -5,9 +5,9 @@ throws `XrplTxError` (with the engine result + explorer link) unless `tesSUCCESS
 `TxResult { hash, explorerUrl, result, tx, meta }` and/or a shared `ChainEvent`.
 
 ```bash
-pnpm --filter @xrlp/xrpl bootstrap      # fund + configure demo wallets -> .data/wallets.json (gitignored)
+pnpm --filter @xrlp/xrpl bootstrap      # fund + configure demo wallets -> $WALLETS_FILE (default .data/wallets.json, gitignored); idempotent
 pnpm --filter @xrlp/xrpl demo           # full money path on devnet, prints a tx table with explorer links
-pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding)
+pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding, wallet-file migration)
 pnpm --filter @xrlp/xrpl typecheck
 ```
 
@@ -38,26 +38,44 @@ Scripts set `NODE_USE_ENV_PROXY=1` so faucet `fetch` honours `HTTPS_PROXY`; the 
 ## High-level API (what `@xrlp/core` calls)
 
 Wallet arguments (`WalletRef`) accept a role name (`"investor1"`), a demo address from
-`.data/wallets.json`, or an xrpl `Wallet`. Roles: `issuer, platform, builder, investor1..3,
-inspectorA, inspectorB, aiAgent`.
+`.data/wallets.json`, or an xrpl `Wallet`.
+
+### Roles (Direction v2, `WALLET_ROLES`)
+
+| Role | RLUSD trust line | Bootstrap RLUSD | Used for |
+|---|---|---|---|
+| `issuer` | — (issuer) | — | mock RLUSD; `DefaultRipple` + `AllowTrustLineLocking` |
+| `platform` | ✔ | 25 000 (`platformRlusd`) | vault + broker owner, first-loss cover, credential issuer, receives verification fees, SPV signer |
+| `releaseService` | — | — | submits `EscrowFinish` / `EscrowCancel`, `release` attestations (XRP fees only) |
+| `builder` | ✔ | 1 000 (`builderRlusd`, ≥ 250 fee) | pays verification fee, receives milestone payouts, SPV signer |
+| `investor1..3` | ✔ | 50 000 each (`investorRlusd`) | vault depositors |
+| `inspector1..3` | — | — | panel; audit attestations (1-drop XRP), SPV signer (assigned one) |
+| `aiAgent` | — | — | verdict attestations; **not** an SPV signer |
+| `trustee` | — | — | 4th SPV signer (investor rep) |
+
+Trust lines only for `RLUSD_HOLDERS` (`platform, builder, investor1..3`); add a role there if it must ever hold RLUSD.
+Bootstrap is idempotent: it reuses `WALLETS_FILE`, generates only missing roles, renames v1 roles
+(`inspectorA → inspector1`, `inspectorB → inspector2`, same account), moves unknown roles to `retired` (seeds kept),
+tops up XRP below 30, skips existing issuer flags / trust lines, and mints only up to the targets. A second run submits 0 txs.
 
 | Function | Txs | Returns |
 |---|---|---|
-| `bootstrapWallets({fresh?, investorRlusd?, platformRlusd?, log?})` | faucet, issuer `AccountSet` (DefaultRipple, AllowTrustLineLocking), `TrustSet`s, RLUSD `Payment`s | `{wallets, txs}` (idempotent) |
+| `bootstrapWallets({fresh?, investorRlusd?, platformRlusd?, builderRlusd?, log?})` | faucet, issuer `AccountSet` (DefaultRipple, AllowTrustLineLocking), `TrustSet`s (RLUSD holders), RLUSD `Payment`s | `{wallets, txs}` (idempotent, 2nd run `txs = []`) |
 | `setupProjectOnChain(project, {subscriptionEndsAt?, redemptionAt?, coverDeposit?, lockSpv=true})` | SPV faucet + `TrustSet`, `SignerListSet`, `AccountSet asfDisableMaster`, `VaultCreate` (closed-ended), `LoanBrokerSet`, optional `LoanBrokerCoverDeposit` | `{spv, vaultId, loanBrokerId, shareMptIssuanceId, vaultPseudoAccount, subscriptionEndsAt, redemptionAt, events, txs, spvWallet}` |
 | `depositToVault({projectId, vaultId, investor, amount})` | `VaultDeposit` | `{tx, event: vault_deposit}` |
 | `closeLoanAndCreateEscrows(project, {conditions, builderAddress?, paymentTotal?, paymentIntervalS?, defaultCancelAfter?, waitForInvestmentPhase=true, spvSigners?, spvSingleKey?, allowOverpayment=true})` | `LoanSet` (platform signs, SPV multisig countersigns), then one `EscrowCreate` per milestone, back to back | `{loanId, loanSetTx, escrows: [{milestoneId, owner, offerSequence, condition, createTx, cancelAfter, amount, escrow}], events}` |
 | `attestApproval({projectId, spv, milestoneId, role, signer, decision, notes?, verdictHash?, condition?})` | 1-drop `Payment` approver → SPV with a JSON memo (`xrlp/attestation/v1`) | `{tx, event: approval_attested, attestation}` |
 | `releaseMilestone({projectId, milestoneId, escrow:{owner, offerSequence, condition}, fulfillment, amount?, submitter?})` | `EscrowFinish` | `{tx, event: escrow_finished}` |
 | `cancelExpiredMilestone({projectId, milestoneId, escrow, cancelAfter?, wait?, amount?})` | `EscrowCancel` | `{tx, event: escrow_cancelled}` |
-| `repayLoan({projectId, spv, loanId, amount?, mode?, signers?})` | `LoanPay` (SPV multisig: inspectorA + platform) | `{tx, event: loan_payment, amount, mode}` |
+| `repayLoan({projectId, spv, loanId, amount?, mode?, signers?})` | `LoanPay` (SPV multisig: platform + inspector1) | `{tx, event: loan_payment, amount, mode}` |
 | `withdrawFromVault({projectId, vaultId, investor, amount})` | `VaultWithdraw` (Redemption phase only) | `{tx, event: vault_withdraw}` |
 | `issueCredential({subject, type, uri?, accept=true, projectId?})` | `CredentialCreate` (platform) + `CredentialAccept` (subject) | `{createTx, acceptTx, event: credential_issued}` |
 | `getVaultStatus(vaultId)` / `getShareBalance(holder, mptId)` / `getLoan(loanId)` / `getSpvInfo(addr)` | reads | |
 
 Defaults: `repayLoan` pays `PeriodicPayment + LoanServiceFee` and picks `late` if past due.
 `closeLoanAndCreateEscrows` uses `milestone.cancelAfter` when set, otherwise `defaultCancelAfter`
-(default: now + termDays). SPV quorum for `LoanSet`/`EscrowCreate` defaults to inspectorA (2) + aiAgent (1).
+(default: now + termDays). SPV quorum for `LoanSet`/`EscrowCreate`/`LoanPay` defaults to platform (1) + inspector1 (2)
+on the interim list (XRPL-05 replaces it with `{platform, builder, inspector, trustee}` w1, quorum 3).
 
 ### Escrow gating (inspector-held preimage, no Shamir)
 
@@ -93,7 +111,7 @@ is a follow-up ticket. It maps 1:1:
 |---|---|
 | `config.ts` | env (`XRPL_WS_URL`, `XRPL_FAUCET_HOST`, `WALLETS_FILE`, `DATA_DIR`), mainnet guard, RLUSD hex code |
 | `client.ts` | shared `Client`, `signAndSubmit`, `submitBlob`, `ledgerTime`, `waitForLedgerTimeAfter`, `createdNodeId` |
-| `wallets.ts` | `.data/wallets.json` store, faucet funding, role resolution |
+| `wallets.ts` | wallet store (`WALLETS_FILE`), roles, pure `migrateWalletFile` / `rlusdTopUpPlan`, faucet funding, role resolution |
 | `rlusd.ts` | issuer flags, trust lines, issue/pay, balances |
 | `vault.ts` | closed-ended `VaultCreate`, deposit/withdraw, share balance, phase |
 | `loan.ts` | `LoanBrokerSet`, `LoanBrokerCoverDeposit`, dual-signed `LoanSet`, multisig `LoanPay` |
