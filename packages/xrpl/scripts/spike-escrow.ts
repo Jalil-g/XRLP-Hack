@@ -125,7 +125,8 @@ try {
   const c3 = generateMilestoneCondition();
   const e3 = await create("3", "builder2", "25", c3, longCancel);
   const err3 = await spike.fails("3: EscrowFinish (correct fulfillment) -> builder2 without RLUSD trust line", "tecNO_LINE", () =>
-    finishEscrow({ submitter: w.releaseService, owner: spv, offerSequence: e3.offerSequence, condition: c3.condition, fulfillment: c3.fulfillment }),
+    // Raw on purpose: finishEscrow() runs preflightFinish (XRPL-14), which refuses this client-side; here we want the on-ledger leak.
+    rawFinish(w.releaseService, e3, c3.condition, c3.fulfillment),
   );
   const t3 = await fetchTx(err3.hash!);
   const open3 = await escrowOpen(spv, e3.tx.hash);
