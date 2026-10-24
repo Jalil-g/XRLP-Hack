@@ -74,6 +74,7 @@ export { CREDENTIAL_TYPES, credentialTypeHex, credentialTypeFromHex, ensureCrede
 export type { CredentialStatus, PermissionedDomainEntry } from "./credentials.ts";
 export { vaultPrivacyFields } from "./vault.ts";
 // XRPL-09: read models (pure parsers over raw rippled JSON + thin validated-ledger fetches)
+export {
   getVaultSnapshot,
   getLoanSnapshot,
   getEscrow,
