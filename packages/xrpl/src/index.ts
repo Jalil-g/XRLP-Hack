@@ -75,3 +75,65 @@ export {
   validateVaultDates,
 } from "./lending-math.ts";
 export type { BrokerRates, LoanSchedule, VaultDates } from "./lending-math.ts";
+
+// XRPL-14
+export {
+  preflightFinish,
+  evaluatePreflight,
+  fetchPreflightSnapshot,
+  assertPreflightOk,
+  unsafeReleaseError,
+  escrowFinishFee,
+  UnsafeReleaseError,
+  UNSAFE_RELEASE,
+  DEFAULT_MARGIN_S,
+  DEFAULT_LAST_LEDGER_OFFSET,
+} from "./preflight.ts";
+export type { PreflightRequest, PreflightResult, PreflightReason, PreflightSnapshot, PreflightDetails, LedgerNow } from "./preflight.ts";
+// XRPL-08: fee, credentials x3, permissioned domain, private vault, attestations (xrlp/attest/v1)
+export { payVerificationFee, grantCredential, createDomain, attest, submitSignedBlob, ATTEST_EVENT_KIND, VERIFICATION_FEE_RLUSD } from "./compliance.ts";
+export {
+  ATTEST_MEMO_TYPE,
+  ATTEST_KINDS,
+  validateAttestMemo,
+  encodeAttestMemo,
+  decodeAttestMemo,
+  decodeAnyAttestation,
+  buildAttestTx,
+  prepareAttestTx,
+  verifyAttestBlob,
+} from "./attest.ts";
+export type { AttestMemo, AttestKind, VerifiedAttestBlob } from "./attest.ts";
+export { CREDENTIAL_TYPES, credentialTypeHex, credentialTypeFromHex, ensureCredential, ensureDomain, listDomains } from "./credentials.ts";
+export type { CredentialStatus, PermissionedDomainEntry } from "./credentials.ts";
+export { vaultPrivacyFields } from "./vault.ts";
+// XRPL-09: read models (pure parsers over raw rippled JSON + thin validated-ledger fetches)
+export {
+  getVaultSnapshot,
+  getLoanSnapshot,
+  getEscrow,
+  listEscrowsParsed,
+  getBalance,
+  hasRlusdTrustline,
+  fetchVaultSnapshotRaw,
+  parseVaultSnapshot,
+  parseLoanSnapshot,
+  parseEscrow,
+  parseEscrowNode,
+  parseEscrowList,
+  parseRlusdTrustline,
+  parseRlusdBalance,
+  parseHasRlusdTrustline,
+  parseXrpBalance,
+  snapshotPhase,
+  toRlusd,
+  toPlainDecimal,
+  divDecimal,
+  dropsToXrpDecimal,
+} from "./reads.ts";
+export type { VaultSnapshot, LoanSnapshot, EscrowView, RlusdTrustline, VaultSnapshotRaw, RawResult } from "./reads.ts";
+// Submission hardening (XRPL-12): per-account lock, retries, typed errors → API ErrorCode
+export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErrorCode } from "./client.ts";
+export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
+export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
+export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";

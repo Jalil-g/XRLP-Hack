@@ -1,0 +1,167 @@
+{
+  "capturedAt": "2026-10-24T23:00:02.147Z",
+  "network": "devnet",
+  "description": "owner=borrower: open (100.1234567, CancelAfter +1h), expired (CancelAfter passed, not cancelled), finished (entryNotFound)",
+  "ledger": {
+    "account_hash": "1B9D46FCBA8FE586A24DACA265322054AD15426B2BB57903665FC3F0D0E40AB0",
+    "close_flags": 0,
+    "close_time": 846198000,
+    "close_time_human": "2026-Oct-24 23:00:00.000000000 UTC",
+    "close_time_iso": "2026-10-24T23:00:00Z",
+    "close_time_resolution": 10,
+    "closed": true,
+    "ledger_hash": "81FED156A560F0DBDC282441B747D7E53481B1CF1CC91362D63A9925486E9A02",
+    "ledger_index": 6390163,
+    "parent_close_time": 846197992,
+    "parent_hash": "04EF2C8368E72433ADB048925B0F6056763AFC5D7724129EB04F01B35E684B44",
+    "total_coins": "99999210470280114",
+    "transaction_hash": "A57257CD35A9A5B2918DEC09CF64E66DBE5EFD68ADE5F36E5751B7AB48097253"
+  },
+  "owner": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+  "destination": "rMoWGA4fUGeQrFoLGCU637uMHzVvN4CRYG",
+  "sequences": {
+    "open": 6390125,
+    "expired": 6390126,
+    "finished": 6390127
+  },
+  "open": {
+    "index": "3066EA51118DEA5C2EC3C18E2DE287608A1A98514EEC5B8DF45A6102BD37FB74",
+    "ledger_hash": "81FED156A560F0DBDC282441B747D7E53481B1CF1CC91362D63A9925486E9A02",
+    "ledger_index": 6390163,
+    "node": {
+      "Account": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+      "Amount": {
+        "currency": "524C555344000000000000000000000000000000",
+        "issuer": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+        "value": "100.1234567"
+      },
+      "CancelAfter": 846201572,
+      "Condition": "A025802082C3F5A85984F835A997482D08ED3AC2B799C674A4889BEA069C143971D9CC53810120",
+      "Destination": "rMoWGA4fUGeQrFoLGCU637uMHzVvN4CRYG",
+      "DestinationNode": "0",
+      "Flags": 0,
+      "IssuerNode": "0",
+      "LedgerEntryType": "Escrow",
+      "OwnerNode": "0",
+      "PreviousTxnID": "596071954B176E99A3155639AC6F744D3E1697C875134A519CD0834844F25971",
+      "PreviousTxnLgrSeq": 6390157,
+      "Sequence": 6390125,
+      "index": "3066EA51118DEA5C2EC3C18E2DE287608A1A98514EEC5B8DF45A6102BD37FB74"
+    },
+    "validated": true
+  },
+  "expired": {
+    "index": "33A2390243F0274891FF8017D764B4F3963D92B3B7F7C8DFED29231DA86B8ACA",
+    "ledger_hash": "81FED156A560F0DBDC282441B747D7E53481B1CF1CC91362D63A9925486E9A02",
+    "ledger_index": 6390163,
+    "node": {
+      "Account": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+      "Amount": {
+        "currency": "524C555344000000000000000000000000000000",
+        "issuer": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+        "value": "50"
+      },
+      "CancelAfter": 846197992,
+      "Condition": "A0258020B193DBDF3B3DB965E6AA96B04EC5923874E4079F4BF680C2565FF560729B3DB9810120",
+      "Destination": "rMoWGA4fUGeQrFoLGCU637uMHzVvN4CRYG",
+      "DestinationNode": "0",
+      "Flags": 0,
+      "IssuerNode": "0",
+      "LedgerEntryType": "Escrow",
+      "OwnerNode": "0",
+      "PreviousTxnID": "3F114AA689ABDDAC498692289C5833AEE7498AF3AC6F867CACDB4E3CFDBBD2DE",
+      "PreviousTxnLgrSeq": 6390159,
+      "Sequence": 6390126,
+      "index": "33A2390243F0274891FF8017D764B4F3963D92B3B7F7C8DFED29231DA86B8ACA"
+    },
+    "validated": true
+  },
+  "finished": {
+    "api_version": 2,
+    "error": "entryNotFound",
+    "error_code": 98,
+    "error_message": "Entry not found.",
+    "id": 328,
+    "index": "42758A2621ADD54EA440A02C6F2025110CE55D36C8312E096C95F6F0B475B139",
+    "ledger_hash": "81FED156A560F0DBDC282441B747D7E53481B1CF1CC91362D63A9925486E9A02",
+    "ledger_index": 6390163,
+    "request": {
+      "api_version": 2,
+      "command": "ledger_entry",
+      "escrow": {
+        "owner": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+        "seq": 6390127
+      },
+      "id": 328,
+      "ledger_index": 6390163
+    },
+    "status": "error",
+    "type": "response",
+    "validated": true
+  },
+  "accountObjects": {
+    "account": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+    "account_objects": [
+      {
+        "Account": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+        "Amount": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+          "value": "100.1234567"
+        },
+        "CancelAfter": 846201572,
+        "Condition": "A025802082C3F5A85984F835A997482D08ED3AC2B799C674A4889BEA069C143971D9CC53810120",
+        "Destination": "rMoWGA4fUGeQrFoLGCU637uMHzVvN4CRYG",
+        "DestinationNode": "0",
+        "Flags": 0,
+        "IssuerNode": "0",
+        "LedgerEntryType": "Escrow",
+        "OwnerNode": "0",
+        "PreviousTxnID": "596071954B176E99A3155639AC6F744D3E1697C875134A519CD0834844F25971",
+        "PreviousTxnLgrSeq": 6390157,
+        "Sequence": 6390125,
+        "index": "3066EA51118DEA5C2EC3C18E2DE287608A1A98514EEC5B8DF45A6102BD37FB74"
+      },
+      {
+        "Account": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+        "Amount": {
+          "currency": "524C555344000000000000000000000000000000",
+          "issuer": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+          "value": "50"
+        },
+        "CancelAfter": 846197992,
+        "Condition": "A0258020B193DBDF3B3DB965E6AA96B04EC5923874E4079F4BF680C2565FF560729B3DB9810120",
+        "Destination": "rMoWGA4fUGeQrFoLGCU637uMHzVvN4CRYG",
+        "DestinationNode": "0",
+        "Flags": 0,
+        "IssuerNode": "0",
+        "LedgerEntryType": "Escrow",
+        "OwnerNode": "0",
+        "PreviousTxnID": "3F114AA689ABDDAC498692289C5833AEE7498AF3AC6F867CACDB4E3CFDBBD2DE",
+        "PreviousTxnLgrSeq": 6390159,
+        "Sequence": 6390126,
+        "index": "33A2390243F0274891FF8017D764B4F3963D92B3B7F7C8DFED29231DA86B8ACA"
+      }
+    ],
+    "ledger_hash": "81FED156A560F0DBDC282441B747D7E53481B1CF1CC91362D63A9925486E9A02",
+    "ledger_index": 6390163,
+    "validated": true
+  },
+  "builderLines": {
+    "account": "rMoWGA4fUGeQrFoLGCU637uMHzVvN4CRYG",
+    "ledger_hash": "81FED156A560F0DBDC282441B747D7E53481B1CF1CC91362D63A9925486E9A02",
+    "ledger_index": 6390163,
+    "lines": [
+      {
+        "account": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+        "balance": "25",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "1000000000",
+        "limit_peer": "0",
+        "quality_in": 0,
+        "quality_out": 0
+      }
+    ],
+    "validated": true
+  }
+}
