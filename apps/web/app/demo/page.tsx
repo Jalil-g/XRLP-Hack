@@ -1,165 +1,164 @@
 import Link from "next/link";
-import { ArrowUpRight, Building2, Clapperboard, HardHat, Link2, Sparkles } from "lucide-react";
+import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { DemoSteps } from "@/components/demo/demo-steps";
-import { ApprovalsPanel } from "@/components/project/approvals-panel";
-import { ChainTimeline } from "@/components/project/chain-timeline";
-import { EscrowPipeline } from "@/components/project/escrow-pipeline";
-import { EvidenceGallery } from "@/components/project/evidence-gallery";
-import { MilestoneStatusIcon } from "@/components/project/milestone-status-icon";
-import { VerdictCard } from "@/components/project/verdict-card";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StackedBar } from "@/components/ui/progress";
-import { getDemoState, getProjectDetail } from "@/lib/api";
-import { MILESTONE_STATUS, focusMilestoneIndex, projectStatus } from "@/lib/display";
-import { cn, formatAmount, toCents } from "@/lib/utils";
+import { PageHeader } from "@/components/ui/layout";
+import { Tag } from "@/components/ui/tag";
+import { api } from "@/lib/api";
+import type { ProjectDetail } from "@/lib/contract";
+import { MILESTONE_STATUS, PROJECT_STATUS } from "@/lib/display";
+import { getSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Demo control room" };
+export const metadata = { title: "Demo" };
 
-/** One-screen story for judges: script on the left; builder | AI | inspector | ledger panes on the right. */
+const INSPECTOR_APP_URL = process.env.NEXT_PUBLIC_INSPECTOR_APP_URL ?? "http://localhost:3001";
+
+const get = (id: string) => api.getProject(id).catch(() => undefined);
+
 export default async function DemoPage() {
-  const demo = await getDemoState();
-  const detail = await getProjectDetail(demo.project.project.id);
-  const { project, funds } = detail;
-  const focus = detail.milestones[focusMilestoneIndex(detail.milestones)]!;
-  const status = projectStatus(project);
-  const milestoneTitles = Object.fromEntries(project.milestones.map((m) => [m.id, m.title]));
-  const atBuilder = Math.max(0, toCents(funds.released) - toCents(funds.repaid));
-  const money = [
-    { label: "Vault (awaiting close)", value: toCents(funds.awaitingClose), className: "bg-sky-400" },
-    { label: "Locked in escrow", value: toCents(funds.escrowed), className: "bg-lock" },
-    { label: "Released to builder", value: atBuilder, className: "bg-ok" },
-    { label: "Back in vault", value: toCents(funds.repaid) + toCents(funds.refunded), className: "bg-emerald-300" },
-  ];
+  const [session, maple, birch, cedar] = await Promise.all([getSession(), get("maple-st"), get("birch-rd"), get("cedar-ln")]);
+  const platform = session.platform?.address;
+  const [m1, m2, m3] = maple?.project.milestones ?? [];
+  const expired = birch?.project.milestones.find((m) => m.status === "expired");
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-10">
       <AutoRefresh ms={2500} />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="flex size-9 items-center justify-center rounded-lg bg-ink text-white">
-            <Clapperboard className="size-4" />
-          </span>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">Demo control room</h1>
-            <p className="text-[13px] text-muted">
-              Steps follow docs/04-demo-script.md · acting on <span className="font-medium text-ink-2">{project.name}</span>
-            </p>
+      <PageHeader
+        title="Demo control room"
+        description="Scenes in the order of the 3-minute demo. Each button is one API call; the toast shows its transactions."
+        action={
+          <div className="flex gap-2">
+            <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center rounded-control bg-band px-4 text-small font-medium hover:bg-band-2">
+              Open inspector app
+            </a>
+            <ActionButton variant="secondary" action={{ kind: "resetDemo" }}>
+              Reset demo
+            </ActionButton>
           </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge tone={status.tone} dot>
-            {status.label}
-          </Badge>
-          <Link href={`/projects/${project.id}`} className="inline-flex items-center gap-1 text-[13px] font-medium text-brand hover:underline">
-            Open project page <ArrowUpRight className="size-3.5" />
-          </Link>
-        </div>
-      </div>
+        }
+      />
 
-      {/* Milestone strip */}
-      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${detail.milestones.length}, minmax(0, 1fr))` }}>
-        {detail.milestones.map((v) => (
-          <div
-            key={v.milestone.id}
-            className={cn(
-              "flex items-center gap-2.5 rounded-xl border bg-surface px-3 py-2 shadow-card",
-              v.milestone.id === focus.milestone.id ? "border-brand ring-2 ring-brand/15" : "border-line",
-            )}
-          >
-            <MilestoneStatusIcon status={v.milestone.status} className="size-7" />
-            <div className="min-w-0">
-              <div className="truncate text-[13px] font-semibold">{v.milestone.title}</div>
-              <div className="text-[11.5px] text-muted">
-                {formatAmount(v.milestone.amount)} · {MILESTONE_STATUS[v.milestone.status].short}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+      <ol className="divide-y divide-line border-y border-line">
+        <Scene n={1} title="Verified project" body="The builder paid to be checked; the AI verified identity, feasibility and capability; the credential is on the ledger." screen={maple && <ScreenLink href="/builder" label="Builder page" />} />
+        <Scene
+          n={2}
+          title="Locked state"
+          body="Investors funded the vault, the loan went to the project account, and each milestone sits in its own escrow."
+          state={maple && <Tag tone={PROJECT_STATUS[maple.project.status].tone}>{PROJECT_STATUS[maple.project.status].label}</Tag>}
+          screen={maple && <ScreenLink href="/projects/maple-st" label="Maple St" />}
+        />
+        <Scene
+          n={3}
+          title="Money shot: checks pass, escrow releases"
+          body="The inspector's signed audit plus the AI's checks run on Foundation. All green, so the release service finishes the escrow."
+          state={m1 && <MilestoneTag d={maple!} id={m1.id} />}
+          action={maple && m1 && <ActionButton disabled={!["evidence_submitted", "audited", "failed"].includes(m1.status)} action={{ kind: "runChecks", projectId: maple.project.id, milestoneId: m1.id }}>Run checks</ActionButton>}
+          screen={m1 && <ScreenLink href={`/projects/maple-st?m=${m1.id}`} label="Foundation" />}
+        />
+        <Scene
+          n={4}
+          title="Fraud held: one red check"
+          body="Framing includes a photo reused from Oak Ave. No duplicate photo fails, so the money stays locked."
+          state={m2 && <MilestoneTag d={maple!} id={m2.id} />}
+          action={maple && m2 && <ActionButton disabled={!["evidence_submitted", "audited", "failed"].includes(m2.status)} action={{ kind: "runChecks", projectId: maple.project.id, milestoneId: m2.id }}>Run checks</ActionButton>}
+          screen={m2 && <ScreenLink href={`/projects/maple-st?m=${m2.id}`} label="Framing" />}
+        />
+        <Scene
+          n={5}
+          title="Ledger says no"
+          body="The platform submits a finish for Framing with a wrong fulfillment. The ledger refuses it: tecCRYPTOCONDITION_ERROR."
+          action={maple && m2 && <ActionButton variant="danger" disabled={!m2.escrow || !!m2.escrow.finishTx} action={{ kind: "tryStealDemo", projectId: maple.project.id, milestoneId: m2.id }}>Platform tries to release</ActionButton>}
+          screen={m2 && <ScreenLink href={`/projects/maple-st?m=${m2.id}`} label="Framing" />}
+        />
+        <Scene
+          n={6}
+          title="Stall: escrow expires, money goes back"
+          body="Birch Rd's Finishes escrow passed its CancelAfter. The keeper cancels it and the project account repays the vault."
+          state={birch && (expired ? <Tag tone="review">1 expired escrow</Tag> : <Tag>Nothing expired</Tag>)}
+          action={<ActionButton disabled={!expired} action={{ kind: "keeperTick" }}>Keeper tick</ActionButton>}
+          screen={birch && <ScreenLink href="/projects/birch-rd" label="Birch Rd" />}
+        />
+      </ol>
 
-      <div className="grid gap-5 xl:grid-cols-[300px_1fr]">
-        <aside>
-          <DemoSteps steps={demo.steps} />
-        </aside>
-
-        <div className="grid gap-5 lg:grid-cols-2">
-          {/* Builder */}
-          <Pane icon={Building2} title="Builder" subtitle={`${detail.builder.name} · ${focus.milestone.title}`}>
-            {focus.milestone.status === "pending" ? (
-              <p className="text-[13px] text-muted">Escrows are created when the loan closes.</p>
-            ) : (
-              <div className="space-y-4">
-                <EscrowPipeline view={focus} />
-                {focus.evidence.length ? (
-                  <EvidenceGallery evidence={focus.evidence} verdict={focus.verdict} compact />
-                ) : (
-                  <p className="text-[13px] text-muted">Waiting for the builder to upload evidence for {focus.milestone.title}.</p>
-                )}
-              </div>
-            )}
-          </Pane>
-
-          {/* AI */}
-          <div className="min-w-0">
-            <PaneLabel icon={Sparkles} title="AI verifier" />
-            <VerdictCard verdict={focus.verdict} />
-          </div>
-
-          {/* Inspector */}
-          <div className="min-w-0">
-            <PaneLabel icon={HardHat} title="Inspector & signers" />
-            <ApprovalsPanel view={focus} />
-          </div>
-
-          {/* Ledger */}
-          <Pane icon={Link2} title="Ledger" subtitle="XRPL devnet · live">
-            <StackedBar total={Math.max(toCents(funds.target), toCents(funds.raised))} segments={money} className="h-3" />
-            <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-[12px]">
-              {money.map((m) => (
-                <li key={m.label} className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-1.5 text-muted">
-                    <span className={cn("size-2 rounded-sm", m.className)} />
-                    {m.label}
-                  </span>
-                  <span className="tabular font-medium">{formatAmount(m.value / 100)}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-2 text-[12px] text-muted">
-              Share price <span className="font-mono font-medium text-ink">{detail.vault.sharePrice}</span>
-            </div>
-            <div className="mt-4 max-h-[420px] overflow-y-auto border-t border-line pt-4">
-              <ChainTimeline events={detail.timeline} directory={detail.directory} milestoneTitles={milestoneTitles} limit={12} />
-            </div>
-          </Pane>
-        </div>
+      <div className="space-y-4">
+        <h2 className="text-heading">Off-script</h2>
+        <ol className="divide-y divide-line border-y border-line">
+          <Scene
+            title="Operator decision"
+            body="Roof & dry-in comes back below its confidence minimum. The platform operator approves or rejects with a reason that is attested on-chain."
+            state={m3 && <MilestoneTag d={maple!} id={m3.id} />}
+            action={
+              maple && m3 && platform ? (
+                <div className="flex gap-2">
+                  <ActionButton size="sm" disabled={m3.status !== "needs_human"} action={{ kind: "decide", projectId: maple.project.id, milestoneId: m3.id, actor: platform, decision: "approve", reason: "North-side windows confirmed by the inspector's photos." }}>
+                    Approve
+                  </ActionButton>
+                  <ActionButton size="sm" variant="danger" disabled={m3.status !== "needs_human"} action={{ kind: "decide", projectId: maple.project.id, milestoneId: m3.id, actor: platform, decision: "reject", reason: "North-side windows not shown; resubmit photos." }}>
+                    Reject
+                  </ActionButton>
+                </div>
+              ) : undefined
+            }
+            screen={m3 && <ScreenLink href={`/projects/maple-st?m=${m3.id}`} label="Roof & dry-in" />}
+          />
+          <Scene
+            title="Onboard a new builder"
+            body="Cedar Ln ADU: pay the fee, run verification, then lock terms to open funding."
+            state={cedar && <Tag tone={PROJECT_STATUS[cedar.project.status].tone}>{PROJECT_STATUS[cedar.project.status].label}</Tag>}
+            action={
+              cedar && platform ? (
+                <div className="flex gap-2">
+                  <ActionButton size="sm" disabled={cedar.project.status !== "draft"} action={{ kind: "payFee", projectId: cedar.project.id, builder: cedar.builder.address }}>
+                    Pay fee
+                  </ActionButton>
+                  <ActionButton size="sm" disabled={cedar.project.status !== "verifying"} action={{ kind: "verifyProject", projectId: cedar.project.id }}>
+                    Verify
+                  </ActionButton>
+                  <ActionButton size="sm" disabled={cedar.project.status !== "verified"} action={{ kind: "lockTerms", projectId: cedar.project.id, actor: platform }}>
+                    Lock terms
+                  </ActionButton>
+                </div>
+              ) : undefined
+            }
+            screen={cedar && <ScreenLink href={`/projects/${cedar.project.id}`} label="Cedar Ln" />}
+          />
+        </ol>
       </div>
     </div>
   );
 }
 
-function PaneLabel({ icon: Icon, title }: { icon: typeof Building2; title: string }) {
+function Scene({ n, title, body, state, action, screen }: { n?: number; title: string; body: string; state?: React.ReactNode; action?: React.ReactNode; screen?: React.ReactNode }) {
   return (
-    <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.08em] text-faint uppercase">
-      <Icon className="size-3.5" />
-      {title}
-    </div>
+    <li className="grid grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 py-5">
+      <span className="tabular pt-0.5 text-body text-ink-2">{n ?? ""}</span>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-3">
+          <h3 className="text-body font-semibold">{title}</h3>
+          {state}
+        </div>
+        <p className="mt-1 max-w-[70ch] text-small text-ink-2">{body}</p>
+      </div>
+      <div className="flex items-center gap-4">
+        {screen}
+        {action}
+      </div>
+    </li>
   );
 }
 
-function Pane({ icon, title, subtitle, children }: { icon: typeof Building2; title: string; subtitle: string; children: React.ReactNode }) {
+function ScreenLink({ href, label }: { href: string; label: string }) {
   return (
-    <div className="min-w-0">
-      <PaneLabel icon={icon} title={title} />
-      <Card>
-        <CardHeader className="py-3.5">
-          <CardTitle>{subtitle}</CardTitle>
-        </CardHeader>
-        <CardContent>{children}</CardContent>
-      </Card>
-    </div>
+    <Link href={href} className="text-small text-link hover:underline">
+      {label}
+    </Link>
   );
+}
+
+function MilestoneTag({ d, id }: { d: ProjectDetail; id: string }) {
+  const m = d.project.milestones.find((x) => x.id === id);
+  if (!m) return null;
+  const s = MILESTONE_STATUS[m.status];
+  return <Tag tone={s.tone}>{s.label}</Tag>;
 }
