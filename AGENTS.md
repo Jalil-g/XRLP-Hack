@@ -14,14 +14,16 @@ Read in order: `docs/00-overview.md` → `docs/decisions.md` (**Direction v2**) 
 
 ## Repo layout & ownership
 
-| Path | Owns | Notes |
-|---|---|---|
-| `packages/shared` | everyone (PR only) | Domain types + state machine. **The contract.** Don't change shapes casually. |
-| `packages/xrpl` | XRPL owner | All ledger transactions + devnet scripts |
-| `packages/verifier` | AI owner | Claude-based evidence verification; must work in `VERIFIER_MODE=mock` |
-| `packages/core` | backend owner | Workflow orchestration + JSON store |
-| `apps/web` | frontend owner | Next.js UI + route handlers |
-| `docs/` | everyone | Ideas go in `docs/ideas/<short-name>.md` (one file per idea → no merge conflicts) |
+| Path | Owner | Epic | Notes |
+|---|---|---|---|
+| `packages/xrpl` | @Jalil-g | #1 | All ledger transactions, devnet bootstrap/demo, real LedgerPort adapter |
+| `packages/verifier` | @elmir132 | #2 | AI evidence checks; must work in `VERIFIER_MODE=mock`; real VerifierPort adapter |
+| `apps/web` | @bri-yin | #3 | Investor/builder UI + `/demo` control room; data only via `lib/api.ts` |
+| `apps/inspector`, `packages/ledger-signer` | @RoroDev2023 | #4 | Inspector app; holds escrow release keys client-side; Ledger signing |
+| `packages/core`, `packages/shared`, root config | @seanpatrickmay | #5 | Orchestrator, HTTP routes, integration. `shared` = **the contract** → PR reviewed by Sean |
+| `docs/` | everyone | — | Ideas go in `docs/ideas/<short-name>.md` (one file per idea → no merge conflicts) |
+
+Tickets: `docs/06-tickets.md` is the draft; **GitHub Issues are the source of truth**. Contracts: `docs/05-api.md`.
 
 **Stay inside your directory.** If you need a change in someone else's package, open an issue or PR.
 
