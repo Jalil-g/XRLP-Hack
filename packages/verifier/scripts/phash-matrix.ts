@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { hammingDistance, perceptualHash } from "../src/meta.ts";
 import { FIXTURES_DIR } from "../fixtures/scenarios.ts";
 
-const dir = process.argv[2] ?? join(FIXTURES_DIR, "photos");
+const dir = process.argv[2] ?? join(FIXTURES_DIR, "evidence", "maple-st", "framing");
 const files = (await readdir(dir)).filter((f) => /\.(jpe?g|png|webp)$/i.test(f)).sort();
 const hashes = await Promise.all(files.map(async (f) => perceptualHash(await readFile(join(dir, f)))));
 const short = files.map((f) => f.replace(/\.\w+$/, "").slice(0, 14));

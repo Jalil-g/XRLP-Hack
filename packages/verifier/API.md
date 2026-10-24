@@ -121,13 +121,30 @@ fails to typecheck if they drift. The adapter only needs to add `mode` and set `
 `PriorEvidence` (with `projectId`/`milestoneId`) when you can: it gives better reasons and skips same-milestone resubmits.
 
 ## Fixtures (`fixtures/`)
-Synthetic only (no third-party photos). `fixtures/scenarios.ts` exports `project`, `builder`, `SCENARIOS`
-(A pass, B reused photo + stale EXIF → fail, C off-site GPS → needs_human, D invoice shortfall → fail) and
-`builderOnboardingInput()`. Core/web can use these as seed data.
+Photos are **real CC0 / public-domain photographs** (authors and licences in `fixtures/SOURCES.txt`) re-stamped with
+fixture EXIF (time + GPS) so they read as taken at the fictional Maple St site; the EXIF is synthetic. Companies,
+licences, invoices, the lien waiver, inspectors (`inspectors.json`, MOCK) and audits are synthetic.
+
+Layout: `evidence/maple-st/{foundation,framing,dry_in}/` (dry_in has a note: no evidence yet), `evidence/oak-ave/framing/`
+(the photo that gets copied), `evidence/maple-st/audits/*.json` (one `InspectorAudit` per milestone, bound to its builder
+bundle by `evidenceBundleHash`, with inspector photos under `audits/photos/`), `builder/` (licence, insurance),
+`manifest.json` (expected outcome + failing checks per scenario) and `source/` (resized originals used by
+`pnpm --filter @xrlp/verifier fixtures`, deterministic). Total well under 15 MB.
+
+`fixtures/scenarios.ts` exports `project`, `builder`, `SCENARIOS`, `PATHS`, `loadAudit()` and `builderOnboardingInput()`.
+- **A** foundation, honest, audit all `done` → pass
+- **B** framing: one photo is a copy of the Oak Ave photo with a **fresh** EXIF date, in-geofence GPS and a neutral file
+  name (`IMG_5121.jpg`), so **only pHash catches it**; the inspector marks sheathing `partial` → fail (`no_duplicate_photo`)
+- **C** one photo geotagged 2.6 km away → needs_human (`gps_within_site`)
+- **D** invoices cover 73.6% of the draw → fail (`invoice_matches_budget`)
+- **E** honest evidence, **no inspector audit** → fail (`inspector_audit_present`); marked `pending: "VER-03"` until that check exists
+
+Measured pHash distances (64-bit): the copy is 4 from the Oak Ave original; every other pair of distinct fixture photos
+is 24 or more. Threshold: 10 = fail. Core/web can use these as seed data.
 
 **Demo-day gotcha:** fixture photos carry fixed EXIF dates (Oct 19–23 2026). If core creates escrows live and
 passes `escrowCreatedAt = now`, scenario A will fail `photo_fresh`. Either pass the seeded timeline from
-`FIX.times`, or re-stamp photos with `stampExif()` from `scripts/make-fixtures.ts`.
+`FIX.times`, or re-stamp photos with `stampExif()` from `scripts/make-fixtures.ts` (it re-creates every fixture from `fixtures/source/`).
 
 ## Env
 `VERIFIER_MODE` (`mock`|`live`), `ANTHROPIC_API_KEY` (live only), `VERIFIER_MODEL` (default `claude-opus-5-5`), `DATA_DIR`.

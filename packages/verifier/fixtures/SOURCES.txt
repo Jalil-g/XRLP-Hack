@@ -1,0 +1,69 @@
+DRAWPROOF VERIFIER FIXTURES: SOURCES AND LICENCES
+
+What is real and what is not
+- The PHOTOGRAPHS are real, published under CC0 or in the public domain (listed below). They were
+  resized to 1280 px wide (fixtures/source/), some cropped, and re-stamped with FIXTURE EXIF (capture
+  time and GPS) by scripts/make-fixtures.ts so they read as taken at the fictional Maple St site.
+  The EXIF on every output photo is therefore synthetic, and none of these photos shows Maple St.
+- Everything else is SYNTHETIC and labelled as such: the builder, project, invoices, lien waiver,
+  footing sign-off, licence and insurance documents, the inspectors (fixtures/inspectors.json,
+  names fictional, MOCK), the inspector audits, and the audit txHash values (fake, derived from a
+  hash of the file path; they are not on any ledger).
+- Oak Ave is a fictional earlier project. Its photo is the source of the 'reused photo' scenario.
+
+Photo sources (Wikimedia Commons). CC0 and public-domain works need no attribution; credit is given anyway.
+
+- Foundation and retaining wall.jpg
+  Page:    https://commons.wikimedia.org/wiki/File:Foundation_and_retaining_wall.jpg
+  Licence: CC0
+  Author:  Wikideas1
+  Used as: fixtures/source/foundation_wide.jpg, foundation_walls_closeup.jpg (crop), foundation_site_east.jpg (crop)
+  Output:  fixtures/evidence/maple-st/foundation/foundation-01-wide.jpg; maple-st/foundation/foundation-03-walls.jpg and foundation-03-walls-b.jpg; maple-st/audits/photos/audit-foundation-02-site.jpg
+
+- A worker ties together reinforcing bar, or rebar, to strengthen concrete floors for a facility that will house 372 students as part of the Herat University Women's Dormitory Project in Herat province 140311-A-DT641-242.jpg
+  Page:    https://commons.wikimedia.org/wiki/File:A_worker_ties_together_reinforcing_bar,_or_rebar,_to_strengthen_concrete_floors_for_a_facility_that_will_house_372_students_as_part_of_the_Herat_University_Women%27s_Dormitory_Project_in_Herat_province_140311-A-DT641-242.jpg
+  Licence: Public domain
+  Author:  Bill Dowell
+  Used as: fixtures/source/foundation_rebar.jpg
+  Output:  fixtures/evidence/maple-st/audits/photos/audit-foundation-01-rebar.jpg
+
+- Concrete Foundation Scabbling Closeup.jpg
+  Page:    https://commons.wikimedia.org/wiki/File:Concrete_Foundation_Scabbling_Closeup.jpg
+  Licence: Public domain
+  Author:  CheMechanical
+  Used as: fixtures/source/foundation_anchor_bolt.jpg
+  Output:  fixtures/evidence/maple-st/foundation/foundation-02-bolts.jpg
+
+- Post frame garage connected to traditional frame house-3.jpg
+  Page:    https://commons.wikimedia.org/wiki/File:Post_frame_garage_connected_to_traditional_frame_house-3.jpg
+  Licence: CC0
+  Author:  Wikideas1
+  Used as: fixtures/source/framing_a.jpg, framing_detail.jpg (crop)
+  Output:  fixtures/evidence/maple-st/framing/framing-01-wide.jpg; maple-st/audits/photos/audit-framing-01-frame.jpg
+
+- Post frame garage connected to traditional frame house-4.jpg
+  Page:    https://commons.wikimedia.org/wiki/File:Post_frame_garage_connected_to_traditional_frame_house-4.jpg
+  Licence: CC0
+  Author:  Wikideas1
+  Used as: fixtures/source/framing_b.jpg
+  Output:  fixtures/evidence/maple-st/framing/framing-02-corner.jpg
+
+- Post frame garage connected to traditional frame house-5.jpg
+  Page:    https://commons.wikimedia.org/wiki/File:Post_frame_garage_connected_to_traditional_frame_house-5.jpg
+  Licence: CC0
+  Author:  Wikideas1
+  Used as: fixtures/source/framing_c.jpg
+  Output:  fixtures/evidence/maple-st/framing/framing-03-wall.jpg
+
+- FEMA - 44585 - Tornado damaged Oklahoma home being rebuilt.jpg
+  Page:    https://commons.wikimedia.org/wiki/File:FEMA_-_44585_-_Tornado_damaged_Oklahoma_home_being_rebuilt.jpg
+  Licence: Public domain
+  Author:  Patsy Lynch
+  Used as: fixtures/source/oak_ave_roof_framing.jpg
+  Output:  fixtures/evidence/oak-ave/framing/oak-ave-framing.jpg; maple-st/framing/IMG_5121.jpg (the copied photo: 3% trim, resize, brightness, recompress)
+
+Candidates looked at and NOT used (wrong subject or unsuitable): an aircraft on a runway, a 1943 monochrome
+aerial of a government building, a framed house with a stencilled celebrity-style name, a stone building restoration.
+
+Regenerate: pnpm --filter @xrlp/verifier fixtures   (deterministic; run it after changing times in fixtures/scenarios.ts)
+Total fixtures size is well under the 15 MB limit in VER-01.

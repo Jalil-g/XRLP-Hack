@@ -1,0 +1,44 @@
+{
+  "milestoneId": "ms_maple_2",
+  "inspector": "rPEPPER7kfTD9w2To4CQk6UCfuHM9c6GDY",
+  "evidenceBundleHash": "925808b9516fb9bce17618b815e351eac41194667605bc354573f8279a0bf01b",
+  "checklist": [
+    {
+      "sovCode": "FR-01",
+      "status": "done",
+      "note": "Exterior walls framed on all four sides."
+    },
+    {
+      "sovCode": "FR-02",
+      "status": "done",
+      "note": "Roof trusses set at 24 in. on centre."
+    },
+    {
+      "sovCode": "FR-03",
+      "status": "partial",
+      "note": "Sheathing on three of four walls; north wall still open."
+    }
+  ],
+  "photos": [
+    {
+      "id": "ev_audit-framing-01-frame",
+      "kind": "photo",
+      "filename": "audit-framing-01-frame.jpg",
+      "mimeType": "image/jpeg",
+      "uri": "evidence/maple-st/audits/photos/audit-framing-01-frame.jpg",
+      "sha256": "75efeb75fb9b7449a0c7f7435009b4ebd10b5a174804100d24a410e5c48df804",
+      "meta": {
+        "takenAt": "2026-10-24T14:10:00.000Z",
+        "gps": {
+          "lat": 40.67955277777777,
+          "lng": -73.96195277777778
+        },
+        "perceptualHash": "95c95a0e2517bb5a"
+      },
+      "uploadedAt": "2026-10-24T14:30:00Z"
+    }
+  ],
+  "notes": "Framing is nearly complete. Sheathing is not finished on the north wall.",
+  "txHash": "18BCD1DF2C0FCD84B7437D9881A461D83441B887B4D2D32BCD65FF5449883497",
+  "at": "2026-10-24T14:30:00Z"
+}
