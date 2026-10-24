@@ -51,6 +51,11 @@ same tx -> same signature: true
 SPECULOS SMOKE OK
 ```
 
+Which SPV tx types the device can multisign: `pnpm --filter @xrlp/ledger-signer exec tsx scripts/probe-tx-types.ts`.
+Result on XRP app 2.8.1: `EscrowFinish`/`EscrowCreate` clear-signed. `LoanPay`/`VaultDeposit` require the
+**Blind signing** app setting (otherwise SW 0x6985, reported as "Rejected by user"). `LoanSet` can't be signed
+(parser rejects STNumber).
+
 Note: run it with `tsx`, not plain `node` — the DMK's ESM build uses directory imports that Node's ESM
 loader rejects (`ERR_UNSUPPORTED_DIR_IMPORT`). Bundlers (Next/Vite) are fine.
 
