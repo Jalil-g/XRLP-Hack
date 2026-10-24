@@ -7,7 +7,8 @@ throws `XrplTxError` (with the engine result + explorer link) unless `tesSUCCESS
 ```bash
 pnpm --filter @xrlp/xrpl bootstrap      # fund + configure demo wallets -> .data/wallets.json (gitignored)
 pnpm --filter @xrlp/xrpl demo           # full money path on devnet, prints a tx table with explorer links
-pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding)
+pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding, submission hardening)
+pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one account, all tesSUCCESS
 pnpm --filter @xrlp/xrpl typecheck
 ```
 
@@ -34,6 +35,47 @@ Scripts set `NODE_USE_ENV_PROXY=1` so faucet `fetch` honours `HTTPS_PROXY`; the 
   Escrows created by a multisig SPV still use the SPV's `Sequence` as `OfferSequence`.
 - **Vault shares**: for an IOU vault, shares (MPT) are 10^6 per 1 RLUSD at the start, e.g. 10000 RLUSD →
   `10000000000` shares.
+
+## Submission semantics (XRPL-12)
+
+Every submit goes through `src/submit.ts` (pure retry engine, offline-tested) via `client.ts`:
+
+- **Per-account lock.** `signAndSubmit` / `submitWithSigner` hold `withAccountLock(Account)` across
+  autofill → sign → submit → wait-for-validation, so concurrent calls for one account never race on `Sequence`.
+  Different accounts run in parallel. Cost: one account does about one tx per ledger (~4–6s on devnet).
+  The lock is **re-entrant** in the same async chain. `submitBlob` locks on the blob's `Account` too.
+- **Pre-signed / multisig paths (owners of `loan.ts`, `spv.ts`, `escrow.ts`).** If you autofill yourself and then call
+  `submitBlob`, wrap the whole thing so nothing else from that account slips between autofill and submit:
+  `withAccountLock(tx.Account, async () => { const p = await client.autofill(tx); …; return submitBlob(blob, type); })`.
+  For multisig the better option is `submitWithSigner(account, {...tx, SigningPubKey: ""}, (p) => multisign(signers.map((w) => w.sign(p, true).tx_blob)), { signersCount: signers.length })`.
+  You get the lock and full retries, re-signing included.
+- **`LastLedgerSequence` is always set**: validated index + `lastLedgerMargin` (default `DEFAULT_LLS_MARGIN` = 20, env
+  `XRPL_LLS_MARGIN`). Pass `{ lastLedgerMargin: 60 }` for txs that may take longer (EscrowFinish).
+- **Retries are bounded** (`maxAttempts` default 5, exponential backoff 0.5s → 4s):
+
+  | Preliminary / error | Action |
+  |---|---|
+  | `tesSUCCESS`, `terQUEUED`, `tefALREADY`, other `ter*`, `tec*` | wait for the validated result (`tec*` final → throw, never retried) |
+  | `telINSUF_FEE_P`, `telCAN_NOT_QUEUE*`, RPC `tooBusy`/`noNetwork`/`noCurrent`/`slowDown` | back off, re-sign with the **same Sequence** and a fresh Fee (pre-signed blob: resubmit the same blob) |
+  | websocket disconnect / timeout | reconnect the shared client, resubmit the **same blob** (same hash, so it's idempotent) |
+  | `LastLedgerSequence` passed and `tx` reports `searched_all` with no hit | provably not applied → re-sign with the same Sequence (pre-signed: throw `retriable`) |
+  | `tefPAST_SEQ` | if this hash may have been sent earlier, wait and look it up (an earlier submit probably applied it); otherwise re-autofill a fresh Sequence |
+  | `tem*`, other `tef*`/`tel*` | throw at once, never retried |
+
+  A new blob is only signed after the old one provably **cannot** apply. Same-Sequence re-signs are mutually exclusive
+  with the original, so there is no double spend. A validated hash is never resubmitted.
+- **Errors.** `XrplTxError { txType, engineResult, hash?, explorerUrl?, retriable }` (the constructor is backwards
+  compatible). `retriable` is true only when nothing was applied and a re-prepared attempt may succeed.
+  `toErrorCode(e)` maps to the docs/05-api.md `ErrorCode`: `tecTOO_SOON → too_soon`,
+  `tecNO_ENTRY/tecNO_TARGET/tecNO_DST/tecOBJECT_NOT_FOUND/tecNO_LINE`, plus RPC `entryNotFound`/`actNotFound` → `not_found`,
+  `tem* → validation`, everything else `ledger_error`.
+- `XRPL_SUBMIT_LOG=1` prints every retry decision with its explorer link.
+
+**Devnet proof** (`pnpm --filter @xrlp/xrpl stress`, 2026-10-24, fresh faucet wallets): 20 parallel RLUSD `Payment`s
+from one account → **20/20 `tesSUCCESS`**, Sequences 6390192..6390211 contiguous, 0 retries, 128.6s.
+Same burst via raw xrpl.js `autofill`+`submitAndWait` (`STRESS_BASELINE=1`) → 1 `tesSUCCESS`, **19 `tefPAST_SEQ`**.
+First/last: https://devnet.xrpl.org/transactions/93F70A01CAA36E7A6B318B61B31C52313AD8B8C7BFAF484C6804BFA1A29CD79F ·
+https://devnet.xrpl.org/transactions/AB03F78A5862CCC25B601DB65368FBEF1D839A7914D743D0F6282DD52ADA2EBC
 
 ## High-level API (what `@xrlp/core` calls)
 
@@ -92,7 +134,9 @@ is a follow-up ticket. It maps 1:1:
 | File | Concern |
 |---|---|
 | `config.ts` | env (`XRPL_WS_URL`, `XRPL_FAUCET_HOST`, `WALLETS_FILE`, `DATA_DIR`), mainnet guard, RLUSD hex code |
-| `client.ts` | shared `Client`, `signAndSubmit`, `submitBlob`, `ledgerTime`, `waitForLedgerTimeAfter`, `createdNodeId` |
+| `client.ts` | shared `Client` (+`reconnect`), `signAndSubmit`, `submitWithSigner`, `submitBlob`, `withAccountLock`, `ledgerTime`, `waitForLedgerTimeAfter`, `createdNodeId` |
+| `submit.ts` | retry engine: per-account lock, result classification, `submitReliably` (network-free, see Submission semantics) |
+| `errors.ts` | `XrplTxError`, `toErrorCode` → API `ErrorCode` |
 | `wallets.ts` | `.data/wallets.json` store, faucet funding, role resolution |
 | `rlusd.ts` | issuer flags, trust lines, issue/pay, balances |
 | `vault.ts` | closed-ended `VaultCreate`, deposit/withdraw, share balance, phase |

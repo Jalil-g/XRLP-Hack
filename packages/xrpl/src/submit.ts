@@ -167,6 +167,8 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
   let cur = first;
   /** Hashes that may have reached a server (submit returned pending, or the socket died mid-submit). */
   const maybeSent = new Set<string>();
+  /** First ledger each hash could have landed in (validated index + 1 at its first submit). */
+  const firstLedger = new Map<string, number>();
   let connErrors = 0;
 
   const fail = (code: string, retriable: boolean, opt: { hash?: string; detail?: string; cause?: unknown } = {}) =>
@@ -205,11 +207,11 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
   };
 
   for (let attempt = 1; ; attempt++) {
-    let minLedger = 1;
     let prelim: string;
     let detail: string | undefined;
     try {
-      minLedger = (await io.validatedLedgerIndex()) + 1;
+      const minLedger = (await io.validatedLedgerIndex()) + 1;
+      if (!firstLedger.has(cur.hash)) firstLedger.set(cur.hash, minLedger);
       const r = await io.submit(cur.blob);
       prelim = r.engineResult;
       detail = r.message;
@@ -234,7 +236,7 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
     if (cls === "pending" || (cls === "past_seq" && maybeSent.has(cur.hash))) {
       // Possibly applied: only the ledger can tell. Never build a new blob until this one is provably dead.
       if (cls === "pending") maybeSent.add(cur.hash);
-      const out = await waitFinal(cur, Math.min(minLedger, cur.lastLedgerSequence ?? minLedger));
+      const out = await waitFinal(cur, Math.min(firstLedger.get(cur.hash) ?? 1, cur.lastLedgerSequence ?? Infinity));
       if (out !== "expired") {
         const res = finalResult(out);
         if (res === "tesSUCCESS") return out;

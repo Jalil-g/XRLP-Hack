@@ -41,6 +41,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] **Verification fee: 250 RLUSD in the demo.** In the product the fee **scales with project size** (e.g. bps of principal with a floor); the UI and the business slide must say so. (Jalil)
 - [10-24] Tickets v2 in `docs/06-tickets.md`; GitHub issues synced. Retired: INS-04/05/08/09 v1. New: XRPL-14, VER-13, VER-14, INS-06/07 v2, CORE-12, DEMO-01, PITCH-09.
 - [10-24] XRPL-01 proven with the v2 SPV list (3-of-4 counterparty countersign incl. platform as both Account and signer); no master-key fallback needed. Spikes use fresh throwaway faucet wallets (`scripts/spike-lib.ts`), not the bootstrap store. (Jalil's agent)
+- [10-24] Submissions lock per account through validation, always set LastLedgerSequence (margin 20, `XRPL_LLS_MARGIN`), and retry only transient results. A new blob is signed only once the old one provably can't apply (same Sequence re-sign; fresh Sequence only on tefPAST_SEQ for a never-sent blob). Throughput is ~1 tx/ledger per account, which is fine for the demo. Why: 20 parallel raw submits gave 19× tefPAST_SEQ on devnet. (Jalil's agent, XRPL-12)
 
 ## Open
 
