@@ -112,6 +112,58 @@ Holes we found in this design, and what to do about each:
    This conflicts with the "random inspector per milestone at inspection time" stretch idea.
 6. **Front-running is harmless.** Anyone who copies the fulfillment from the tx can only send the money to the builder.
 
+### 1a. XRPL-02 devnet results (IOU conditional escrow from the v2 SPV, 2026-10-24)
+
+Script: `pnpm --filter @xrlp/xrpl spike:escrow` (`packages/xrpl/scripts/spike-escrow.ts`, fresh faucet wallets, ~3 min).
+Setup: issuer with DefaultRipple + AllowTrustLineLocking ([AccountSet](https://devnet.xrpl.org/transactions/49B66DC17D5B839E357D96FED0F496F49CABF99F0FF96352735DAF535A5EE823), [AccountSet](https://devnet.xrpl.org/transactions/99C83BC670D70337AD48C8825448DE343B55C2522C004D63B41536D22CE65586));
+SPV funded with 1000 RLUSD straight from the issuer ([Payment](https://devnet.xrpl.org/transactions/02BCFBA77098849E42673A60887935312716BBC9FF0435E3EF6E4F4FB2653372), no loan);
+v2 SignerList {platform, builder, inspector, trustee} w1, quorum 3 ([SignerListSet](https://devnet.xrpl.org/transactions/0C2051DCEA2B10C6514CE3B431CD6138753A89E4B28C9F0C0C9DCFDBB2EDB1F7));
+master disabled ([AccountSet](https://devnet.xrpl.org/transactions/961CD1F888AE9A05484F0E57ECE593925746D5A753A157C162F28549C2E0F956)).
+Every EscrowCreate is SPV multisig (platform + inspector + trustee) via `createMilestoneEscrow({ signers })`; every
+finish/cancel is submitted by a separate `releaseService` wallet unless noted. Conditions from `generateMilestoneCondition()`.
+
+Accounts: issuer `rEt4SBLcbZurKNqAFQ6fWdREYg9oJxbse5` · SPV `r9nYuqRTyn6mP62FX71pGsYEPo67EmejE` ·
+platform `rEjCasYfTq3WoCV4cLWLQ6acgMtd21emV7` · builder `rKXfnykSw88oyRWnugbGCF641ETJi8jqox` ·
+inspector `r9X6NXuTKak6WJpq1Azk4tHscq9VGkXH53` · trustee `rwUb7VUJnab5hePGzF7i1snRUmf6CH6uJq` ·
+releaseService `rQGTPvvGYuzKzW6GQXBiztz7C7n7MAvD4e` · builder2 `r4cQiQ4KHKH2Peox5H4F6M5hfBsCa5AbSt` · thirdParty `rhmkre4Cqgqq1E8p1UTxsCfiA1mmAdw52f`
+
+| case | step | result | explorer |
+|---|---|---|---|
+| 1 | EscrowCreate 100 RLUSD → builder (SPV multisig platform+inspector+trustee, Condition, CancelAfter +1h) | `tesSUCCESS` | [A6458BB3…](https://devnet.xrpl.org/transactions/A6458BB396B3969B67997EF1129781B93C1E3DDA27DA3659E355633800B1206B) |
+| 1 | EscrowFinish, correct fulfillment, by releaseService → builder 0 → 100 | `tesSUCCESS` | [B1313CB4…](https://devnet.xrpl.org/transactions/B1313CB41020E7DB5654DB63303457BE3A03196E9714C6DD6E0B164CCA331D99) |
+| 2 | EscrowCreate 50 RLUSD → builder | `tesSUCCESS` | [1982811C…](https://devnet.xrpl.org/transactions/1982811C1671E6AB2203D21FDF0C0836C9103C030641F24479E2FE0D619E344E) |
+| 2 | EscrowFinish, **wrong** fulfillment (well-formed, other preimage), by releaseService | **`tecCRYPTOCONDITION_ERROR`** | [8AB961A4…](https://devnet.xrpl.org/transactions/8AB961A4598C7D0878E50916F1D8D9F90AAC9A96D05F67588EA8E99B00B4BEC9) |
+| 2 | EscrowFinish, correct fulfillment, same escrow (still open after the tec) | `tesSUCCESS` | [3A19697E…](https://devnet.xrpl.org/transactions/3A19697E6360715E1926C13414BAEFC8E4B50085E241CABF60CD9F65DE2892CF) |
+| 3 | EscrowCreate 25 RLUSD → builder2 (**no** RLUSD trust line) | `tesSUCCESS` | [1FFC1B24…](https://devnet.xrpl.org/transactions/1FFC1B24C4207488646403BA24297E0CEC4CD80C37ADBE95873501B77DC665B7) |
+| 3 | EscrowFinish, correct fulfillment, by releaseService | **`tecNO_LINE`** | [54F3832A…](https://devnet.xrpl.org/transactions/54F3832A23FFE05D40E74EC94C3C9DF6591BE659D9298E151072677EFA959B35) |
+| 3 | TrustSet builder2 (after the leak) | `tesSUCCESS` | [2D7C9780…](https://devnet.xrpl.org/transactions/2D7C9780D29063EBAC4EC40DB6C1448D9616C58D9236AE5C9684A9B7AAEE33E3) |
+| 3 | EscrowFinish by **thirdParty** using the Fulfillment copied from the failed tx → builder2 0 → 25 | `tesSUCCESS` | [D5704921…](https://devnet.xrpl.org/transactions/D570492112B825C14848C75DF92B49B8E473648E0A4D7375DBAC681CD167C4AE) |
+| 4 | EscrowCreate 40 RLUSD → builder, CancelAfter = ledger time +75 s | `tesSUCCESS` | [4006697A…](https://devnet.xrpl.org/transactions/4006697A05559D0F79C3D23CB07553D8FBD2A0C49AFCEA749CB164999E6FF5B5) |
+| 4 | EscrowFinish, correct fulfillment, after CancelAfter (ledger time) | **`tecNO_PERMISSION`** | [B31DD19C…](https://devnet.xrpl.org/transactions/B31DD19C081DDF1826B4FE0AC9CBC0D4586E07E2862DC3E71F5489AA2889B9CA) |
+| 4 | EscrowCancel by releaseService → SPV 785 → 825 | `tesSUCCESS` | [A6BB84B5…](https://devnet.xrpl.org/transactions/A6BB84B5C54745887C57679270FB3A27E981BB3806910E6CBACB37974FCCBBF0) |
+
+Observations:
+- **All four cases behave as the spec says.** Final RLUSD: SPV 825 (1000 − 100 − 50 − 25), builder 150, builder2 25.
+- **Fees (base 1 drop):** multisig EscrowCreate = **4 drops** (base × (1 + 3 signers)); EscrowFinish with a 32-byte
+  preimage = **36 drops** (xrpl.js autofill: `base × (33 + 36/16)` on the 36-byte DER fulfillment = 35.25, rounded up). The failed tecs also charge
+  36 drops to the submitter (releaseService), not to the SPV.
+- **`tecCRYPTOCONDITION_ERROR` is on-ledger:** `tx` returned `validated: true`, `ledger_index 6390113`, and
+  `account_objects` on the SPV still listed the escrow. The same escrow then finished with the right fulfillment.
+  This is the "Ledger says no" demo beat: a real explorer link, nothing moved. `finishEscrow()` refuses a mismatched
+  fulfillment client-side, so the demo must submit this one via `signAndSubmit` directly (as the spike does).
+- **EscrowCreate does not check the destination's trust line.** Only EscrowFinish does (`tecNO_LINE`).
+- **Preimage leak via a failed finish (motivates XRPL-14 preflight):** the `tecNO_LINE` tx
+  ([54F3832A…](https://devnet.xrpl.org/transactions/54F3832A23FFE05D40E74EC94C3C9DF6591BE659D9298E151072677EFA959B35)) is validated
+  (`ledger_index 6390119`) and its `Fulfillment` field (`A0228020 2972C317…50C3FC`) equals the secret, while
+  `account_objects` still shows the escrow open. Once builder2 opened a line, an unrelated `thirdParty` finished the
+  escrow with the copied fulfillment. Money still went only to the Destination, so this is not theft, but release
+  timing is no longer ours: **any failed EscrowFinish that carries the fulfillment publishes it.** Preflight
+  (destination trust line + authorized, escrow exists, ledger time < CancelAfter) must run before the fulfillment is
+  ever put into a signed tx.
+- **Finish after CancelAfter = `tecNO_PERMISSION`** even with the right fulfillment (ledger close time, not local
+  clock). `EscrowCancel` by a non-owner, non-signer account (releaseService) succeeded and returned the 40 RLUSD to
+  the SPV; no SPV signature needed to recover funds.
+
 ---
 
 ## 2. (b) LoanSet: multisig borrower and countersigning
@@ -155,6 +207,33 @@ Holes we found in this design, and what to do about each:
     an independent key (e.g. an investor representative), and we disclose that all demo keys live on one server.
   - Keep the SPV's liquid balance near zero: create every escrow **immediately** after LoanSet (atomically with
     Batch as a stretch), and LoanPay escrow refunds right after `EscrowCancel`.
+
+
+
+v2 signer list: SPV `rUkEQZJci363W8GwX32tMXe1mXzG9q2VFT` = `{platform, builder, inspector, trustee}` weight 1, quorum 3, master disabled.
+Counterparty signers on the LoanSet: **platform + builder + inspector** (the platform signs both as `Account` and as one of the
+SPV's counterparty signers: accepted). Loan `66FE03B2BFDE7B6AD7C55272384707A9EADC2166C349604858474E5C43D12018`.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | SPV SignerListSet (4 × w1, quorum 3) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/5A9CC751CF0EDF33A5F5F77D11F5E89BCE9FD22116C473CA8C736BB6D6B84BC2 |
+| 2 | SPV AccountSet asfDisableMaster | `tesSUCCESS` | https://devnet.xrpl.org/transactions/98839D68CF3E39F2A3E503D0F9B49B9BDEFBE44A8337102681AD880630E04C5D |
+| 3 | VaultCreate **open-ended** | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BEA8CA8F4711FDE134D03E6421C8E129AA7CCDC325D2197A64A0AF9417749012 |
+| 4 | LoanBrokerSet on the open-ended vault | **`tecNO_PERMISSION`** (expected, V1_1) | https://devnet.xrpl.org/transactions/4F67AE3BCD12AE025EC0D5A103980193BEEEA01776D98D2EE84B0BA8E4F2AAB6 |
+| 5 | VaultCreate closed-ended (`AssetsMaximum` 1000) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/13608754F7FF7BC76A849AF261CD40845BB4893B177DFCC5007FDB066565D67B |
+| 6 | LoanBrokerSet `CoverRateMinimum=10000`, `CoverRateLiquidation=100000`, `ManagementFeeRate=1000` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/E0CAAD5A8011EC2410D7B8C6CC50C865BDB4C147385E0434F7589205EA729CC1 |
+| 7 | LoanBrokerCoverDeposit 150 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A9EEBD067D9D8C059BAC32F38DF0CFAFB595B85D77BBB513BF46A8F8313A23BF |
+| 8 | VaultDeposit 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A192C73521C648F5776410E4C7CCCFAAC4839B3DA89A6F928DD2DB85C7437E58 |
+| 9 | LoanSet **before SubscriptionDate** | **`tecTOO_SOON`** (expected) | https://devnet.xrpl.org/transactions/78895A1F7D4A9462E3B03948CA8FB05538A2693821C775696B8FFB4E1431652B |
+| 10 | **LoanSet, SPV multisig countersign (3 of 4)**, `LoanOriginationFee=10`, `tfLoanOverpayment`, 2 × 120 s | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/A927ECA82FEDF97889BF49DEFF70A885CCBE3BB9FDC01E70927FFD1FEBB9CC7B |
+
+Observations:
+- **No fallback needed**: the master-disabled multisig counterparty works with the v2 list.
+- xrpl.js autofill sets `Fee = base × (1 + SignerList entries of the counterparty)` = 5 drops here (4 entries, not the 3 who signed). Sufficient; no manual fee needed.
+- `LoanOriginationFee` is taken out of the principal and paid to the broker owner: SPV received **990**, platform **+10**.
+- Loan `Flags = 0x40000` (`lsfLoanOverpayment`). `PeriodicPayment` 500.000285…, `TotalValueOutstanding` 1000.00057.
+- With this toy rate/interval (10 %/yr, 240 s) the booked interest is below the vault's precision: `AssetsTotal` stayed 1000. For a visible share-price move in the demo use realistic terms (days, not seconds).
+- `AssetsAvailable` is omitted from the Vault entry when 0 (read it as `"0"`).
 
 ---
 
