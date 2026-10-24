@@ -62,7 +62,7 @@ packages/core (:4000)   HTTP routes 1–23 · workflows · release service (prei
 packages/xrpl           every ledger op + bootstrap/prestage/demo scripts · LedgerPort adapter
 packages/verifier       verifyProject · verifyMilestone (suite) · assignInspector · mock + live (Claude)
 packages/shared         THE CONTRACT: types, SoV, states, ports (PR-only)
-packages/ledger-signer  software attestation signing for the inspector app
+packages/attest-signer  software-key signing of inspector audit attestations (today named ledger-signer; renamed + device code deleted in INS-04)
 web, inspector →HTTP→ core → (xrpl, verifier) → shared
 ```
 
