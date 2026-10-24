@@ -102,7 +102,11 @@ export class LedgerActionError extends Error {
     this.name = "LedgerActionError";
     this.cause = cause;
   }
-  /** True when the human pressed Reject on the device (XRP app status word 0x6985). */
+  /**
+   * Status word 0x6985. CAUTION (seen on Speculos, XRP app 2.8.1): the app ALSO returns 0x6985 when the tx type
+   * needs blind signing and the "Blind signing" setting is off (LoanPay, VaultDeposit, ...), and the DMK labels both
+   * "Rejected by user". Show "Rejected on device — or enable Blind signing in the XRP app settings".
+   */
   get rejectedByUser(): boolean {
     return /6985|denied|rejected/i.test(JSON.stringify(this.cause) + this.message);
   }
