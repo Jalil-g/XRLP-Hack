@@ -2,12 +2,13 @@
 
 > Do this in order. 20 minutes for the whole team. Each person runs their own AI (Claude Code, Codex, Cursor…) in their own git worktree.
 
-## 0. Sean first (10 min, unblocks everyone)
-1. Merge PR **#75** (`jalil/pitch-review`, docs only, already contains `scaffold/architecture-docs`) into `main`.
-2. Merge the code scaffolds into `main` in this order, resolving nothing but `pnpm-lock.yaml` (take `main`'s, re-run `pnpm install`):
-   `scaffold/core` → `scaffold/xrpl` → `scaffold/verifier` → `scaffold/web` → `scaffold/ledger-signer`. They touch disjoint directories.
-3. Run `pnpm install && pnpm -r typecheck && pnpm -r test` on `main`; fix only what breaks the build; push.
-4. Post "main is ready" in chat. Start **CORE-01** (#53) immediately: the shared contract v2 blocks XRPL-10, VER-09, WEB-01, INS-01.
+## 0. Status at T+0 (done 2026-10-24, nothing to wait for)
+- `main` contains all five scaffolds, docs v2 and tickets v2. `pnpm -r typecheck` green in 6 packages; `pnpm -r test` 73 pass / 0 fail.
+- `main` is protected against force-push and deletion. PRs merge normally (no required reviews, so the merge train stays fast).
+- Devnet money path proven with 41 real transactions: `docs/proof-devnet-2026-10-24.md`.
+- Pinned **Checkpoints** issue exists for Sean's CORE-10 reports.
+- **Sean's first job is CORE-01 (#53)**, the shared contract v2. It blocks XRPL-10, VER-09, WEB-01 and INS-01, so open that PR within the hour
+  and request all four lanes as reviewers. CI + `.env.example` v2 vars are CORE-09 (#61), also his.
 
 ## 1. Everyone: one-time setup (5 min)
 ```bash
