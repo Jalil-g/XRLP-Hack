@@ -233,6 +233,40 @@ Observations:
 4. The released-but-unrepaid part is real credit loss. The platform can `LoanManage tfLoanDefault` after
    due+grace. First-loss cover absorbs `DefaultCovered`, and the vault writes down the rest.
 
+### 3a. XRPL-04 devnet results
+
+`pnpm --filter @xrlp/xrpl spike:broker` (fresh faucet wallets, single-key SPV; 2026-10-24). Vault dates from
+`vaultDatesFor()`, broker rates from `createLoanBroker()` defaults, cover from `minimumCover()` / `defaultCoverDeposit()`,
+fee from `originationFeeFor()` (`src/lending-math.ts`). Terms: 1000 RLUSD @ 10 %/yr, 2 × 15 days (realistic interval,
+so interest and the management fee are visible; the spike never waits for `RedemptionDate`).
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | VaultCreate closed-ended, `AssetsMaximum` 1000, `RedemptionDate = Sub + 2×15d + 60 + 1h` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C2A84A3F51195BAD19A3657F251FE8CC4F1B75296E127B82C1635958B95F3646 |
+| 2 | LoanBrokerSet defaults: `CoverRateMinimum 10000`, `CoverRateLiquidation 100000`, `ManagementFeeRate 10000` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4AAEA4888FDF4482FF027F8F991BCA644091900ED2D167CF8711A83911F61795 |
+| 3 | LoanBrokerCoverDeposit 50 (below the 100.61686 minimum) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4A5C80078CB871E3DF8957A39A98695377BA8CC85415EFA86ADEBA30FDE66DCE |
+| 4 | VaultDeposit 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/5A3AD10F7A5FCE5C4D4242E03219C255C59E0A4F6C30DE44ED6BB4FD5AC22AC8 |
+| 5 | **LoanSet with cover 50 < minimum** | **`tecINSUFFICIENT_FUNDS`** (as spec'd) | https://devnet.xrpl.org/transactions/3C45AF4B859045A0069832118A948902289EA3961D4CF264EE1818622C4391D3 |
+| 6 | LoanBrokerCoverDeposit +60.678546 (total 110.678546 = minimum + 10 % headroom) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/838A9C19F4FB4E629852C8D3191FCB81932977792AF144FE958529879E87F240 |
+| 7 | **LoanSet 1000, `LoanOriginationFee` 15** (1.5 %), `tfLoanOverpayment` | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/37B59EFA9A8CC564ED912B470D9131148412D88265BF8FE724EF4806497A14A3 |
+
+Observations:
+- Broker entry carries `CoverRateMinimum=10000 CoverRateLiquidation=100000 ManagementFeeRate=10000` (readable on the explorer).
+- **Origination fee lands with the platform:** SPV `0 → 985`, platform `+15`. Consequence for the close path: milestone
+  escrows sum to the full principal, so the SPV is 15 short. `closeLoanAndCreateEscrows` has the builder pay the
+  shortfall into the SPV before `LoanSet` (see `docs/decisions.md`).
+- `expectedInterest()` predicted 6.168597; the ledger booked `TotalValueOutstanding = 1006.168597084243` (exact to 6 dp).
+  `Loan.ManagementFeeOutstanding = 0.616859708424` = 10 % of interest, as `managementFeeOn()` predicts.
+- After LoanSet: `Broker.DebtTotal = 1000` (principal only, not principal + interest), `CoverAvailable = 110.678546`.
+  **`Vault.AssetsTotal` stayed 1000** even with 6.17 of interest booked. So on this devnet build the vault does *not*
+  book the scheduled interest into `AssetsTotal` at `LoanSet` (contrary to the §3 reading of §3.8.6 #6); interest
+  presumably arrives with `LoanPay`. Re-check share price in the XRPL-07 repay test before using the "booked at
+  origination" line in the demo.
+- 50 < 10 % × 1000 → rejected, so we cannot tell from this run whether the check uses `DebtTotal + principal` or
+  `+ interest` too. `minimumCover()` includes interest (conservative); the 10 % headroom covers either reading.
+- Client-side guard: `validateBrokerRates` rejects `CoverRateMinimum 10000 / CoverRateLiquidation 0` before
+  submission (the ledger would return `temINVALID`, which is not on-ledger).
+
 ---
 
 ## 4. (e) Reserves and fees per project (devnet: base 1 XRP, owner 0.2 XRP, fee 1 drop)
