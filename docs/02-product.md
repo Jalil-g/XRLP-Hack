@@ -57,7 +57,7 @@ can see which check failed and why.
       **Low confidence → `needs_human`**: a platform operator reviews and approves/rejects with a signed reason.
 8. **Stall** — escrow expires → anyone cancels → money returns to the project account → project account repays the vault
    (`LoanPay`) → investors redeem at the redemption date. **Repay** — builder repays into the project account → `LoanPay`.
-   (Share value already reflects contracted interest from loan close; repayments turn it into withdrawable liquidity.)
+   (Share value rises as interest is repaid (devnet-verified); repayments also turn principal back into withdrawable liquidity.)
 
 ## Demo focus (what judges see)
 

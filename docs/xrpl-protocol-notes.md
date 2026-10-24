@@ -247,10 +247,11 @@ Observations:
 - **Withdrawals are limited by liquidity.** `VaultWithdraw` fails with `tecINSUFFICIENT_FUNDS` if `AssetsAvailable < amount` (§3.6.2.2 #10).
   While the loan is out, `AssetsAvailable` drops by the principal, so investors can only take out what has been repaid.
   **Any share holder can withdraw, even from a private vault.** Withdraw ignores the domain (§A.2).
-- **⚠ Share value rises at `LoanSet`, not at repayment.** `LoanSet` adds the full scheduled interest (net of
-  management fee) to `Vault.AssetsTotal` (§3.8.6 #6). `LoanPay` leaves `AssetsTotal` unchanged and only raises
-  `AssetsAvailable` (§3.1.10, Example 2). The demo line "share value rises as repayments land" is **wrong**. Say
-  instead: "share value reflects contracted interest at close; repayments turn it back into withdrawable liquidity."
+- **⚠ Devnet: share value rises as interest is *paid*, not at `LoanSet`.** Our reading of XLS-66 §3.8.6 #6 said `LoanSet`
+  books the full scheduled interest into `Vault.AssetsTotal`. **Devnet (rippled 3.4.1) does not:** `AssetsTotal` stayed at the
+  principal after `LoanSet` (even with 6.17 RLUSD of interest booked on the Loan) and rose only when `LoanPay` landed
+  (30000 → 30000.0257). Devnet wins (see §3a). Say: "share value rises as interest is repaid; repayments also turn the
+  principal back into withdrawable liquidity."
 - **⚠ `LendingProtocolV1_1` (enabled on devnet) requires closed-ended vaults:**
   - `LoanBrokerSet` (create) **fails with `tecNO_PERMISSION` unless `Vault.VaultKind = 1` (ClosedEnded)** (66.1.2 §3.3).
   - A closed-ended vault has immutable `SubscriptionDate` and `RedemptionDate`, with `180s ≤ Redemption − Subscription`.
@@ -312,5 +313,5 @@ The `Sponsor` amendment is enabled, so the platform could sponsor SPV reserves. 
 | Escrow gated by 2-of-3 Shamir preimage among SPV signers | No signer list governs EscrowFinish. Replaced by a unique, inspector-held preimage per escrow |
 | AI is a release signer | The AI is an attestor (memo tx). The AI key comes off the SPV signer list |
 | "Escrows expire and money flows back to investors automatically" | EscrowCancel (anyone) → SPV → multisig LoanPay (needs `tfLoanOverpayment`) → withdraw only from `RedemptionDate` |
-| "Share value rises as repayments land" | Rises at LoanSet. Repayment restores liquidity |
+| "Share value rises as repayments land" | Correct on devnet after all: interest reaches `AssetsTotal` at LoanPay, not LoanSet (§3, §3a) |
 | Funding deadline missed → investors withdraw | Only during Subscription. After the deadline, funds are locked until RedemptionDate |

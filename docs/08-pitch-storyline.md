@@ -59,7 +59,7 @@ uploaded; **Project B** with an already-expired escrow. Nothing live waits on a 
 | # | Beat | Screen (driver) | Tx | Line (presenter) | Fallback |
 |---|---|---|---|---|---|
 | D1 | Verified project | Marketplace **Verified** badge → builder page: fee tx, verification report (identity / feasibility / capability, MOCK labels), credential tx | `Payment`, `CredentialCreate/Accept` | "The builder pays to be checked. Our AI verifies identity, feasibility and capability, brings in an inspector when it needs eyes on site, and writes the result to the ledger as a credential." | Screenshot |
-| D2 | Locked state | Project A: SoV → 3 milestones with their check lists; vault (phase, share price > 1.00), loan, 3 escrows, money map | pre-staged | "Investors funded this project's vault. The Lending Protocol lent to a project account no single party controls, which locked every milestone into its own escrow. Two futures for this money: this builder, or back." | Screenshot |
+| D2 | Locked state | Project A: SoV → 3 milestones with their check lists; vault (phase, share price 1.00 → rises with repaid interest), loan, 3 escrows, money map | pre-staged | "Investors funded this project's vault. The Lending Protocol lent to a project account no single party controls, which locked every milestone into its own escrow. Two futures for this money: this builder, or back." | Screenshot |
 | D3 | **Money shot** | M1: builder evidence → inspector app: signed audit (checklist green, photos, attestation tx) → project page **Run checks** → rows turn green like CI → AI verdict `pass 0.93` → **Released** → builder balance ticks | audit `AccountSet`, verdict `AccountSet`, `EscrowFinish` | "Every milestone has a test suite. The inspector audited the site and signed her report. The AI runs the checks over her audit and the builder's evidence. All green, the escrow releases. Seconds, not a week, and every check was on the ledger before the money moved." | Recorded clip |
 | D4 | **Fraud held** | M2: **Run checks** → `no_duplicate_photo` red: "matches Oak Ave project photo, distance 3/64, taken 41 days before this escrow existed" → **Failed**, locked | verdict `AccountSet` (`fail`) | "Reused framing photo from another job. One red check and the suite fails. FinCEN lists 'receipts dated before the loan' as a classic marker. This is that check, automated." | Static card |
 | D5 | **Ledger says no** | `/demo` → "Platform tries to release M2" → explorer: `tecCRYPTOCONDITION_ERROR` | failed `EscrowFinish` | "Here's us trying to release it anyway. The ledger refuses." | Cut first |
@@ -71,7 +71,7 @@ uploaded; **Project B** with an already-expired escrow. Nothing live waits on a 
 3. **"Ledger says no"** (DEMO-01): the only beat that *shows* the custody claim.
 4. **Money map with live balances** (WEB-05, XRPL-09).
 5. **Verification report with three sections** (WEB-08, VER-08): makes "AI-first, inspectors when necessary" concrete.
-6. **Share price > 1.00 at close** with a "booked at origination" tooltip.
+6. **Share price ticks up when a repayment lands** (LoanPay), with an "interest repaid" tooltip. Devnet books interest at payment, not at close.
 **Skip:** failed 2-of-4 multisig (a `tef`, not recorded). Never submit a finish with the real fulfillment that could fail.
 
 ## 4. Script skeleton (3:00)

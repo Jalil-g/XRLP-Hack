@@ -64,7 +64,7 @@ releaseService --EscrowFinish(Condition_i, Fulfillment_i)--> RLUSD -> builder   
 builder --Payment--> SPV ; SPV --LoanPay(multisig)--> Vault  (AssetsAvailable up)
 ```
 
-Share value (`AssetsTotal/shares`) rises at **LoanSet** (protocol books contracted interest). Repayments restore liquidity.
+Share value (`AssetsTotal/shares`) rises as **interest is repaid** (devnet-verified 2026-10-24, XRPL-04/09: `AssetsTotal` 30000 after LoanSet, 30000.0257 after LoanPay); it is 1.00 at close. Repayments also restore liquidity.
 Investors redeem from `RedemptionDate`.
 
 ## Stall path
