@@ -49,3 +49,21 @@ export type { AttestationPayload } from "./attest.ts";
 export { credentialStatus } from "./credentials.ts";
 export type { CredentialType } from "./credentials.ts";
 export { toChainEvent } from "./events.ts";
+
+// XRPL-08: fee, credentials x3, permissioned domain, private vault, attestations (xrlp/attest/v1)
+export { payVerificationFee, grantCredential, createDomain, attest, submitSignedBlob, ATTEST_EVENT_KIND, VERIFICATION_FEE_RLUSD } from "./compliance.ts";
+export {
+  ATTEST_MEMO_TYPE,
+  ATTEST_KINDS,
+  validateAttestMemo,
+  encodeAttestMemo,
+  decodeAttestMemo,
+  decodeAnyAttestation,
+  buildAttestTx,
+  prepareAttestTx,
+  verifyAttestBlob,
+} from "./attest.ts";
+export type { AttestMemo, AttestKind, VerifiedAttestBlob } from "./attest.ts";
+export { CREDENTIAL_TYPES, credentialTypeHex, credentialTypeFromHex, ensureCredential, ensureDomain, listDomains } from "./credentials.ts";
+export type { CredentialStatus, PermissionedDomainEntry } from "./credentials.ts";
+export { vaultPrivacyFields } from "./vault.ts";
