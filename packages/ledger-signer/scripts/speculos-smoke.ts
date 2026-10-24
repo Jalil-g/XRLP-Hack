@@ -75,6 +75,17 @@ finished = false;
 const [again] = await Promise.all([ledger.signAttestation(att).finally(() => (finished = true)), autoApprove("attestation (again)", () => finished)]);
 console.log("same tx -> same signature:", again.tx_blob === signedAtt.tx_blob);
 
+// 4) Device-derived escrow release preimage: derive twice (two approvals) -> same condition.
+const { derivePreimage } = await import("../src/preimage.ts");
+const derive = async () => {
+  finished = false;
+  const [s] = await Promise.all([derivePreimage(ledger, "proj-1/m-3").finally(() => (finished = true)), autoApprove("derive release key", () => finished)]);
+  return s;
+};
+const d1 = await derive();
+const d2 = await derive();
+console.log("device-derived condition stable:", d1.condition === d2.condition, d1.condition.slice(0, 24) + "...");
+
 await session.dmk.disconnect({ sessionId: session.sessionId });
 session.dmk.close();
 console.log("\nSPECULOS SMOKE OK");

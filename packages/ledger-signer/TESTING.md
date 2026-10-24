@@ -65,23 +65,33 @@ Prereqs: Ledger (Nano S Plus / X / Stax / Flex) with the **XRP app** installed v
 open; Ledger Wallet desktop **closed** (it holds the USB interface); Chrome/Edge/Brave on `http://localhost`
 (WebHID needs a secure context).
 
-1. In `apps/web`, add `@xrlp/ledger-signer` and `transpilePackages: ["@xrlp/ledger-signer"]` to `next.config`.
+1. In `apps/inspector`, add `@xrlp/ledger-signer` and `transpilePackages: ["@xrlp/ledger-signer"]` to `next.config` (or nothing extra if Vite).
    Use it only in a client component (`"use client"`).
-2. Wire a button — `connectLedger` **must** be called from the click handler (WebHID picker needs a user gesture):
+2. Wire a button. `createInspectorSigner` **must** be called from the click handler (the WebHID picker needs a
+   user gesture). Keep the signer in state and reuse it. Call `signer.close()` on disconnect/unload:
    ```ts
-   import { connectLedger, LedgerSigner } from "@xrlp/ledger-signer/ledger";
-   import { buildAttestationTx } from "@xrlp/ledger-signer";
+   import { createInspectorSigner, describeLedgerError, isWebHidSupported } from "@xrlp/ledger-signer/ledger";
+   import { buildAttestationTx, createReleaseCondition, recoverFulfillment, localStoragePreimageStore } from "@xrlp/ledger-signer";
 
    async function onSignApproval() {
-     const session = await connectLedger({ kind: "webhid" });
-     const signer = new LedgerSigner(session, { onInteraction: (i) => setStatus(`Check your Ledger: ${i.interaction}`) });
+     const signer = await createInspectorSigner({ mode: "ledger-webhid",   // or { mode: "software", seed } in dev
+       onInteraction: (i) => setStatus(`Check your Ledger: ${i.interaction}`) });
      const { address } = await signer.getAddress();
      // server/route handler autofills (Fee, Sequence, NetworkID, LastLedgerSequence = current + 150)
      const tx = await autofillOnServer(buildAttestationTx(address, { milestoneId, decision: "approve", verdictHash }));
      const { tx_blob, hash } = await signer.signAttestation(tx);
      await submitOnServer(tx_blob);  // log https://devnet.xrpl.org/transactions/<hash>
    }
+   // errors: catch (e) { setStatus(describeLedgerError(e)) }
+
+   // Escrow release secret. At setup (one device approval per milestone), nothing secret is stored:
+   const store = localStoragePreimageStore(window.localStorage);
+   const condition = await createReleaseCondition(store, milestoneId, { source: "device", signer }); // -> EscrowCreate.Condition
+   // At release (one more device approval; re-derives and checks it against the stored condition):
+   const fulfillment = await recoverFulfillment(store, milestoneId, signer);                        // -> EscrowFinish.Fulfillment
    ```
+   Device-derived preimages were verified on Speculos: the device shows "DERIVE RELEASE KEY milestone=… (never
+   submitted)", and two derivations gave the same condition.
 3. Expect: browser HID picker → pick the Ledger → device shows "Review transaction", "Account Setting", the memo JSON
    in plain text → approve ("Sign transaction" / hold to sign on Stax/Flex) → `tx_blob` returned.
 4. Check: `verifySignedBlob(tx_blob)` passes; devnet explorer shows the AccountSet with the memo from the device address.

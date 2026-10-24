@@ -124,11 +124,22 @@ export class LedgerSigner implements InspectorSigner {
   readonly path: string;
   private readonly onInteraction: ((i: DeviceInteraction) => void) | undefined;
   private identity: SignerIdentity | undefined;
+  readonly session: LedgerSession;
 
   constructor(session: LedgerSession, opts: LedgerSignerOptions = {}) {
+    this.session = session;
     this.signer = new SignerXrpBuilder({ dmk: session.dmk, sessionId: session.sessionId }).build();
     this.path = opts.derivationPath ?? DEFAULT_XRP_PATH;
     this.onInteraction = opts.onInteraction;
+  }
+
+  /** Disconnect and release the HID device (call on page unload / "Disconnect" button). */
+  async close(): Promise<void> {
+    try {
+      await this.session.dmk.disconnect({ sessionId: this.session.sessionId });
+    } finally {
+      this.session.dmk.close();
+    }
   }
 
   /** Reads address + pubkey from the device (no on-device confirmation; use `showAddressOnDevice` for that). */
@@ -183,4 +194,47 @@ export class LedgerSigner implements InspectorSigner {
     } as Transaction);
     return { tx_blob, hash: hashes.hashSignedTx(tx_blob) };
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Browser helpers for apps/inspector
+
+/** WebHID is Chromium-only (Chrome/Edge/Brave) and needs a secure context (https or http://localhost). */
+export function isWebHidSupported(): boolean {
+  return typeof navigator !== "undefined" && "hid" in navigator && (globalThis as { isSecureContext?: boolean }).isSecureContext !== false;
+}
+
+export type InspectorSignerConfig =
+  | ({ mode: "ledger-webhid" } & LedgerSignerOptions)
+  | ({ mode: "ledger-speculos"; url?: string; model?: DeviceModelId } & LedgerSignerOptions)
+  | { mode: "software"; seed: string };
+
+/**
+ * One factory for the inspector app. For "ledger-webhid", call it from a click handler (WebHID picker needs a
+ * user gesture). "software" is for dev only — the seed is in browser memory.
+ */
+export async function createInspectorSigner(cfg: InspectorSignerConfig): Promise<InspectorSigner & { close?: () => Promise<void> }> {
+  if (cfg.mode === "software") {
+    const { SoftwareSigner } = await import("./software.ts");
+    return SoftwareSigner.fromSeed(cfg.seed);
+  }
+  if (cfg.mode === "ledger-webhid" && !isWebHidSupported()) {
+    throw new Error("WebHID unavailable: use Chrome/Edge/Brave on https or http://localhost");
+  }
+  const session =
+    cfg.mode === "ledger-webhid"
+      ? await connectLedger({ kind: "webhid" })
+      : await connectLedger({ kind: "speculos", ...(cfg.url ? { url: cfg.url } : {}), ...(cfg.model ? { model: cfg.model } : {}) });
+  return new LedgerSigner(session, cfg);
+}
+
+/** Map device errors to a sentence an inspector can act on. */
+export function describeLedgerError(e: unknown): string {
+  const s = e instanceof Error ? `${e.name} ${e.message}` : String(e);
+  if (/6985|Rejected by user/i.test(s)) return "Rejected on the Ledger — or this transaction type needs Blind signing enabled in the XRP app settings.";
+  if (/5515|locked/i.test(s)) return "Unlock your Ledger and try again.";
+  if (/6e00|6d00|wrong app|open.?app/i.test(s)) return "Open the XRP app on your Ledger.";
+  if (/UnknownDeviceExchangeError|68\d\d/i.test(s)) return "The Ledger XRP app can't parse this transaction type (e.g. LoanSet). Use the software inspector key for it.";
+  if (/NotFoundError|No device selected|NoAccessibleDevice/i.test(s)) return "No Ledger selected. Plug it in, unlock it, close Ledger Wallet, and try again.";
+  return s;
 }

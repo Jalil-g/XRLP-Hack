@@ -9,7 +9,7 @@
   `LedgerSigner` (Ledger DMK + pre-release `@ledgerhq/device-signer-kit-xrp`). It signs (a) a memo'd attestation
   (`AccountSet` + JSON memo) and (b) the inspector's **multisig** signature on SPV transactions.
 - **Cost / owner:** ~5–7 h to demo-ready (see Effort). Owner: whoever takes `packages/ledger-signer`, plus a small
-  client component in `apps/web`.
+  client component in `apps/inspector`.
 - **Status:** proposed. Spike done: emulator-tested end to end (offline). Branch `scaffold/ledger-signer`.
 
 ## What the spike proved (Speculos = real XRP app 2.8.1 binary, Nano S Plus)
@@ -64,7 +64,7 @@ go on the device.
 
 1. **Devnet E2E with Speculos** (1 h): fund the Speculos address on devnet, autofill + submit the attestation and an
    `EscrowFinish`, log explorer links. Uses the existing `smoke:speculos` flow with a real client.
-2. **Web button** (2–3 h): `"use client"` component in `apps/web`. `connectLedger({kind:"webhid"})` inside the click
+2. **Web button** (2–3 h): `"use client"` component in `apps/inspector`. `createInspectorSigner({mode:"ledger-webhid"})` inside the click
    handler, `onInteraction` → "Check your Ledger…", errors (rejected or blind signing off). Add
    `transpilePackages: ["@xrlp/ledger-signer"]`. Server route handlers autofill and submit.
 3. **SignerList wiring** (1 h, xrpl owner): put the Ledger inspector address in the SPV `SignerListSet` (weight 2).
@@ -79,6 +79,10 @@ go on the device.
 8. *(stretch, 2 h)* Device-derived escrow preimage (below).
 
 ## Design note: can the Ledger protect the escrow release preimage?
+
+**Update:** built as a helper (`src/preimage.ts`: `createReleaseCondition` / `recoverFulfillment`, with a
+`random` or `device` source and a localStorage store). The device path is verified on Speculos: same condition on
+re-derivation. The inspector UI lives in `apps/inspector` and uses `createInspectorSigner({ mode: "ledger-webhid" })`.
 
 The inspector now holds the per-milestone crypto-condition preimage. **Feasible: derive it deterministically from
 a device signature.**
