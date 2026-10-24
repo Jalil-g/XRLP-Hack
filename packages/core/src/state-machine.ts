@@ -12,6 +12,10 @@ export const PROJECT_TRANSITIONS: Record<ProjectStatus, readonly ProjectStatus[]
   repaying: ["completed", "stalled"],
   stalled: ["completed"],
   completed: [],
+  // v2 statuses (shared contract v2). Not reachable in the v1 flow; CORE-03 switches to PROJECT_TRANSITIONS_V2 from @xrlp/shared.
+  verifying: [],
+  verified: [],
+  rejected: [],
 };
 
 export const MILESTONE_TRANSITIONS: Record<MilestoneStatus, readonly MilestoneStatus[]> = {
@@ -24,6 +28,11 @@ export const MILESTONE_TRANSITIONS: Record<MilestoneStatus, readonly MilestoneSt
   expired: ["refunded"],
   released: [],
   refunded: [],
+  // v2 statuses (shared contract v2). Not reachable in the v1 flow; CORE-03 switches to MILESTONE_TRANSITIONS_V2 from @xrlp/shared.
+  audited: [],
+  verified: [],
+  failed: [],
+  needs_human: [],
 };
 
 export const TERMINAL_MILESTONE: readonly MilestoneStatus[] = ["released", "refunded"];
