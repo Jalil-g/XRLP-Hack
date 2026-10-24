@@ -43,6 +43,11 @@ pnpm --filter @xrlp/xrpl demo   # full devnet money flow
 - TypeScript strict, ESM, Node 24, pnpm. No new top-level tools without a note in `docs/decisions.md`.
 - Every XRPL tx in the demo must log an explorer link: `https://devnet.xrpl.org/transactions/<hash>`.
 - Branch per task: `<name>/<short-task>`; PR into `main`; keep PRs small; rebase often.
+- **Commit + push early and often** — at least every ~30 min or at every working checkpoint, even WIP
+  (`git push -u origin <branch>`). Laptops die and AI sessions hit limits; unpushed work doesn't exist.
+- **Handoffs:** before your AI session ends or hits a usage limit, push your branch and comment on the
+  GitHub Issue: what's done, what's next, gotchas. Anyone's agent should be able to resume from that.
+- Pick up work from GitHub Issues (one owner per issue; assign yourself before starting).
 - Only the person adding a dependency touches `pnpm-lock.yaml`; on conflict, take `main`'s and re-run `pnpm install`.
 - Log decisions (and anything you decided on your own) in `docs/decisions.md`.
 - Personal AI preferences (language, tone, commit rules) belong in your personal config, not this file.
