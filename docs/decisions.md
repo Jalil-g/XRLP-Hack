@@ -45,7 +45,6 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 - Product name.
 - Judging rubric + submission deadline + demo length — ask organizers on site.
-- Who has a Ledger device (Ledger bounty: inspector signs on device)?
 - Interest on full principal from day one (design B) — acceptable for demo? Note `InterestRate=0` risks `tecPRECISION_LOSS`; use a small rate.
 - Under-funded at `SubscriptionDate` → investor money locked until `RedemptionDate`. Policy: platform tops up? short redemption window? cap with `AssetsMaximum`?
 - Trustee identity for the 4th SPV signer (investor rep). Demo: server-held, disclosed.

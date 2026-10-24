@@ -50,7 +50,7 @@ Ticket: <paste the GitHub issue body>
 | **Sean** | `packages/core`, `shared` | **CORE-01** #53 contract v2 (open PR within the hour; 4 reviewers), CORE-10 #62 merge train | CORE-02 #54 `evaluateRelease`, CORE-03 #55 workflows (explicit close, stall per milestone), CORE-04 #56 HTTP, CORE-09 #61 CI | CORE-12 #83 release service, CORE-05 #57 adapters on devnet |
 | **Elmir** | `packages/verifier` | **VER-01** #19 fixtures with real photos + inspector audits, VER-13 #76 inspector matching | VER-02 #20, VER-03 #21 (incl. `inspector_audit_present`), VER-06 #24 policy, VER-07 #25 `verdictHash` | VER-08 #26 project verification (identity/feasibility/capability), VER-09 #27 adapter, VER-04 #22 Claude checks, VER-10 #28 eval |
 | **Bri** | `apps/web` | **WEB-01** #31 API client on routes 1–23 (strip business logic from mocks, "mock" badge), WEB-04 #34 checks panel components | WEB-03 #33 project detail = demo screen, WEB-11 #41 control room | WEB-10 #40 evidence + Run checks, WEB-08 #38 fee → verification report, WEB-09 #39 SoV form, WEB-05 #35, WEB-02 #32, WEB-06 #36 |
-| **Roro** | `apps/inspector`, `ledger-signer` | **PITCH-01** #64 (ask rubric, demo length, AWS/Quicknode at booths), **INS-01** #43 scaffold | INS-02 #44 queue, INS-03 #45 audit form | INS-04 #78 signed submission, INS-05 #79 audit history; then take S tickets from others (lightest lane) |
+| **Roro** | `apps/inspector`, `attest-signer` (rename of `ledger-signer`) | **PITCH-01** #64 (ask rubric, demo length, AWS/Quicknode at booths), **INS-01** #43 scaffold | INS-02 #44 queue, INS-03 #45 audit form | INS-04 #78 signed submission, INS-05 #79 audit history; then take S tickets from others (lightest lane) |
 
 Pitch tickets run alongside (light AI use): PITCH-06 deck (Bri), PITCH-05/07 fact-check + FAQ (Elmir), PITCH-04 submission (Jalil),
 PITCH-08 backup video (Roro), PITCH-02/03 script + rehearsals (Sean). DEMO-01 #73 "Ledger says no" = Sean (route 23) + Bri (button).
@@ -145,10 +145,10 @@ decision buttons); then WEB-10 (#40), WEB-08 (#38), WEB-09 (#39), WEB-05 (#35). 
 PR into main "Closes #N", pnpm --filter @xrlp/web typecheck green, push every 30 min, HANDOFF comment before stopping. Start with WEB-01 now.
 ```
 
-### Roro — `apps/inspector` + `packages/ledger-signer`
+### Roro — `apps/inspector` + `packages/attest-signer` (today `ledger-signer`)
 ```
 You are my coding agent on Drawproof, a 36-hour XRPL hackathon project (repo cloned; start from main in a fresh worktree).
-Lane: apps/inspector (new Next.js app, port 3001) and packages/ledger-signer (I am @RoroDev2023, owner of area:inspector). No imports from
+Lane: apps/inspector (new Next.js app, port 3001) and packages/ledger-signer, which you will RENAME to packages/attest-signer in INS-04 and strip of all hardware-wallet code (I am @RoroDev2023, owner of area:inspector). No imports from
 apps/web (copy the UI kit if needed). Contract changes → comment on issue #53.
 First read, in order: AGENTS.md, docs/00-overview.md, docs/decisions.md ("Direction v2"), docs/02-product.md (flow step 7), docs/03-architecture.md
 (§Release = the milestone test suite, §Inspector assignment), docs/05-api.md §2 routes 2, 10, 18 and the InspectorAudit / InspectorTask types,
@@ -156,7 +156,7 @@ docs/04-demo-script.md beat 3, the area:inspector section of docs/06-tickets.md,
 Context: Direction v2 means the inspector does NOT hold a release key and there is NO hardware-wallet work (INS v1 tickets #46–#52 are closed).
 The inspector is the eyes on site: the app shows assigned audits, a checklist per Schedule-of-Values line (done / partial / not_done + note),
 photo upload with EXIF preview, the builder's evidence side by side, and submits a signed InspectorAudit (memo {kind:"audit", milestoneId,
-hash: sha256(audit)} signed with the inspector's software key via @xrlp/ledger-signer SoftwareSigner) to route 10. The AI's test suite then
+hash: sha256(audit)} signed with the inspector's software key via the SoftwareSigner in that package) to route 10. The AI's test suite then
 requires that audit (inspector_audit_present). Until core's HTTP server exists, build against NEXT_PUBLIC_API_MODE=mock with fixtures that
 match docs/05-api.md exactly.
 Work order: PITCH-01 (#64) is yours too — at the venue ask organizers for rubric, demo length, submission format, and the AWS booth whether
