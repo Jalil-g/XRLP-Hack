@@ -1,7 +1,7 @@
 // Labels / tones for domain enums. Client-safe (no node imports).
 import type { ChainEvent, CheckResult, Milestone, Project, ProjectType, RiskTier, Verdict } from "@xrlp/shared";
 import type { Tone } from "@/components/ui/badge";
-import type { Party } from "./types";
+import type { MilestoneView, Party } from "./types";
 import { formatAmount, shortAddress } from "./utils";
 
 export const MILESTONE_STATUS: Record<Milestone["status"], { label: string; tone: Tone; short: string }> = {
@@ -125,4 +125,13 @@ export function describeEvent(e: ChainEvent, dir: Record<string, Party>, milesto
     case "vault_withdraw":
       return `${who} withdrew ${amt}`;
   }
+}
+
+/** The milestone most worth showing: the one in flight, else the latest released, else the first open escrow. */
+export function focusMilestoneIndex(views: MilestoneView[]): number {
+  const inFlight = views.findIndex((v) => ["evidence_submitted", "ai_reviewed", "inspected", "rejected"].includes(v.milestone.status));
+  if (inFlight >= 0) return inFlight;
+  const lastReleased = views.map((v) => v.milestone.status).lastIndexOf("released");
+  if (lastReleased >= 0) return lastReleased;
+  return Math.max(0, views.findIndex((v) => v.milestone.status === "escrowed"));
 }

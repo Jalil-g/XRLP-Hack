@@ -5,7 +5,7 @@ import { CalendarClock, FileCheck2, Image as ImageIcon, Lock, Receipt } from "lu
 import { TxLink } from "@/components/chain";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, SectionLabel } from "@/components/ui/card";
-import { MILESTONE_STATUS } from "@/lib/display";
+import { MILESTONE_STATUS, focusMilestoneIndex } from "@/lib/display";
 import type { MilestoneView } from "@/lib/types";
 import { cn, formatAmount, formatDate } from "@/lib/utils";
 import { ApprovalsPanel } from "./approvals-panel";
@@ -16,18 +16,9 @@ import { VerdictCard } from "./verdict-card";
 
 const KIND_ICON = { photo: ImageIcon, invoice: Receipt, document: FileCheck2 } as const;
 
-/** Picks the milestone most worth showing: the one in flight, else the latest acted-on, else the first. */
-function defaultIndex(views: MilestoneView[]) {
-  const inFlight = views.findIndex((v) => ["evidence_submitted", "ai_reviewed", "inspected", "rejected"].includes(v.milestone.status));
-  if (inFlight >= 0) return inFlight;
-  const lastReleased = views.map((v) => v.milestone.status).lastIndexOf("released");
-  if (lastReleased >= 0) return lastReleased;
-  return Math.max(0, views.findIndex((v) => v.milestone.status === "escrowed"));
-}
-
 export function MilestoneExplorer({ views }: { views: MilestoneView[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selected = views.find((v) => v.milestone.id === selectedId) ?? views[defaultIndex(views)]!;
+  const selected = views.find((v) => v.milestone.id === selectedId) ?? views[focusMilestoneIndex(views)]!;
 
   return (
     <div className="space-y-4">
