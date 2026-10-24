@@ -155,7 +155,9 @@ export function checkNoDuplicatePhoto(
   const failIds = new Set<string>();
   const warnIds = new Set<string>();
   const where = (p: PriorEvidence) =>
-    p.projectId === ctx.project.id
+    p.projectId === "unknown"
+      ? "previously submitted evidence"
+      : p.projectId === ctx.project.id
       ? `this project's milestone "${p.milestoneId}"`
       : `another project (${p.projectName ?? p.projectId}, milestone "${p.milestoneId}")`;
 

@@ -41,6 +41,8 @@ export interface VerificationPolicy {
   amount: string;
   highValue: boolean;
   requiredInspectors: 1 | 2;
+  /** = thresholds.minLlmConfidence. Matches core's MilestonePolicy port shape. */
+  minConfidence: number;
   /** False => the best the AI can say is needs_human (e.g. builder not yet verified). */
   allowAutoPass: boolean;
   checks: Record<MilestoneCheckName, CheckRule>;
@@ -153,6 +155,7 @@ export function policyFor(project: Project, builder: Builder, milestone: Milesto
     amount: milestone.amount,
     highValue,
     requiredInspectors,
+    minConfidence: t.minLlmConfidence,
     allowAutoPass,
     checks,
     thresholds: t,

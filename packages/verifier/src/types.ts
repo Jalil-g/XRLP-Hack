@@ -55,10 +55,18 @@ export interface VerifyMilestoneInput {
   project: Project;
   builder: Builder;
   milestone: Milestone;
+  /** Optional: defaults to MILESTONE_TEMPLATES[project.type] by milestone.templateKey. */
+  template?: MilestoneTemplate;
   /** The evidence bundle submitted for this milestone. `meta` is filled in if missing. */
   evidence: Evidence[];
-  /** All other evidence on the platform (ALL projects). Same-milestone entries are ignored (resubmits). */
-  priorEvidence?: PriorEvidence[];
+  /**
+   * All other evidence on the platform (ideally ALL projects, not just this builder's).
+   * Prefer PriorEvidence (lets us ignore same-milestone resubmits and name the source project);
+   * plain Evidence[] (core's VerifierPort shape) also works.
+   */
+  priorEvidence?: Array<PriorEvidence | Evidence>;
+  /** Shorthand for timeline.escrowCreatedAt (core's VerifierPort shape). */
+  escrowCreatedAt?: string;
   timeline?: MilestoneTimeline;
   /** Raw bytes by evidence id. If absent, bytes are loaded from `evidence.uri` (data: URL or path). */
   files?: Record<string, Uint8Array>;

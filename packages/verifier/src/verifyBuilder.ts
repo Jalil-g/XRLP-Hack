@@ -3,7 +3,7 @@
 // TODO(live): in VERIFIER_MODE=live, extract fields from PDF/photo docs with Claude (same pattern as llm/live.ts).
 //             Today only text/JSON documents are parsed (deterministically) in both modes.
 import type { Builder, CheckResult, Evidence, RiskTier } from "@xrlp/shared";
-import { loadEvidence } from "./meta.ts";
+import { isTextLike, loadEvidence, loadEvidenceBytes } from "./meta.ts";
 import { normalizeName, round2, toCents } from "./util.ts";
 
 export interface LicenseRecord {
@@ -47,8 +47,11 @@ export const MOCK_REGISTRY: BuilderRegistry = (() => {
 
 export interface VerifyBuilderInput {
   builder: Builder;
-  /** License + insurance documents (kind "document"). Text/JSON parsed today; PDFs need live mode (TODO). */
-  documents: Evidence[];
+  /**
+   * License + insurance documents: shared Evidence, or core's BuilderDocument
+   * ({ kind, filename, uri?, fields? }). Text/JSON/fields parsed today; PDFs need live mode (TODO).
+   */
+  documents: Array<Evidence | BuilderDocument>;
   files?: Record<string, Uint8Array>;
   dataDir?: string;
   registry?: BuilderRegistry;
@@ -57,7 +60,23 @@ export interface VerifyBuilderInput {
   minLiabilityUsd?: number;
 }
 
+/** Mirrors core's VerifierPort BuilderDocument. */
+export interface BuilderDocument {
+  kind: "license" | "insurance" | "track_record" | "identity" | "other";
+  filename: string;
+  /** Path relative to DATA_DIR, absolute path, or data: URL. */
+  uri?: string;
+  /** Structured fields from (mock) data sources, e.g. { licenseNumber, holder, expires }. */
+  fields?: Record<string, string>;
+}
+
 export interface BuilderVerdict {
+  /** core VerifierPort shape: ok = decision === "pass". */
+  ok: boolean;
+  /** core VerifierPort shape: one line per check, "check: reason". */
+  reasons: string[];
+  /** core VerifierPort shape: = suggestedRiskTier. */
+  riskTier: RiskTier;
   builderId: string;
   decision: "pass" | "fail" | "needs_human";
   confidence: number;
@@ -73,15 +92,62 @@ export interface BuilderVerdict {
 
 const field = (text: string, re: RegExp) => re.exec(text)?.[1]?.trim();
 
+const FIELD_LABELS: Record<string, string> = {
+  licensenumber: "License No", license: "License No",
+  holder: "Licensee", holdername: "Licensee", licensee: "Licensee", name: "Licensee",
+  expires: "Expires", expireson: "Expires", expiry: "Expires", expiration: "Expires",
+  policynumber: "Policy No", policy: "Policy No",
+  insured: "Insured", insuredname: "Insured",
+  coverage: "General Liability", generalliability: "General Liability", generalliabilityusd: "General Liability", limit: "General Liability",
+};
+
+/** Render structured fields as the same "Label: value" text our parsers read. */
+function fieldsToText(kind: BuilderDocument["kind"], fields: Record<string, string>): string {
+  return Object.entries(fields)
+    .map(([k, v]) => {
+      let label = FIELD_LABELS[k.toLowerCase().replace(/[^a-z]/g, "")] ?? k;
+      if (label === "Licensee" && kind === "insurance") label = "Insured";
+      return `${label}: ${label === "General Liability" && !v.startsWith("$") ? `$${v}` : v}`;
+    })
+    .join("\n");
+}
+
+interface DocText {
+  id: string;
+  kind?: BuilderDocument["kind"];
+  text: string;
+}
+
+async function toDocTexts(input: VerifyBuilderInput): Promise<DocText[]> {
+  const out: DocText[] = [];
+  for (const [i, d] of input.documents.entries()) {
+    if ("sha256" in d) {
+      const l = await loadEvidence(d, { files: input.files, dataDir: input.dataDir });
+      if (l.text) out.push({ id: d.id, text: l.text });
+      continue;
+    }
+    const id = `${d.kind}:${d.filename || i}`;
+    let text = d.fields ? fieldsToText(d.kind, d.fields) : "";
+    if (d.uri && isTextLike("", d.filename)) {
+      try {
+        text += `\n${Buffer.from(await loadEvidenceBytes({ id, uri: d.uri }, { files: input.files, dataDir: input.dataDir })).toString("utf8")}`;
+      } catch {
+        /* unreadable uri: rely on fields */
+      }
+    }
+    if (text.trim()) out.push({ id, kind: d.kind, text });
+  }
+  return out;
+}
+
 export async function verifyBuilder(input: VerifyBuilderInput): Promise<BuilderVerdict> {
   const { builder } = input;
   const registry = input.registry ?? MOCK_REGISTRY;
   const now = input.now ? Date.parse(input.now) : Date.now();
   const minLiab = input.minLiabilityUsd ?? 1_000_000;
-  const loaded = await Promise.all(input.documents.map((d) => loadEvidence(d, { files: input.files, dataDir: input.dataDir })));
-  const texts = loaded.filter((l) => l.text).map((l) => ({ id: l.evidence.id, text: l.text! }));
-  const licDoc = texts.find((t) => /licen[cs]e/i.test(t.text));
-  const insDoc = texts.find((t) => /insur|liability|policy/i.test(t.text));
+  const texts = await toDocTexts(input);
+  const licDoc = texts.find((t) => t.kind === "license") ?? texts.find((t) => !t.kind && /licen[cs]e/i.test(t.text));
+  const insDoc = texts.find((t) => t.kind === "insurance") ?? texts.find((t) => !t.kind && /insur|liability|policy/i.test(t.text));
   const checks: CheckResult[] = [];
   const add = (check: string, result: CheckResult["result"], reason: string, evidenceIds: string[] = []) =>
     checks.push({ check, result, reason, evidenceIds });
@@ -146,6 +212,9 @@ export async function verifyBuilder(input: VerifyBuilderInput): Promise<BuilderV
     : decision === "fail" ? `FAIL — ${fails.map((c) => c.reason).join(" | ")}`
     : `NEEDS HUMAN — ${warns.map((c) => c.reason).join(" | ")}`;
   return {
+    ok: decision === "pass",
+    reasons: checks.map((c) => `${c.check} (${c.result}): ${c.reason}`),
+    riskTier: suggested,
     builderId: builder.id,
     decision,
     confidence: round2(decision === "needs_human" ? 0.6 : 0.95),

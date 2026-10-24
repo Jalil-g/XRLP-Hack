@@ -190,7 +190,7 @@ export async function extractEvidenceMeta(file: EvidenceFile): Promise<Extracted
 
 /** Resolve evidence bytes: explicit map > data: URL > absolute path > path relative to dataDir. */
 export async function loadEvidenceBytes(
-  ev: Evidence,
+  ev: Pick<Evidence, "id" | "uri">,
   opts: { files?: Record<string, Uint8Array>; dataDir?: string } = {},
 ): Promise<Uint8Array> {
   const given = opts.files?.[ev.id];

@@ -2,7 +2,7 @@
 export { createLiveJudge, verifyMilestone, verifyMilestoneDetailed, decide } from "./verifyMilestone.ts";
 export type { VerifyMilestoneResult, VerifyOptions } from "./verifyMilestone.ts";
 export { verifyBuilder, MOCK_REGISTRY } from "./verifyBuilder.ts";
-export type { BuilderRegistry, BuilderVerdict, InsuranceRecord, LicenseRecord, VerifyBuilderInput } from "./verifyBuilder.ts";
+export type { BuilderDocument, BuilderRegistry, BuilderVerdict, InsuranceRecord, LicenseRecord, VerifyBuilderInput } from "./verifyBuilder.ts";
 export { policyFor } from "./policy.ts";
 export type { CheckRule, Escalation, PolicyThresholds, VerificationPolicy } from "./policy.ts";
 export {
