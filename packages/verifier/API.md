@@ -129,5 +129,28 @@ Synthetic only (no third-party photos). `fixtures/scenarios.ts` exports `project
 passes `escrowCreatedAt = now`, scenario A will fail `photo_fresh`. Either pass the seeded timeline from
 `FIX.times`, or re-stamp photos with `stampExif()` from `scripts/make-fixtures.ts`.
 
+## Inspector assignment (VER-13)
+
+`await assignInspector({ project, panel, count: 1 | 2, availability? })` returns the
+shared `InspectorAssignment` and satisfies `VerifierPort.assignInspector`. This is
+a deterministic ranking, not a model call; it works without any API key.
+
+Only verified inspectors with at least one matching `project.sov` trade and no
+explicit unavailability are eligible. Score weights: trade coverage 40, distance
+25 (linear decay to 100 km), open load 20 (`20/(1+openAudits)`), past agreement 15.
+Ties use address order. An insufficient panel returns no assignment and explains
+the shortage; it never silently fills one of two required slots. Duplicate
+addresses and malformed input are rejected. There are no writes or ledger calls.
+
+The three-person `fixtures/inspectors.json` panel is MOCK. Its `available`,
+`openAudits`, `priorAgreement` fields extend shared `Inspector` locally while
+contract coordination is pending on #53. Pass live scheduling in `availability`
+(keyed by address), or pass those fields on raw fixture entries. Shared schema
+parsing strips extensions, so keep scheduling separately. Missing distance/load/
+agreement earns zero points; missing availability is explicitly reported and must
+be confirmed before locking terms. The verifier does not query a licence registry
+or prove credentials on-ledger; core supplies the trusted verified panel. Rotation
+is represented by current open load, not an invented persistent assignment history.
+
 ## Env
 `VERIFIER_MODE` (`mock`|`live`), `ANTHROPIC_API_KEY` (live only), `VERIFIER_MODEL` (default `claude-opus-5-5`), `DATA_DIR`.
