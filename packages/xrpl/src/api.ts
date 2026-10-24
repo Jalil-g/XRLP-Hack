@@ -24,9 +24,9 @@ import {
 } from "./lending-math.ts";
 import { createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet, type LoanPayMode } from "./loan.ts";
 import { configureIssuer, ensureTrustline, payRlusd, rlusdBalance, topUpRlusd } from "./rlusd.ts";
-import { createSpvAccount, disableMasterKey, setSpvSignerList } from "./spv.ts";
+import { createSpvAccount, lockSpv, type SpvSigners } from "./spv.ts";
 import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx } from "./vault.ts";
-import { ensureFundedWallets, loadWallets, rememberSpv, resolveWallet, WALLET_ROLES, type DemoWallets, type WalletRole } from "./wallets.ts";
+import { ensureFundedWallets, loadWallets, rememberSpv, resolveWallet, RLUSD_HOLDERS, rlusdTopUpPlan, type DemoWallets, type WalletRole } from "./wallets.ts";
 
 /** Role name ("investor1"), a demo-wallet address (r...), or a Wallet. */
 type WalletRef = WalletRole | string | Wallet;
@@ -39,37 +39,43 @@ export const PLATFORM_SCOPE = "_platform";
 
 export interface BootstrapOptions {
   fresh?: boolean;
-  /** RLUSD each investor is topped up to. */
+  /** RLUSD each investor is topped up to. Default 50 000. */
   investorRlusd?: number;
-  /** RLUSD the platform holds for first-loss cover. */
+  /** RLUSD the platform holds for first-loss cover across projects. Default 25 000. */
   platformRlusd?: number;
+  /** RLUSD the builder holds for the verification fee (250 in the demo). Default 1 000. */
+  builderRlusd?: number;
   log?: (s: string) => void;
 }
 
 /**
- * Fund all demo roles from the faucet (reusing .data/wallets.json), configure the RLUSD issuer
- * (DefaultRipple + AllowTrustLineLocking), open trust lines, and top up investors/platform. Idempotent.
+ * Fund all demo roles from the faucet (reusing/migrating the wallet file), configure the RLUSD issuer
+ * (DefaultRipple + AllowTrustLineLocking), open trust lines for RLUSD_HOLDERS, and top up investors/platform/builder.
+ * Idempotent: a second run submits 0 txs.
  */
 export async function bootstrapWallets(opts: BootstrapOptions = {}): Promise<{ wallets: DemoWallets; txs: TxResult[] }> {
   const log = opts.log ?? (() => {});
   const wallets = await ensureFundedWallets({ fresh: opts.fresh, log });
   const issuer = wallets.issuer;
   const txs: TxResult[] = [];
-  txs.push(...(await configureIssuer(issuer)));
-  for (const role of WALLET_ROLES) {
-    if (role === "issuer") continue;
+  for (const t of await configureIssuer(issuer)) {
+    txs.push(t);
+    log(`issuer AccountSet ${t.explorerUrl}`);
+  }
+  for (const role of RLUSD_HOLDERS) {
     const t = await ensureTrustline(wallets[role], issuer.classicAddress);
     if (t) {
       txs.push(t);
-      log(`trustline ${role}`);
+      log(`trustline ${role} ${t.explorerUrl}`);
     }
   }
-  for (const role of ["investor1", "investor2", "investor3"] as const) {
-    const t = await topUpRlusd(issuer, wallets[role].classicAddress, opts.investorRlusd ?? 50_000);
-    if (t) txs.push(t);
+  for (const { role, target } of rlusdTopUpPlan(opts)) {
+    const t = await topUpRlusd(issuer, wallets[role].classicAddress, target);
+    if (t) {
+      txs.push(t);
+      log(`RLUSD ${role} -> ${target} ${t.explorerUrl}`);
+    }
   }
-  const t = await topUpRlusd(issuer, wallets.platform.classicAddress, opts.platformRlusd ?? 10_000);
-  if (t) txs.push(t);
   return { wallets, txs };
 }
 
@@ -98,6 +104,8 @@ export interface SetupProjectOptions {
   managementFeeRate?: number;
   /** Lock the SPV (SignerListSet + disable master) now. Default true. */
   lockSpv?: boolean;
+  /** SPV signer addresses. Pass the project's builder + assigned inspector; defaults come from the demo roles (builder, inspector1). */
+  spvSigners?: Partial<SpvSigners>;
 }
 
 export interface ProjectChainSetup {
@@ -161,8 +169,9 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   rememberSpv(project.id, spv);
   if (trustTx) txs.spvTrustSet = trustTx;
   if (opts.lockSpv !== false) {
-    txs.spvSignerListSet = await lockSpvAccount(spv);
-    txs.spvDisableMaster = await disableMasterKey(spv);
+    const lock = await lockSpv(spv, spvSignersFor(opts.spvSigners));
+    txs.spvSignerListSet = lock.signerListSet;
+    txs.spvDisableMaster = lock.disableMaster;
   }
 
   const now = await ledgerTime();
@@ -213,15 +222,29 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   };
 }
 
-/** SignerListSet on the SPV using the demo roles (inspectorA/B w2, aiAgent w1, platform w1, quorum 3). */
-export async function lockSpvAccount(spv: Wallet): Promise<TxResult> {
+/** v2 SPV signer list with demo-role defaults: platform, builder, inspector1, trustee (override any). */
+export function spvSignersFor(o: Partial<SpvSigners> = {}): SpvSigners {
   const w = loadWallets();
-  return setSpvSignerList(spv, {
-    inspectorA: w.inspectorA.classicAddress,
-    inspectorB: w.inspectorB.classicAddress,
-    aiAgent: w.aiAgent.classicAddress,
-    platform: w.platform.classicAddress,
-  });
+  return {
+    platform: o.platform ?? w.platform.classicAddress,
+    builder: o.builder ?? w.builder.classicAddress,
+    inspector: o.inspector ?? w.inspector1.classicAddress,
+    trustee: o.trustee ?? w.trustee.classicAddress,
+  };
+}
+
+/**
+ * Default SPV multisig quorum: platform + builder + trustee (3 of 4). Independent of which inspector was assigned,
+ * so it works for every project; pass `spvSigners`/`signers` to use the inspector instead.
+ */
+export function defaultSpvSignerWallets(): Wallet[] {
+  const w = loadWallets();
+  return [w.platform, w.builder, w.trustee];
+}
+
+/** SignerListSet {platform, builder, inspector, trustee} w1 quorum 3 + disable master (fallback path: lock after LoanSet). */
+export async function lockSpvAccount(spv: Wallet, signers: Partial<SpvSigners> = {}): Promise<{ signerListSet: TxResult; disableMaster: TxResult }> {
+  return lockSpv(spv, spvSignersFor(signers));
 }
 
 // ---------------------------------------------------------------- vault
@@ -272,7 +295,7 @@ export interface CloseLoanOptions {
   defaultCancelAfter?: Date;
   /** Wait for the vault to leave Subscription before LoanSet (polls ledger time). Default true. */
   waitForInvestmentPhase?: boolean;
-  /** SPV signers that countersign LoanSet + EscrowCreate. Default inspectorA + aiAgent (weight 3). */
+  /** SPV signers that countersign LoanSet + EscrowCreate (3 of the SPV list). Default platform + builder + trustee. AI is never a signer. */
   spvSigners?: Wallet[];
   /** If the SPV master key is still enabled, countersign with it instead of multisig (fallback path). */
   spvSingleKey?: Wallet;
@@ -335,7 +358,7 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
 
   const paymentTotal = opts.paymentTotal ?? Math.max(1, Math.round(project.terms.termDays / project.terms.paymentIntervalDays));
   const paymentIntervalS = opts.paymentIntervalS ?? project.terms.paymentIntervalDays * DAY;
-  const signers = opts.spvSigners ?? [w.inspectorA, w.aiAgent];
+  const signers = opts.spvSigners ?? defaultSpvSignerWallets();
 
   const originationFee = opts.originationFee ?? originationFeeFor(project.terms.principal);
   const escrowTotal = project.milestones.reduce((a, m) => a + toMicro(m.amount), 0n);
@@ -491,7 +514,7 @@ export async function repayLoan(p: {
     const now = await ledgerTime();
     mode = loan.NextPaymentDueDate != null && now > loan.NextPaymentDueDate ? "late" : "regular";
   }
-  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount, signers: p.signers ?? [w.inspectorA, w.platform], mode });
+  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount, signers: p.signers ?? defaultSpvSignerWallets(), mode });
   return { tx, amount, mode, event: toChainEvent(tx, { projectId: p.projectId, kind: "loan_payment", actor: p.spv, amount }) };
 }
 

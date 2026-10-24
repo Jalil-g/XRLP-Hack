@@ -235,6 +235,36 @@ Observations:
 - With this toy rate/interval (10 %/yr, 240 s) the booked interest is below the vault's precision: `AssetsTotal` stayed 1000. For a visible share-price move in the demo use realistic terms (days, not seconds).
 - `AssetsAvailable` is omitted from the Vault entry when 0 (read it as `"0"`).
 
+### 2b. XRPL-05 devnet results (SPV signer list + multisig submit)
+
+`pnpm --filter @xrlp/xrpl spike:spv` (fresh throwaway faucet wallets). `createSpv()` gives SPV `rGfACDRPDofveyiTUj6aZaufb4JoPDLme8`:
+fund, RLUSD `TrustSet`, `SignerListSet {platform, builder, inspector, trustee}` w1 quorum 3, `asfDisableMaster`. Every attempt is a
+small XRP `Payment` from the SPV.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | SPV TrustSet RLUSD | `tesSUCCESS` | https://devnet.xrpl.org/transactions/9A6FD10025548970476676B01E26249A3F2DF407E7B6DDFE9E5292E6BDBEE4FD |
+| 2 | SPV SignerListSet {platform, builder, inspector, trustee} w1, quorum 3 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/8F04A0F25140F2A314C50E1EBFBEC8269EF48816735332F4F1C1EE7B09F4D30E |
+| 3 | SPV AccountSet asfDisableMaster | `tesSUCCESS` | https://devnet.xrpl.org/transactions/F491B509B6EE1E0E072B4B2D1DCEA2C702BB0C9F38F38992AE056D397056E4D4 |
+| 4 | master key single-sign | **`tefMASTER_DISABLED`** (expected) | — (not on ledger) |
+| 5 | multisig **2 of 4** (platform + builder) | **`tefBAD_QUORUM`** (expected) | — (not on ledger) |
+| 6 | platform + builder + **aiAgent** (AI not on the list) | **`tefBAD_SIGNATURE`** (expected) | — (not on ledger) |
+| 7 | `submitMultisigned` 2 of 4: local fast-fail, nothing submitted | `tefBAD_QUORUM` (local) | — |
+| 8 | multisig **3 of 4** (platform + builder + inspector) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BE908263747379191BB0C79A1CFB9EEF7B506B926715116200455CD79560D464 |
+| 9 | 3 of 4 without the inspector (platform + builder + trustee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/979B020D7F417AB44993DC6EAB64705F85AB1A3AAA64CEA6D4B6CFC10EF503AA |
+| 10 | 3 of 4 without the platform (builder + inspector + trustee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C0353715A7D5CDF835F03A00FFBF16FBCBCFB5FBAB14FF6DAB83C4BFDF3C0C25 |
+
+Observations:
+- **`tef*` results are not on-ledger**: they are rejected at submit, not applied, not relayed, no fee charged and no sequence used, so
+  there is **no explorer link** for rows 4–6. Right after submit the node may still answer `tx <hash>` from its local cache
+  (`validated: false`, no meta). Later it returns `txnNotFound`. To show "ledger says no" on the explorer, use a `tec` case (e.g. wrong
+  fulfillment → `tecCRYPTOCONDITION_ERROR`, XRPL-02), not a short multisig.
+- **xrpl.js `submitAndWait` does not throw on `tef*`** (only on `tem*`). It polls until `LastLedgerSequence` passes (~1 min), then throws
+  "latest ledger sequence … Preliminary result: tefBAD_QUORUM". `submitMultisigned()` therefore checks the signers against the on-ledger
+  SignerList first (`checkSignerQuorum`) and throws `XrplTxError("tefBAD_QUORUM"|"tefBAD_SIGNATURE" …)` at once.
+- Any 3 of 4 work, so no single party (including the platform) can block. The AI key is not a signer.
+- Fee: `autofill(tx, signers.length)` = base × (1 + 3) = 4 drops. Enough.
+
 ---
 
 ## 3. (c) Vault mechanics, and the V1_1 closed-ended lifecycle
