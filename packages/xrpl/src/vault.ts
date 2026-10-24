@@ -2,7 +2,7 @@
 // LoanBroker MUST be closed-ended: Subscription (deposits) -> Investment (LoanSet, no withdrawals)
 // -> Redemption (withdrawals). Phase is derived from the parent ledger close time.
 import { convertStringToHex, type Wallet } from "xrpl";
-import { createdNodeId, getClient, getLedgerEntry, signAndSubmit, type TxResult } from "./client.ts";
+import { createdNodeId, getClient, isNotFound, getLedgerEntry, signAndSubmit, type TxResult } from "./client.ts";
 import { rlusdAmount, rlusdAsset } from "./rlusd.ts";
 
 export const VAULT_KIND_CLOSED_ENDED = 1;
@@ -100,7 +100,7 @@ export async function getShareBalance(holder: string, shareMptIssuanceId: string
     const node = (res.result as { node?: { MPTAmount?: string } }).node;
     return node?.MPTAmount ?? "0";
   } catch (e) {
-    if (String((e as Error).message).includes("entryNotFound")) return "0";
+    if (isNotFound(e)) return "0";
     throw e;
   }
 }

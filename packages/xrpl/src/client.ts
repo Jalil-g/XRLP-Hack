@@ -123,9 +123,15 @@ export async function getLedgerEntry<T = Record<string, unknown>>(index: string)
     const res = await client.request({ command: "ledger_entry", index, ledger_index: "validated" });
     return res.result.node as T;
   } catch (e) {
-    if (String((e as Error)?.message).includes("entryNotFound")) return undefined;
+    if (isNotFound(e)) return undefined;
     throw e;
   }
+}
+
+/** True for rippled "not found" errors (entryNotFound / actNotFound). */
+export function isNotFound(e: unknown): boolean {
+  const code = (e as { data?: { error?: string } })?.data?.error;
+  return code === "entryNotFound" || code === "actNotFound" || /not found/i.test(String((e as Error)?.message));
 }
 
 /** Find the object ID created by a tx of the given ledger entry type (from metadata). */

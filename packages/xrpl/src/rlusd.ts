@@ -1,7 +1,7 @@
 // Mock RLUSD issuer: account flags, trust lines, issuance, balances.
 import { AccountSetAsfFlags, type IssuedCurrencyAmount, type Wallet } from "xrpl";
 import { RLUSD_CURRENCY } from "./config.ts";
-import { getClient, signAndSubmit, type TxResult } from "./client.ts";
+import { getClient, isNotFound, signAndSubmit, type TxResult } from "./client.ts";
 
 export interface RlusdAsset {
   currency: string;
@@ -57,7 +57,7 @@ export async function rlusdBalance(address: string, issuer: string): Promise<str
     const lines = await client.request({ command: "account_lines", account: address, peer: issuer, ledger_index: "validated" });
     return lines.result.lines.find((l) => l.currency === RLUSD_CURRENCY)?.balance ?? "0";
   } catch (e) {
-    if (String((e as Error).message).includes("actNotFound") || String((e as Error).message).includes("Account not found")) return "0";
+    if (isNotFound(e)) return "0";
     throw e;
   }
 }

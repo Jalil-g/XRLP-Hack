@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Wallet } from "xrpl";
 import { config } from "./config.ts";
-import { getClient } from "./client.ts";
+import { getClient, isNotFound } from "./client.ts";
 
 export const WALLET_ROLES = [
   "issuer",
@@ -75,7 +75,7 @@ export async function xrpBalance(address: string): Promise<number> {
   try {
     return Number(await client.getXrpBalance(address));
   } catch (e) {
-    if (String((e as Error).message).includes("actNotFound") || String((e as Error).message).includes("Account not found")) return 0;
+    if (isNotFound(e)) return 0;
     throw e;
   }
 }
