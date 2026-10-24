@@ -1,5 +1,7 @@
 # 06 — Team plan, timeline & tickets (36h)
 
+> **These tickets now live as GitHub Issues #6–#71 (assigned, labelled, linked to epics #1–#5). Issues are the source of truth — edit there, not here.** Each epic has a comment with that person's ordered queue.
+
 Read first: `docs/03-architecture.md`, `docs/xrpl-protocol-notes.md`, `docs/05-api.md`.
 The scaffolding agents deliver **foundations only** (`packages/xrpl`, `packages/verifier`, `packages/core` ports/fakes/store,
 `apps/web` on mock data, `packages/ledger-signer`). These tickets cover finishing, **integration** (real adapters
