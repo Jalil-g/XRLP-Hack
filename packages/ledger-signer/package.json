@@ -10,7 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --test"
+    "test": "node --test",
+    "smoke:speculos": "tsx scripts/speculos-smoke.ts"
   },
   "dependencies": {
     "@ledgerhq/device-management-kit": "^1.11.0",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3"
   }
 }
