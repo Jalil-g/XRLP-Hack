@@ -126,15 +126,16 @@ the SPV. Nobody can redirect it, including signers, the platform and the inspect
 ## Software components
 
 ```
-apps/web            Next.js (App Router) UI + route handlers. Investor / Builder / Inspector / Admin views.
+apps/web            Next.js UI: marketplace, project detail (demo screen), invest, portfolio, builder, /demo control room.
+apps/inspector      Separate Next.js app: inspector queue, review, client-side preimage keyring, attest, release.
 packages/shared     Domain types, zod schemas, milestone templates, state machine. THE CONTRACT. Change via PR only.
 packages/xrpl       All ledger ops (typed functions) + devnet scripts (bootstrap, full demo flow).
 packages/verifier   AI verification (Claude API, vision) with policy-per-project-type; mock mode without API key.
-packages/core       Orchestrator: project/milestone workflow, approvals, persistence (JSON store), keeper, calls xrpl + verifier.
+packages/core       Orchestrator + HTTP server (docs/05-api.md): workflow, release policy, JSON store, keeper, adapter factory.
 packages/ledger-signer  Inspector signing (software key now, Ledger/Speculos stretch).
 ```
 
-Dependency direction: `web → core → (xrpl, verifier) → shared`. Nothing imports `web`. HTTP + port contract: `docs/05-api.md`.
+Dependency direction: `web, inspector →(HTTP)→ core → (xrpl, verifier) → shared`. Port interfaces live in `shared`, and the adapters live in xrpl/verifier. HTTP + port contract: `docs/05-api.md`.
 
 ## Milestone state machine (in `packages/shared`)
 

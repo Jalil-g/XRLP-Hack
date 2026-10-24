@@ -31,6 +31,6 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - Interest on full principal from day one (design B) — acceptable for demo? Note `InterestRate=0` risks `tecPRECISION_LOSS`; use a small rate.
 - Under-funded at `SubscriptionDate` → investor money locked until `RedemptionDate`. Policy: platform tops up? short redemption window? cap with `AssetsMaximum`?
 - Trustee identity for the 4th SPV signer (investor rep? second inspector?).
-- Verify on devnet in hour 1: multisig-counterparty `LoanSet` (P1-01). If it fails → fallback documented in xrpl-protocol-notes §2.
+- Verify on devnet in hour 1: multisig-counterparty `LoanSet` (XRPL-01). If it fails → fallback documented in xrpl-protocol-notes §2.
 - Product pivot under consideration: per-payee escrows (builder + subcontractors, lien waivers) and institutional lender framing — see 06-tickets "If we pivot".
 - Default handling for already-released money (collateral / lien story for the pitch).

@@ -129,7 +129,7 @@ Holes we found in this design, and what to do about each:
   3. Merge with `combineLoanSetCounterpartySigners([...])`, then platform submits.
   4. Fee ≥ `(1 + |tx.Signers| + max(1,|CounterpartySignature.Signers|)) × base`. Set it by hand, since autofill
      can't count the counterparty signers. Use ~`"50"` drops on devnet.
-  **This is the hour-1 de-risk ticket (P1-01).** If devnet rejects it, the fallback is to temporarily keep the SPV master
+  **This is the hour-1 de-risk ticket (XRPL-01).** If devnet rejects it, the fallback is to temporarily keep the SPV master
   key enabled and single-sign the LoanSet, then disable the master key immediately after. Disclose that.
 - **Vault owner, LoanBroker owner and platform must be the same account.** This is required, not a choice: "The Vault Owner and Loan
   Broker must be on the same account" ([XLS-66] §2). `LoanBrokerSet` fails with `tecNO_PERMISSION` if
