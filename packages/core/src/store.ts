@@ -1,18 +1,23 @@
 // Persistence. Whole-DB transactional interface: `write(fn)` runs fn on a private copy and commits
 // only if fn returns without throwing. Small data, so the JSON file is re-read on every call
-// (keeps Next.js workers / the seed script / the CLI consistent without a cache).
+// (keeps the HTTP server / the seed script / the CLI consistent without a cache).
 import type {
   Attestation,
   Builder,
+  BuilderDocument,
   ChainEvent,
   Evidence,
+  Inspector,
+  InspectorAssignment,
+  InspectorAudit,
   Investment,
   Project,
+  ProjectVerification,
+  ReleasePolicy,
   Rlusd,
   Verdict,
   XrplAddress,
 } from "@xrlp/shared";
-import type { BuilderDocument, BuilderVerification } from "./ports.ts";
 
 export interface InvestorProfile {
   address: XrplAddress;
@@ -21,38 +26,37 @@ export interface InvestorProfile {
   createdAt: string;
 }
 
-export interface InspectorProfile {
-  address: XrplAddress;
-  name: string;
-  licenseNumber: string;
-  createdAt: string;
-}
-
 /** Project fields not in the shared Project schema. */
 export interface ProjectMeta {
   projectId: string;
-  inspectors: XrplAddress[];
-  /** PUBLIC escrow conditions supplied by the condition-holding inspector (fulfillments are never stored). */
-  conditions: { milestoneId: string; condition: string; holder: XrplAddress; at: string }[];
+  documents: BuilderDocument[];
   createdAt: string;
-  termsLockedAt?: string;
+  verificationFee?: { amount: Rlusd; tx: string; at: string };
+  /** AI verification said needs_human: a panel inspector does a pre-construction visit. */
+  preVisitRequested?: boolean;
+  assignment?: InspectorAssignment & { at: string; tx?: string };
+  verifiedAt?: string;
   fundingOpenedAt?: string;
   escrowedAt?: string;
   completedAt?: string;
   stalledAt?: string;
-  stalledReason?: string;
 }
 
-export interface BuilderReview {
-  builderId: string;
-  documents: BuilderDocument[];
-  result: BuilderVerification;
+/** `round` = 1-based evidence submission round for the milestone (resubmission after a failure = new round). */
+export type EvidenceRecord = Evidence & { projectId: string; milestoneId: string; round: number };
+export type AuditRecord = InspectorAudit & { projectId: string; round: number };
+export type VerdictRecord = Verdict & { projectId: string; round: number; verdictHash: string; policy2: ReleasePolicy; txHash?: string };
+export type VerificationRecord = ProjectVerification & { projectId: string; verificationHash: string; txHash?: string };
+export interface DecisionRecord {
+  projectId: string;
+  milestoneId: string;
+  round: number;
+  actor: XrplAddress;
+  decision: "approve" | "reject";
+  reason: string;
+  txHash: string;
   at: string;
 }
-
-/** `round` = 1-based evidence submission round for the milestone (resubmission after rejection = new round). */
-export type EvidenceRecord = Evidence & { projectId: string; milestoneId: string; round: number };
-export type VerdictRecord = Verdict & { projectId: string; round: number };
 export type AttestationRecord = Attestation & { projectId: string; round: number };
 
 export interface Withdrawal {
@@ -65,6 +69,7 @@ export interface Withdrawal {
 
 export interface Repayment {
   projectId: string;
+  milestoneId?: string;
   amount: Rlusd;
   source: "builder" | "escrow_refund";
   tx: string;
@@ -72,41 +77,64 @@ export interface Repayment {
 }
 
 export interface DbState {
-  version: 1;
+  version: 2;
   builders: Builder[];
-  builderReviews: BuilderReview[];
   investors: InvestorProfile[];
-  inspectors: InspectorProfile[];
+  inspectors: Inspector[];
   projects: Project[];
   projectMeta: ProjectMeta[];
+  verifications: VerificationRecord[];
   investments: Investment[];
   withdrawals: Withdrawal[];
   repayments: Repayment[];
   evidence: EvidenceRecord[];
+  audits: AuditRecord[];
   verdicts: VerdictRecord[];
+  decisions: DecisionRecord[];
   attestations: AttestationRecord[];
   chainEvents: ChainEvent[];
 }
 
 export const emptyDb = (): DbState => ({
-  version: 1,
+  version: 2,
   builders: [],
-  builderReviews: [],
   investors: [],
   inspectors: [],
   projects: [],
   projectMeta: [],
+  verifications: [],
   investments: [],
   withdrawals: [],
   repayments: [],
   evidence: [],
+  audits: [],
   verdicts: [],
+  decisions: [],
   attestations: [],
   chainEvents: [],
 });
 
-/** Fill in collections missing from older files. */
-export const normalizeDb = (raw: Partial<DbState>): DbState => ({ ...emptyDb(), ...raw, version: 1 });
+/** Fill in collections missing from older files. v1 inspector profiles become panel inspectors; v1-only collections are dropped. */
+export function normalizeDb(raw: Partial<DbState> & Record<string, unknown>): DbState {
+  const base = emptyDb();
+  const out = { ...base } as DbState;
+  for (const k of Object.keys(base) as (keyof DbState)[]) {
+    if (k === "version") continue;
+    const v = raw[k];
+    if (Array.isArray(v)) (out as unknown as Record<string, unknown>)[k] = v;
+  }
+  out.inspectors = out.inspectors.map((i) => ({
+    address: i.address,
+    name: i.name,
+    licenseNumber: i.licenseNumber,
+    trades: i.trades ?? [],
+    homeGeo: i.homeGeo,
+    verified: i.verified ?? true,
+    credentialTx: i.credentialTx,
+  }));
+  out.projectMeta = out.projectMeta.map((m) => ({ ...m, documents: m.documents ?? [] }));
+  return out;
+}
 
 export interface Store {
   /** Read-only view (a copy — mutations are discarded). */

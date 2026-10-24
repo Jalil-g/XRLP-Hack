@@ -25,3 +25,17 @@ export function fakeAddress(seed: string): string {
 
 /** 64-char uppercase hex, like an XRPL tx hash / ledger object id. */
 export const fakeHash = (seed: string): string => sha256Hex(`hash:${seed}`).toUpperCase();
+
+/** Canonical JSON (sorted keys, undefined dropped) for hashing attested objects. */
+export function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o)
+      .filter((k) => o[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v);
+}

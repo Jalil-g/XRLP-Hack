@@ -1,43 +1,78 @@
-// CoreService — the workflow orchestrator. Every mutation:
-//   1. takes a per-entity lock, 2. reads + validates state (explicit state-machine checks),
-//   3. performs the external effect (ledger / verifier), 4. commits state + ChainEvents in one store write.
-// If step 3 throws, nothing is committed.
+// CoreService v2 — the workflow orchestrator (implements CoreApi, one method per route in docs/05-api.md §2).
+// Every mutation: 1. per-project lock, 2. read + validate state (shared v2 state machines), 3. external effect
+// (ledger / verifier / release service), 4. commit state + ChainEvents in one store write. If 3 throws, nothing is
+// committed. Multi-tx steps (verdict -> release, cancel -> LoanPay) commit after each tx so a later failure never
+// erases an on-chain fact; keeperTick() retries the remainder.
 import {
-  MILESTONE_TEMPLATES,
-  ProjectType,
-  RiskTier,
-  Rlusd,
+  CreateProjectInput,
+  LedgerError,
   XrplAddress,
-  type Attestation,
+  type AttestMemo,
   type Builder,
   type ChainEvent,
+  type ChainEventKind,
   type Evidence,
+  type Inspector,
+  type InspectorAudit,
+  type InspectorTask,
   type Investment,
+  type LedgerPort,
   type Milestone,
-  type MilestoneStatus,
-  type MilestoneTemplate,
+  type MilestoneStatusV2,
+  type PortfolioPosition,
   type Project,
+  type ProjectDetail,
   type ProjectStatus,
+  type ProjectSummary,
+  type ProjectVerification,
+  type Rlusd,
+  type TryStealResult,
+  type TxResult,
   type Verdict,
+  type VerifierPort,
+  type InspectorAssignment,
 } from "@xrlp/shared";
 import { z } from "zod";
+import type { AuditReportInput, CoreApi, EvidenceUpload, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
-import { fulfillmentMatches, isCondition } from "./conditions.ts";
+import { isCondition } from "./conditions.ts";
 import { DomainError } from "./errors.ts";
-import { fakeAddress, newId, slugify } from "./ids.ts";
-import { fromMicro, splitByShares, sumMicro, toMicro, totalOwedMicro, minMicro } from "./money.ts";
-import type { BuilderDocument, BuilderVerification, LedgerPort, VerifierPort } from "./ports.ts";
-import { evaluateQuorum, type QuorumStatus } from "./quorum.ts";
+import { canonicalJson, fakeAddress, newId, sha256Hex, slugify } from "./ids.ts";
+import { fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
+import { PLATFORM_SCOPE } from "./ports.ts";
+import {
+  assignedInspectors,
+  currentRound,
+  getMilestoneOrThrow,
+  getProjectOrThrow,
+  inspectorQueue,
+  investorTotals,
+  latestVerdict,
+  metaOf,
+  portfolio,
+  projectDetail,
+  projectEvents,
+  projectSummary,
+  roundAudits,
+  roundEvidence,
+  sovFor,
+  stripEvidence,
+  vaultPhase,
+} from "./read-models.ts";
+import { evaluateRelease, type OperatorDecision, type ReleaseEvaluation } from "./release-policy.ts";
 import {
   assertMilestoneStatus,
   assertMilestoneTransition,
   assertProjectStatus,
   assertProjectTransition,
-  LOCKED_MILESTONE,
+  canMilestoneTransition,
+  canProjectTransition,
+  isLocked,
+  isTerminal,
 } from "./state-machine.ts";
-import type { AttestationRecord, DbState, InspectorProfile, InvestorProfile, ProjectMeta, Store, VerdictRecord } from "./store.ts";
+import type { AuditRecord, DbState, ProjectMeta, Store } from "./store.ts";
 
-// ---------- input schemas (exported so route handlers can reuse them) ----------
+// ---------- non-route inputs (seed / admin) ----------
 
 export const RegisterBuilderInput = z.object({
   id: z.string().min(1).optional(),
@@ -46,70 +81,26 @@ export const RegisterBuilderInput = z.object({
   licenseNumber: z.string(),
   insurancePolicy: z.string(),
   completedProjects: z.number().int().nonnegative().default(0),
-  riskTier: RiskTier.default("medium"),
+  riskTier: z.enum(["low", "medium", "high"]).default("medium"),
 });
 export type RegisterBuilderInput = z.input<typeof RegisterBuilderInput>;
 
-export const BuilderDocumentInput = z.object({
-  kind: z.enum(["license", "insurance", "track_record", "identity", "other"]),
-  filename: z.string(),
-  uri: z.string().optional(),
-  fields: z.record(z.string()).optional(),
-});
-
-export const RegisterInvestorInput = z.object({ address: XrplAddress, name: z.string().min(1) });
 export const RegisterInspectorInput = z.object({
   address: XrplAddress,
   name: z.string().min(1),
   licenseNumber: z.string().min(1),
+  trades: z.array(z.string()).default([]),
+  homeGeo: z.object({ lat: z.number(), lng: z.number() }).optional(),
 });
+export type RegisterInspectorInput = z.input<typeof RegisterInspectorInput>;
 
-export const CreateProjectInput = z.object({
-  id: z.string().regex(/^[a-z0-9-]+$/).optional(),
-  builderId: z.string(),
-  name: z.string().min(1),
-  type: ProjectType,
-  siteAddress: z.string().min(1),
-  siteGeo: z.object({ lat: z.number(), lng: z.number(), radiusM: z.number().positive() }),
-  description: z.string().default(""),
-  terms: z.object({
-    principal: Rlusd,
-    interestRateBps: z.number().int().nonnegative(),
-    termDays: z.number().int().positive(),
-    paymentIntervalDays: z.number().int().positive(),
-    fundingDeadline: z.string().datetime(),
-  }),
-  /** Platform-assigned inspectors (never chosen by the builder). First = default escrow-condition holder. */
-  inspectors: z.array(XrplAddress).min(1).max(2),
-});
-export type CreateProjectInput = z.input<typeof CreateProjectInput>;
-
-export const EvidenceInput = z.object({
-  kind: z.enum(["photo", "invoice", "document", "inspector_report"]),
-  filename: z.string().min(1),
-  mimeType: z.string().min(1),
-  uri: z.string().min(1),
-  sha256: z.string().min(1),
-  meta: z
-    .object({
-      takenAt: z.string().datetime().optional(),
-      gps: z.object({ lat: z.number(), lng: z.number() }).optional(),
-      perceptualHash: z.string().optional(),
-      invoiceTotal: Rlusd.optional(),
-    })
-    .partial()
-    .default({}),
-});
-export type EvidenceInput = z.input<typeof EvidenceInput>;
+/** Evidence upload, optionally with metadata the HTTP layer / verifier extracted (EXIF, pHash, invoice total). */
+export type EvidenceFile = EvidenceUpload & { meta?: Evidence["meta"] };
 
 function parse<S extends z.ZodTypeAny>(schema: S, input: unknown): z.output<S> {
   const r = schema.safeParse(input);
   if (!r.success) {
-    throw new DomainError(
-      "VALIDATION",
-      r.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "),
-      r.error.issues,
-    );
+    throw new DomainError("VALIDATION", r.error.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; "), r.error.issues);
   }
   return r.data;
 }
@@ -120,22 +111,24 @@ export interface CoreServiceOptions {
   store: Store;
   ledger: LedgerPort;
   verifier: VerifierPort;
+  release: ReleaseServicePort;
   clock?: Clock;
-  /** Platform signer address (credential issuer, platform attestations). */
   platformAddress?: XrplAddress;
-  /** AI agent signer address on the SPV. */
   aiAgentAddress?: XrplAddress;
-  /** Close the loan + create escrows automatically when funding completes (default true). */
-  autoClose?: boolean;
-  /** Escrow CancelAfter per milestone. Default: milestone i of n due at (i+1)/n of termDays from close.
-   *  Override for live demos (e.g. make milestone 3 expire in 3 minutes). */
+  releaseServiceAddress?: XrplAddress;
+  /** Vault RedemptionDate = SubscriptionDate + termDays + this buffer. Default 7. */
+  redemptionBufferDays?: number;
+  /** First-loss cover posted at lock-terms, bps of principal. Default 1000 (10%). */
+  coverBps?: number;
+  /** Escrow CancelAfter per milestone. Default: milestone i of n at (i+1)/n of termDays after close, capped before maturity. */
   cancelAfterFor?: (project: Project, milestone: Milestone, closeAt: Date) => Date;
+  /** Route 21: rebuild demo data (wired by the factory; fake mode only). */
+  seed?: (name: "maple-st") => Promise<void>;
+  /** Route 21: wipe ledger-side demo state (fake ledger). */
+  resetLedger?: () => void;
 }
 
-export const defaultCancelAfter = (project: Project, milestone: Milestone, closeAt: Date): Date =>
-  new Date(closeAt.getTime() + Math.round(((milestone.index + 1) / project.milestones.length) * project.terms.termDays * DAY_MS));
-
-// ---------- tiny keyed mutex ----------
+export const verificationFeeFor = (principal: Rlusd): Rlusd => fromMicro(maxMicro(250_000_000n, (toMicro(principal) * 20n) / 10_000n));
 
 class KeyedMutex {
   private tails = new Map<string, Promise<unknown>>();
@@ -152,119 +145,41 @@ class KeyedMutex {
   }
 }
 
-// ---------- pure helpers over DbState (also used by read models) ----------
-
-export function getProjectOrThrow(db: DbState, projectId: string): Project {
-  const p = db.projects.find((x) => x.id === projectId);
-  if (!p) throw new DomainError("NOT_FOUND", `Project ${projectId} not found`);
-  return p;
-}
-export function getMetaOrThrow(db: DbState, projectId: string): ProjectMeta {
-  const m = db.projectMeta.find((x) => x.projectId === projectId);
-  if (!m) throw new DomainError("NOT_FOUND", `Project meta ${projectId} not found`);
-  return m;
-}
-export function getMilestoneOrThrow(project: Project, milestoneId: string): Milestone {
-  const m = project.milestones.find((x) => x.id === milestoneId);
-  if (!m) throw new DomainError("NOT_FOUND", `Milestone ${milestoneId} not found in project ${project.id}`);
-  return m;
-}
-export function getBuilderOrThrow(db: DbState, builderId: string): Builder {
-  const b = db.builders.find((x) => x.id === builderId);
-  if (!b) throw new DomainError("NOT_FOUND", `Builder ${builderId} not found`);
-  return b;
-}
-export function templateFor(project: Project, milestone: Milestone): MilestoneTemplate {
-  const t = MILESTONE_TEMPLATES[project.type].find((x) => x.key === milestone.templateKey);
-  if (!t) throw new DomainError("NOT_FOUND", `No template ${milestone.templateKey} for ${project.type}`);
-  return t;
-}
-/** Current evidence round for a milestone (0 = never submitted). */
-export function currentRound(db: DbState, milestoneId: string): number {
-  return db.evidence.filter((e) => e.milestoneId === milestoneId).reduce((r, e) => Math.max(r, e.round), 0);
-}
-export function roundAttestations(db: DbState, milestoneId: string, round: number): AttestationRecord[] {
-  return db.attestations.filter((a) => a.milestoneId === milestoneId && a.round === round);
-}
-export function latestVerdict(db: DbState, milestoneId: string): VerdictRecord | undefined {
-  return db.verdicts.filter((v) => v.milestoneId === milestoneId).at(-1);
-}
-export function quorumFor(db: DbState, milestone: Milestone): QuorumStatus {
-  return evaluateQuorum(roundAttestations(db, milestone.id, currentRound(db, milestone.id)), milestone.requiredInspectors);
-}
-
-export interface VaultPosition {
-  deposits: bigint;
-  loaned: bigint;
-  repaid: bigint;
-  withdrawn: bigint;
-  /** Liquid assets in the vault right now. */
-  available: bigint;
-  /** principal + simple interest over the term. */
-  owed: bigint;
-  outstanding: bigint;
-  totalValue: bigint;
-}
-
-export function vaultPosition(db: DbState, project: Project): VaultPosition {
-  const deposits = sumMicro(db.investments.filter((i) => i.projectId === project.id).map((i) => i.amount));
-  const loaned = project.chain.loanId ? toMicro(project.terms.principal) : 0n;
-  const repaid = sumMicro(db.repayments.filter((r) => r.projectId === project.id).map((r) => r.amount));
-  const withdrawn = sumMicro(db.withdrawals.filter((w) => w.projectId === project.id).map((w) => w.amount));
-  const owed = loaned ? totalOwedMicro(project.terms.principal, project.terms.interestRateBps, project.terms.termDays) : 0n;
-  const outstanding = loaned ? (owed > repaid ? owed - repaid : 0n) : 0n;
-  const available = deposits - loaned + repaid - withdrawn;
-  return { deposits, loaned, repaid, withdrawn, available, owed, outstanding, totalValue: available + outstanding };
-}
-
-export interface InvestorPosition {
-  deposited: bigint;
-  withdrawn: bigint;
-  /** ownership fraction in parts-per-million */
-  sharePpm: bigint;
-  currentValue: bigint;
-  withdrawable: bigint;
-}
-
-export function investorPosition(db: DbState, project: Project, investor: string): InvestorPosition {
-  const v = vaultPosition(db, project);
-  const deposited = sumMicro(db.investments.filter((i) => i.projectId === project.id && i.investor === investor).map((i) => i.amount));
-  const withdrawn = sumMicro(db.withdrawals.filter((w) => w.projectId === project.id && w.investor === investor).map((w) => w.amount));
-  if (v.deposits === 0n) return { deposited, withdrawn, sharePpm: 0n, currentValue: 0n, withdrawable: 0n };
-  const sharePpm = (deposited * 1_000_000n) / v.deposits;
-  // Claim on liquid money ever made available to the vault, pro-rata, minus what this investor already took.
-  const liquidClaim = (deposited * (v.deposits - v.loaned + v.repaid)) / v.deposits - withdrawn;
-  const withdrawable = minMicro(liquidClaim > 0n ? liquidClaim : 0n, v.available);
-  const currentValue = (deposited * (v.deposits - v.loaned + v.repaid + v.outstanding)) / v.deposits - withdrawn;
-  return { deposited, withdrawn, sharePpm, currentValue: currentValue > 0n ? currentValue : 0n, withdrawable };
-}
+const OPEN_PROJECT: readonly ProjectStatus[] = ["escrowed", "repaying", "stalled"];
 
 // ---------- service ----------
 
-export class CoreService {
+export class CoreService implements CoreApi {
   readonly store: Store;
   readonly ledger: LedgerPort;
   readonly verifier: VerifierPort;
+  readonly release: ReleaseServicePort;
   readonly clock: Clock;
   readonly platformAddress: XrplAddress;
   readonly aiAgentAddress: XrplAddress;
-  private readonly autoClose: boolean;
-  private readonly cancelAfterFor: NonNullable<CoreServiceOptions["cancelAfterFor"]>;
+  readonly releaseServiceAddress: XrplAddress;
+  private readonly opts: CoreServiceOptions;
   private readonly locks = new KeyedMutex();
 
   constructor(opts: CoreServiceOptions) {
+    this.opts = opts;
     this.store = opts.store;
     this.ledger = opts.ledger;
     this.verifier = opts.verifier;
+    this.release = opts.release;
     this.clock = opts.clock ?? systemClock;
     this.platformAddress = opts.platformAddress ?? fakeAddress("platform");
     this.aiAgentAddress = opts.aiAgentAddress ?? fakeAddress("ai-agent");
-    this.autoClose = opts.autoClose ?? true;
-    this.cancelAfterFor = opts.cancelAfterFor ?? defaultCancelAfter;
+    this.releaseServiceAddress = opts.releaseServiceAddress ?? fakeAddress("release-service");
   }
 
+  // ---------- plumbing ----------
+
+  private now(): Date {
+    return this.clock.now();
+  }
   private nowIso(): string {
-    return this.clock.now().toISOString();
+    return this.now().toISOString();
   }
 
   private async onLedger<T>(what: string, fn: () => Promise<T>): Promise<T> {
@@ -272,6 +187,10 @@ export class CoreService {
       return await fn();
     } catch (e) {
       if (e instanceof DomainError) throw e;
+      if (e instanceof LedgerError) {
+        const code = e.code === "too_soon" ? "TOO_SOON" : e.code === "unsafe_release" ? "UNSAFE_RELEASE" : "LEDGER_ERROR";
+        throw new DomainError(code, `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
+      }
       throw new DomainError("LEDGER_ERROR", `${what} failed: ${(e as Error).message}`, e);
     }
   }
@@ -284,697 +203,836 @@ export class CoreService {
     }
   }
 
-  // ===== participants =====
+  /** TxResult -> ChainEvent with project context. Txs without a kind (e.g. SPV account setup) are skipped. */
+  private ev(
+    tx: TxResult,
+    ctx: { projectId: string; milestoneId?: string; kind?: ChainEventKind; actor?: XrplAddress; amount?: Rlusd },
+  ): ChainEvent | undefined {
+    const kind = ctx.kind ?? tx.kind;
+    if (!kind) return undefined;
+    return {
+      projectId: ctx.projectId,
+      ...(ctx.milestoneId ? { milestoneId: ctx.milestoneId } : {}),
+      kind,
+      txHash: tx.hash,
+      explorerUrl: tx.explorerUrl,
+      ...(tx.result && tx.result !== "tesSUCCESS" ? { result: tx.result } : {}),
+      ...(ctx.actor ? { actor: ctx.actor } : {}),
+      ...(ctx.amount ? { amount: ctx.amount } : {}),
+      at: tx.at ?? this.nowIso(),
+    };
+  }
+  private evs(txs: TxResult[], ctx: Parameters<CoreService["ev"]>[1]): ChainEvent[] {
+    return txs.map((t) => this.ev(t, ctx)).filter((e): e is ChainEvent => !!e);
+  }
+
+  private read<T>(fn: (db: DbState) => T): Promise<T> {
+    return this.store.read(fn);
+  }
+
+  private requirePlatform(actor: string, action: string): void {
+    if (actor !== this.platformAddress) throw new DomainError("FORBIDDEN", `${action} must be done by the platform (${this.platformAddress})`);
+  }
+
+  private setProjectStatus(db: DbState, p: Project, to: ProjectStatus): void {
+    if (p.status === to) return;
+    assertProjectTransition(p.id, p.status, to);
+    p.status = to;
+  }
+  private setMilestoneStatus(m: Milestone, to: MilestoneStatusV2): void {
+    if (m.status === to) return;
+    assertMilestoneTransition(m.id, m.status, to);
+    m.status = to;
+  }
+  private projectIn(db: DbState, id: string): Project {
+    return getProjectOrThrow(db, id);
+  }
+  private meta(db: DbState, id: string): ProjectMeta {
+    const m = metaOf(db, id);
+    if (!m) throw new DomainError("NOT_FOUND", `Project meta ${id} not found`);
+    return m;
+  }
+  private builderOf(db: DbState, p: Project): Builder {
+    const b = db.builders.find((x) => x.id === p.builderId);
+    if (!b) throw new DomainError("NOT_FOUND", `Builder ${p.builderId} not found`);
+    return b;
+  }
+  private attest(signer: "aiAgent" | "platform" | "releaseService", spv: XrplAddress, memo: AttestMemo, what: string): Promise<TxResult> {
+    return this.onLedger(what, () => this.ledger.attest({ signer, spv, memo }));
+  }
+
+  // ---------- participants (seed / admin; not HTTP routes) ----------
 
   async registerBuilder(input: RegisterBuilderInput): Promise<Builder> {
-    const data = parse(RegisterBuilderInput, input);
-    const id = data.id ?? `bld-${slugify(data.name)}`;
-    return this.locks.run(`builder:${id}`, () =>
-      this.store.write((db) => {
-        if (db.builders.some((b) => b.id === id || b.address === data.address))
-          throw new DomainError("CONFLICT", `Builder ${id} / ${data.address} already registered`);
-        const builder: Builder = {
-          id,
-          name: data.name,
-          address: data.address,
-          licenseNumber: data.licenseNumber,
-          insurancePolicy: data.insurancePolicy,
-          completedProjects: data.completedProjects,
-          riskTier: data.riskTier,
-          verified: false,
-        };
-        db.builders.push(builder);
-        return builder;
-      }),
-    );
-  }
-
-  /** AI reviews onboarding docs; on ok, platform issues VERIFIED_BUILDER credential on-chain. */
-  async verifyBuilder(
-    builderId: string,
-    documents: BuilderDocument[],
-  ): Promise<{ builder: Builder; verification: BuilderVerification; event?: ChainEvent }> {
-    const docs = parse(z.array(BuilderDocumentInput), documents) as BuilderDocument[];
-    return this.locks.run(`builder:${builderId}`, async () => {
-      const builder = await this.store.read((db) => getBuilderOrThrow(db, builderId));
-      if (builder.verified) throw new DomainError("CONFLICT", `Builder ${builderId} is already verified`);
-      const verification = await this.onVerifier("verifyBuilder", () => this.verifier.verifyBuilder({ builder, documents: docs }));
-      const event = verification.ok
-        ? await this.onLedger("issueCredential", () =>
-            this.ledger.issueCredential({ subject: builder.address, type: "VERIFIED_BUILDER" }),
-          )
-        : undefined;
-      const updated = await this.store.write((db) => {
-        const b = getBuilderOrThrow(db, builderId);
-        db.builderReviews.push({ builderId, documents: docs, result: verification, at: this.nowIso() });
-        if (verification.riskTier) b.riskTier = verification.riskTier;
-        if (event) {
-          b.verified = true;
-          b.credentialTx = event.txHash;
-          db.chainEvents.push(event);
-        }
-        return b;
-      });
-      return { builder: updated, verification, event };
-    });
-  }
-
-  /** Registers a (mock-KYC'd) investor and issues the KYC_INVESTOR credential. */
-  async registerInvestor(input: z.input<typeof RegisterInvestorInput>): Promise<{ investor: InvestorProfile; event: ChainEvent }> {
-    const data = parse(RegisterInvestorInput, input);
-    return this.locks.run(`investor:${data.address}`, async () => {
-      const exists = await this.store.read((db) => db.investors.some((i) => i.address === data.address));
-      if (exists) throw new DomainError("CONFLICT", `Investor ${data.address} already registered`);
-      const event = await this.onLedger("issueCredential", () =>
-        this.ledger.issueCredential({ subject: data.address, type: "KYC_INVESTOR" }),
-      );
-      const investor: InvestorProfile = { ...data, kycCredentialTx: event.txHash, createdAt: this.nowIso() };
-      await this.store.write((db) => {
-        db.investors.push(investor);
-        db.chainEvents.push(event);
-      });
-      return { investor, event };
-    });
-  }
-
-  async registerInspector(input: z.input<typeof RegisterInspectorInput>): Promise<InspectorProfile> {
-    const data = parse(RegisterInspectorInput, input);
+    const d = parse(RegisterBuilderInput, input);
+    const id = d.id ?? `bld-${slugify(d.name)}`;
     return this.store.write((db) => {
-      if (db.inspectors.some((i) => i.address === data.address))
-        throw new DomainError("CONFLICT", `Inspector ${data.address} already registered`);
-      const inspector: InspectorProfile = { ...data, createdAt: this.nowIso() };
+      if (db.builders.some((b) => b.id === id || b.address === d.address)) throw new DomainError("CONFLICT", `Builder ${id} already registered`);
+      const b: Builder = {
+        id,
+        name: d.name,
+        address: d.address,
+        licenseNumber: d.licenseNumber,
+        insurancePolicy: d.insurancePolicy,
+        completedProjects: d.completedProjects,
+        riskTier: d.riskTier,
+        verified: false,
+      };
+      db.builders.push(b);
+      return b;
+    });
+  }
+
+  /** Adds a licensed inspector to the verified panel and issues VERIFIED_INSPECTOR. */
+  async registerInspector(input: RegisterInspectorInput): Promise<{ inspector: Inspector; events: ChainEvent[] }> {
+    const d = parse(RegisterInspectorInput, input);
+    const exists = await this.read((db) => db.inspectors.some((i) => i.address === d.address));
+    if (exists) throw new DomainError("CONFLICT", `Inspector ${d.address} already on the panel`);
+    const txs = await this.onLedger("issue VERIFIED_INSPECTOR", () => this.ledger.issueCredential({ subject: d.address, type: "VERIFIED_INSPECTOR" }));
+    const events = this.evs(txs, { projectId: PLATFORM_SCOPE, actor: d.address });
+    return this.store.write((db) => {
+      const inspector: Inspector = { ...d, verified: true, credentialTx: txs[0]?.hash };
       db.inspectors.push(inspector);
-      return inspector;
+      db.chainEvents.push(...events);
+      return { inspector, events };
     });
   }
 
-  // ===== project lifecycle =====
+  // ---------- route 19 ----------
 
-  /** Builder proposes a project from a standard template. Amounts = defaultShare x principal. */
-  async createProject(input: CreateProjectInput): Promise<Project> {
-    const data = parse(CreateProjectInput, input);
-    const id = data.id ?? `${slugify(data.name)}-${newId("p").slice(-4)}`;
+  async kycInvestor(address: XrplAddress, name?: string): Promise<{ events: ChainEvent[] }> {
+    const addr = parse(XrplAddress, address);
+    const done = await this.read((db) => db.investors.find((i) => i.address === addr)?.kycCredentialTx);
+    if (done) return { events: [] };
+    const txs = await this.onLedger("issue KYC_INVESTOR", () => this.ledger.issueCredential({ subject: addr, type: "KYC_INVESTOR" }));
+    const events = this.evs(txs, { projectId: PLATFORM_SCOPE, actor: addr });
     return this.store.write((db) => {
-      const builder = getBuilderOrThrow(db, data.builderId);
-      if (!builder.verified)
-        throw new DomainError("FORBIDDEN", `Builder ${builder.id} is not verified (no VERIFIED_BUILDER credential)`);
-      if (db.projects.some((p) => p.id === id)) throw new DomainError("CONFLICT", `Project ${id} already exists`);
-      for (const a of data.inspectors)
-        if (!db.inspectors.some((i) => i.address === a)) throw new DomainError("VALIDATION", `Inspector ${a} not registered`);
-      if (new Set(data.inspectors).size !== data.inspectors.length)
-        throw new DomainError("VALIDATION", "Inspectors must be distinct");
-      if (toMicro(data.terms.principal) <= 0n) throw new DomainError("VALIDATION", "Principal must be > 0");
+      let inv = db.investors.find((i) => i.address === addr);
+      if (!inv) db.investors.push((inv = { address: addr, name: name ?? `Investor ${addr.slice(0, 6)}`, createdAt: this.nowIso() }));
+      inv.kycCredentialTx = txs[0]?.hash;
+      db.chainEvents.push(...events);
+      return { events };
+    });
+  }
 
-      const templates = MILESTONE_TEMPLATES[data.type];
-      const amounts = splitByShares(data.terms.principal, templates.map((t) => t.defaultShare));
+  // ---------- routes 1, 2, 16, 17, 18, 20 (reads) ----------
+
+  listProjects(q: { status?: ProjectStatus } = {}): Promise<ProjectSummary[]> {
+    return this.read((db) => db.projects.filter((p) => !q.status || p.status === q.status).map((p) => projectSummary(db, p)));
+  }
+  getProject(id: string): Promise<ProjectDetail> {
+    return this.read((db) => projectDetail(db, getProjectOrThrow(db, id), this.now()));
+  }
+  listEvents(id: string): Promise<ChainEvent[]> {
+    return this.read((db) => {
+      getProjectOrThrow(db, id);
+      return projectEvents(db, id);
+    });
+  }
+  listBuilders(): Promise<Builder[]> {
+    return this.read((db) => db.builders);
+  }
+  getBuilder(id: string): Promise<Builder> {
+    return this.read((db) => {
+      const b = db.builders.find((x) => x.id === id);
+      if (!b) throw new DomainError("NOT_FOUND", `Builder ${id} not found`);
+      return b;
+    });
+  }
+  listInspectors(): Promise<Inspector[]> {
+    return this.read((db) => db.inspectors);
+  }
+  inspectorQueue(address: XrplAddress): Promise<InspectorTask[]> {
+    return this.read((db) => inspectorQueue(db, address));
+  }
+  portfolio(investor: XrplAddress): Promise<PortfolioPosition[]> {
+    return this.read((db) => portfolio(db, investor, this.now()));
+  }
+
+  // ---------- route 3 ----------
+
+  async createProject(input: CreateProjectInput): Promise<Project> {
+    const d = parse(CreateProjectInput, input);
+    const codes = d.sov.map((l) => l.code);
+    if (new Set(codes).size !== codes.length) throw new DomainError("VALIDATION", "Schedule of Values codes must be unique");
+    const sovTotal = sumMicro(d.sov.map((l) => l.amount));
+    if (sovTotal !== toMicro(d.terms.principal))
+      throw new DomainError("VALIDATION", `Schedule of Values totals ${fromMicro(sovTotal)} but principal is ${d.terms.principal}`);
+    return this.store.write((db) => {
+      if (!db.builders.some((b) => b.id === d.builderId)) throw new DomainError("NOT_FOUND", `Builder ${d.builderId} not found`);
+      const base = slugify(d.name) || "project";
+      let id = base;
+      for (let n = 2; db.projects.some((p) => p.id === id); n++) id = `${base}-${n}`;
       const project: Project = {
         id,
-        name: data.name,
-        type: data.type,
-        builderId: builder.id,
-        siteAddress: data.siteAddress,
-        siteGeo: data.siteGeo,
-        description: data.description,
-        terms: data.terms,
+        name: d.name,
+        type: d.type,
+        builderId: d.builderId,
+        siteAddress: d.siteAddress,
+        siteGeo: d.siteGeo,
+        description: d.description,
+        terms: d.terms,
         status: "draft",
-        milestones: [],
-        chain: {},
-      };
-      project.milestones = templates.map((t, index) => {
-        const m: Milestone = {
-          id: `${id}-m${index + 1}-${t.key}`,
-          index,
-          templateKey: t.key,
-          title: t.title,
-          amount: amounts[index]!,
+        sov: d.sov,
+        milestones: d.sov.map((l, i) => ({
+          id: `${id}-m${i + 1}-${slugify(l.code)}`,
+          index: i,
+          templateKey: l.code,
+          title: l.title,
+          amount: l.amount,
           requiredInspectors: 1,
           status: "pending",
-        };
-        m.requiredInspectors = this.verifier.policyFor(project, builder, m).requiredInspectors;
-        if (m.requiredInspectors > data.inspectors.length)
-          throw new DomainError(
-            "VALIDATION",
-            `Milestone "${m.title}" (${m.amount} RLUSD) requires ${m.requiredInspectors} inspectors; only ${data.inspectors.length} assigned`,
-          );
-        return m;
-      });
+          sovCodes: [l.code],
+        })),
+        chain: {},
+      };
       db.projects.push(project);
-      db.projectMeta.push({ projectId: id, inspectors: data.inspectors, conditions: [], createdAt: this.nowIso() });
+      db.projectMeta.push({ projectId: id, documents: d.documents, createdAt: this.nowIso() });
       return project;
     });
   }
 
-  /** Platform approves the plan; terms become immutable. */
-  async lockTerms(projectId: string): Promise<Project> {
-    return this.locks.run(`project:${projectId}`, () =>
-      this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        assertProjectTransition(projectId, p.status, "terms_locked");
-        const total = sumMicro(p.milestones.map((m) => m.amount));
-        if (total !== toMicro(p.terms.principal))
-          throw new DomainError("VALIDATION", `Milestones sum ${fromMicro(total)} != principal ${p.terms.principal}`);
-        p.status = "terms_locked";
-        getMetaOrThrow(db, projectId).termsLockedAt = this.nowIso();
-        return p;
-      }),
-    );
+  // ---------- route 4 ----------
+
+  payVerificationFee(id: string, body: { builder: XrplAddress }): Promise<{ project: Project; events: ChainEvent[] }> {
+    return this.locks.run(id, async () => {
+      const { p, b } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, b: this.builderOf(db, p) };
+      });
+      if (body.builder !== b.address) throw new DomainError("FORBIDDEN", "Only the project's builder pays its verification fee");
+      assertProjectTransition(id, p.status, "verifying");
+      const amount = verificationFeeFor(p.terms.principal);
+      const tx = await this.onLedger("verification fee", () => this.ledger.payVerificationFee({ builder: b.address, amount }));
+      const events = this.evs([tx], { projectId: id, kind: "verification_fee_paid", actor: b.address, amount });
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        this.setProjectStatus(db, p, "verifying");
+        this.meta(db, id).verificationFee = { amount, tx: tx.hash, at: tx.at ?? this.nowIso() };
+        db.chainEvents.push(...events);
+        return { project: p, events };
+      });
+    });
   }
 
-  /** Creates SPV + Vault + LoanBroker on-chain and opens the vault for deposits. */
-  async openFunding(projectId: string): Promise<Project> {
-    return this.locks.run(`project:${projectId}`, async () => {
-      const { project, builder, meta } = await this.store.read((db) => {
-        const project = getProjectOrThrow(db, projectId);
-        return { project, builder: getBuilderOrThrow(db, project.builderId), meta: getMetaOrThrow(db, projectId) };
+  // ---------- route 5 ----------
+
+  verifyProject(id: string): Promise<{ verification: ProjectVerification; project: Project; events: ChainEvent[] }> {
+    return this.locks.run(id, async () => {
+      const { p, b, meta } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, b: this.builderOf(db, p), meta: this.meta(db, id) };
       });
-      assertProjectTransition(projectId, project.status, "funding");
-      if (this.clock.now() >= new Date(project.terms.fundingDeadline))
-        throw new DomainError("VALIDATION", `Funding deadline ${project.terms.fundingDeadline} already passed`);
-      const setup = await this.onLedger("setupProjectOnChain", () =>
-        this.ledger.setupProjectOnChain({ project, builder, inspectors: meta.inspectors }),
+      assertProjectStatus(id, p.status, ["verifying"], "verify project");
+      const verification = await this.onVerifier("project verification", () =>
+        this.verifier.verifyProject({ project: p, builder: b, sov: p.sov ?? [], documents: meta.documents }),
       );
+      const verificationHash = sha256Hex(canonicalJson(verification));
+      const attTx = await this.attest(
+        "aiAgent",
+        this.platformAddress,
+        { v: 1, kind: "verdict", milestoneId: `${id}:project`, hash: verificationHash, decision: verification.decision },
+        "attest project verification",
+      );
+      const events = this.evs([attTx], { projectId: id, kind: "project_verified", actor: this.aiAgentAddress });
+      let credTxs: TxResult[] = [];
+      if (verification.decision === "pass" && !b.verified) {
+        credTxs = await this.onLedger("issue VERIFIED_BUILDER", () => this.ledger.issueCredential({ subject: b.address, type: "VERIFIED_BUILDER" }));
+        events.push(...this.evs(credTxs, { projectId: id, actor: b.address }));
+      }
       return this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        p.status = "funding";
+        const p = this.projectIn(db, id);
+        const meta = this.meta(db, id);
+        db.verifications.push({ ...verification, projectId: id, verificationHash, txHash: attTx.hash });
+        if (verification.decision === "pass") {
+          this.setProjectStatus(db, p, "verified");
+          meta.verifiedAt = this.nowIso();
+          meta.preVisitRequested = false;
+          const builder = this.builderOf(db, p);
+          builder.riskTier = verification.riskTier;
+          if (!builder.verified) {
+            builder.verified = true;
+            builder.credentialTx = credTxs[0]?.hash;
+          }
+        } else if (verification.decision === "fail") {
+          this.setProjectStatus(db, p, "rejected");
+        } else {
+          meta.preVisitRequested = true; // inspector pre-construction visit (route 18 needs: "pre_visit")
+        }
+        db.chainEvents.push(...events);
+        return { verification, project: p, events };
+      });
+    });
+  }
+
+  // ---------- route 6 ----------
+
+  lockTermsAndOpenFunding(id: string, body: { actor: XrplAddress }): Promise<{ project: Project; assignment: InspectorAssignment; events: ChainEvent[] }> {
+    this.requirePlatform(body.actor, "Lock terms");
+    return this.locks.run(id, async () => {
+      const { p, b, panel } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, b: this.builderOf(db, p), panel: db.inspectors };
+      });
+      assertProjectTransition(id, p.status, "terms_locked");
+      const subscriptionDate = new Date(p.terms.fundingDeadline);
+      if (subscriptionDate <= this.now()) throw new DomainError("VALIDATION", `Funding deadline ${p.terms.fundingDeadline} is not in the future`);
+      const policies = p.milestones.map((m) => this.verifier.policyFor(p, m));
+      const count = Math.max(...policies.map((x) => x.requiredAudits)) as 1 | 2;
+      const assignment = await this.onVerifier("inspector assignment", () => this.verifier.assignInspector({ project: p, panel, count }));
+      if (assignment.inspectors.length < count) throw new DomainError("CONFLICT", `Need ${count} verified inspector(s) on the panel, got ${assignment.inspectors.length}`);
+      const assignTx = await this.attest(
+        "platform",
+        this.platformAddress,
+        { v: 1, kind: "decision", milestoneId: `${id}:assignment`, hash: sha256Hex(canonicalJson(assignment)), decision: "assign", reason: assignment.inspectors.join(",") },
+        "attest inspector assignment",
+      );
+      const redemptionDate = new Date(subscriptionDate.getTime() + (p.terms.termDays + (this.opts.redemptionBufferDays ?? 7)) * DAY_MS);
+      const coverDeposit = fromMicro((toMicro(p.terms.principal) * BigInt(this.opts.coverBps ?? 1000)) / 10_000n);
+      const setup = await this.onLedger("project setup", () =>
+        this.ledger.setupProjectOnChain({
+          project: p,
+          builder: b,
+          inspectors: assignment.inspectors,
+          subscriptionDate: subscriptionDate.toISOString(),
+          redemptionDate: redemptionDate.toISOString(),
+          coverDeposit,
+        }),
+      );
+      const events = [
+        ...this.evs([assignTx], { projectId: id, kind: "inspector_assigned", actor: this.platformAddress }),
+        ...setup.txs
+          .map((t) => this.ev(t, { projectId: id, actor: this.platformAddress, ...(t.kind === "cover_deposited" ? { amount: coverDeposit } : {}) }))
+          .filter((e): e is ChainEvent => !!e),
+      ];
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        this.setProjectStatus(db, p, "terms_locked");
+        this.setProjectStatus(db, p, "funding");
+        p.milestones.forEach((m, i) => (m.requiredInspectors = policies[i]!.requiredAudits));
         p.chain = {
           ...p.chain,
           spv: setup.spv,
           vaultId: setup.vaultId,
           loanBrokerId: setup.loanBrokerId,
           shareMptIssuanceId: setup.shareMptIssuanceId,
+          subscriptionDate: setup.subscriptionDate,
+          redemptionDate: setup.redemptionDate,
         };
-        getMetaOrThrow(db, projectId).fundingOpenedAt = this.nowIso();
-        db.chainEvents.push(...setup.events);
-        return p;
+        const meta = this.meta(db, id);
+        meta.assignment = { ...assignment, at: this.nowIso(), tx: assignTx.hash };
+        meta.fundingOpenedAt = this.nowIso();
+        db.chainEvents.push(...events);
+        return { project: p, assignment, events };
       });
     });
   }
 
-  /**
-   * Inspector-side step: the condition-holding inspector supplies one PREIMAGE-SHA-256 condition per milestone
-   * (they keep the fulfillments). Allowed until escrows are created. If the project is already funded and
-   * autoClose is on, this triggers loan close + escrow creation.
-   */
-  async submitMilestoneConditions(
-    projectId: string,
-    input: { inspector: XrplAddress; conditions: { milestoneId: string; condition: string }[] },
-  ): Promise<Project> {
-    return this.locks.run(`project:${projectId}`, async () => {
-      const project = await this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        const meta = getMetaOrThrow(db, projectId);
-        assertProjectStatus(projectId, p.status, ["draft", "terms_locked", "funding", "funded"], "submit escrow conditions");
-        if (!meta.inspectors.includes(input.inspector))
-          throw new DomainError("FORBIDDEN", `${input.inspector} is not an inspector on ${projectId}`);
-        for (const c of input.conditions) {
-          getMilestoneOrThrow(p, c.milestoneId);
-          if (!isCondition(c.condition))
-            throw new DomainError("VALIDATION", `Condition for ${c.milestoneId} is not a PREIMAGE-SHA-256 condition`);
-          meta.conditions = meta.conditions.filter((x) => x.milestoneId !== c.milestoneId);
-          meta.conditions.push({ milestoneId: c.milestoneId, condition: c.condition.toUpperCase(), holder: input.inspector, at: this.nowIso() });
-        }
-        return p;
+  // ---------- route 7 ----------
+
+  invest(id: string, body: { investor: XrplAddress; amount: Rlusd }): Promise<{ investment: Investment; events: ChainEvent[] }> {
+    const amount = fromMicro(toMicro(body.amount));
+    if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Investment must be positive");
+    return this.locks.run(id, async () => {
+      const { p, kyc, raised } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return {
+          p,
+          kyc: !!db.investors.find((i) => i.address === body.investor)?.kycCredentialTx,
+          raised: sumMicro(db.investments.filter((i) => i.projectId === id).map((i) => i.amount)),
+        };
       });
-      if (this.autoClose && project.status === "funded" && (await this.hasAllConditions(projectId))) {
-        return this.closeLoanLocked(projectId);
-      }
-      return project;
-    });
-  }
-
-  private hasAllConditions(projectId: string): Promise<boolean> {
-    return this.store.read((db) => {
-      const p = getProjectOrThrow(db, projectId);
-      const meta = getMetaOrThrow(db, projectId);
-      return p.milestones.every((m) => meta.conditions.some((c) => c.milestoneId === m.id));
-    });
-  }
-
-  /** Investor deposits RLUSD into the project vault. Completing the raise flips the project to funded
-   *  (and, with autoClose + all conditions present, closes the loan and creates escrows). */
-  async invest(
-    projectId: string,
-    input: { investor: XrplAddress; amount: Rlusd },
-  ): Promise<{ investment: Investment; event: ChainEvent; project: Project }> {
-    const { investor, amount } = parse(z.object({ investor: XrplAddress, amount: Rlusd }), input);
-    return this.locks.run(`project:${projectId}`, async () => {
-      const { project, remaining } = await this.store.read((db) => {
-        const project = getProjectOrThrow(db, projectId);
-        if (!db.investors.some((i) => i.address === investor))
-          throw new DomainError("FORBIDDEN", `Investor ${investor} has no KYC_INVESTOR credential (register first)`);
-        const raised = sumMicro(db.investments.filter((i) => i.projectId === projectId).map((i) => i.amount));
-        return { project, remaining: toMicro(project.terms.principal) - raised };
-      });
-      assertProjectStatus(projectId, project.status, ["funding"], "invest");
-      if (this.clock.now() >= new Date(project.terms.fundingDeadline))
-        throw new DomainError("ILLEGAL_TRANSITION", `Funding deadline passed for ${projectId}`);
-      const amt = toMicro(amount);
-      if (amt <= 0n) throw new DomainError("VALIDATION", "Amount must be > 0");
-      if (amt > remaining)
-        throw new DomainError("VALIDATION", `Amount ${amount} exceeds remaining ${fromMicro(remaining)} RLUSD`);
-
-      const event = await this.onLedger("depositToVault", () => this.ledger.depositToVault({ project, investor, amount }));
-      const investment: Investment = { projectId, investor, amount, tx: event.txHash, at: event.at };
-      let updated = await this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
+      assertProjectStatus(id, p.status, ["funding"], "invest");
+      if (!kyc) throw new DomainError("FORBIDDEN", `Investor ${body.investor} has no KYC_INVESTOR credential (route 19)`);
+      if (vaultPhase(p, this.now()) !== "subscription") throw new DomainError("ILLEGAL_TRANSITION", `Subscription closed at ${p.chain.subscriptionDate}`);
+      const left = toMicro(p.terms.principal) - raised;
+      if (toMicro(amount) > left) throw new DomainError("CONFLICT", `Only ${fromMicro(left)} RLUSD left to raise`);
+      const tx = await this.onLedger("vault deposit", () => this.ledger.deposit({ project: p, investor: body.investor, amount }));
+      const events = this.evs([tx], { projectId: id, kind: "vault_deposit", actor: body.investor, amount });
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        const investment: Investment = { projectId: id, investor: body.investor, amount, tx: tx.hash, at: tx.at ?? this.nowIso() };
         db.investments.push(investment);
-        db.chainEvents.push(event);
-        if (amt === remaining) {
-          assertProjectTransition(projectId, p.status, "funded");
-          p.status = "funded";
+        const total = sumMicro(db.investments.filter((i) => i.projectId === id).map((i) => i.amount));
+        if (total === toMicro(p.terms.principal)) this.setProjectStatus(db, p, "funded"); // never auto-closes
+        db.chainEvents.push(...events);
+        return { investment, events };
+      });
+    });
+  }
+
+  // ---------- route 8 ----------
+
+  private cancelAfterFor(p: Project, m: Milestone, closeAt: Date): Date {
+    const d = this.opts.cancelAfterFor
+      ? this.opts.cancelAfterFor(p, m, closeAt)
+      : new Date(closeAt.getTime() + Math.round(((m.index + 1) / p.milestones.length) * p.terms.termDays * DAY_MS));
+    const cap = new Date(new Date(p.chain.redemptionDate!).getTime() - 3_600_000);
+    return d < cap ? d : cap;
+  }
+
+  closeLoan(id: string, body: { actor: XrplAddress }): Promise<{ project: Project; events: ChainEvent[] }> {
+    this.requirePlatform(body.actor, "Close the loan");
+    return this.locks.run(id, async () => {
+      const { p, b } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, b: this.builderOf(db, p) };
+      });
+      if (p.status === "funding") throw new DomainError("ILLEGAL_TRANSITION", `Project ${id} is not fully funded`);
+      assertProjectTransition(id, p.status, "escrowed");
+      if (vaultPhase(p, this.now()) === "subscription")
+        throw new DomainError("TOO_SOON", `Loan can close only after SubscriptionDate ${p.chain.subscriptionDate}`, undefined, { txResult: "tecTOO_SOON" });
+      const conditions = await this.release.conditionsForClose(p);
+      if (conditions.length !== p.milestones.length || conditions.some((c) => !isCondition(c)) || new Set(conditions).size !== conditions.length)
+        throw new DomainError("CONFLICT", "Release service returned invalid or duplicate escrow conditions");
+      const closeAt = this.now();
+      const cancelAfters = p.milestones.map((m) => this.cancelAfterFor(p, m, closeAt).toISOString());
+      const res = await this.onLedger("loan close", () => this.ledger.closeLoanAndCreateEscrows({ project: p, builder: b, conditions, cancelAfters }));
+      const events: ChainEvent[] = [];
+      for (const t of res.txs) {
+        const esc = t.kind === "escrow_created" ? res.escrows.find((e) => e.createTx === t.hash) : undefined;
+        const m = esc ? p.milestones.find((x) => x.id === esc.milestoneId) : undefined;
+        const e = this.ev(t, {
+          projectId: id,
+          milestoneId: m?.id,
+          actor: p.chain.spv,
+          amount: m ? m.amount : t.kind === "loan_set" ? p.terms.principal : undefined,
+        });
+        if (e) events.push(e);
+      }
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        for (const esc of res.escrows) {
+          const m = getMilestoneOrThrow(p, esc.milestoneId);
+          const created = res.txs.find((t) => t.hash === esc.createTx);
+          m.escrow = {
+            owner: esc.owner,
+            offerSequence: esc.offerSequence,
+            condition: esc.condition,
+            createTx: esc.createTx,
+            createdAt: created?.at ?? this.nowIso(),
+          };
+          m.cancelAfter = esc.cancelAfter;
+          this.setMilestoneStatus(m, "escrowed");
         }
-        return p;
+        p.chain.loanId = res.loanId;
+        this.setProjectStatus(db, p, "escrowed");
+        this.meta(db, id).escrowedAt = this.nowIso();
+        db.chainEvents.push(...events);
+        return { project: p, events };
       });
-      if (updated.status === "funded" && this.autoClose && (await this.hasAllConditions(projectId))) {
-        updated = await this.closeLoanLocked(projectId);
-      }
-      return { investment, event, project: updated };
     });
   }
 
-  /** LoanSet to the SPV, then one EscrowCreate per milestone (same step). */
-  async closeLoan(projectId: string): Promise<Project> {
-    return this.locks.run(`project:${projectId}`, () => this.closeLoanLocked(projectId));
-  }
+  // ---------- route 9 ----------
 
-  private async closeLoanLocked(projectId: string): Promise<Project> {
-    const { project, builder, meta } = await this.store.read((db) => {
-      const project = getProjectOrThrow(db, projectId);
-      return { project, builder: getBuilderOrThrow(db, project.builderId), meta: getMetaOrThrow(db, projectId) };
-    });
-    assertProjectTransition(projectId, project.status, "escrowed");
-    const missing = project.milestones.filter((m) => !meta.conditions.some((c) => c.milestoneId === m.id));
-    if (missing.length)
-      throw new DomainError(
-        "ILLEGAL_TRANSITION",
-        `Cannot create escrows: inspector has not supplied conditions for ${missing.map((m) => m.title).join(", ")}`,
-      );
-    const closeAt = this.clock.now();
-    const withDeadlines: Project = {
-      ...project,
-      milestones: project.milestones.map((m) => ({ ...m, cancelAfter: this.cancelAfterFor(project, m, closeAt).toISOString() })),
-    };
-    const conditions = withDeadlines.milestones.map((m) => {
-      const c = meta.conditions.find((x) => x.milestoneId === m.id)!;
-      return { milestoneId: m.id, condition: c.condition };
-    });
-    const closing = await this.onLedger("closeLoanAndCreateEscrows", () =>
-      this.ledger.closeLoanAndCreateEscrows({ project: withDeadlines, builder, conditions }),
-    );
-    return this.store.write((db) => {
-      const p = getProjectOrThrow(db, projectId);
-      p.status = "escrowed";
-      p.chain = { ...p.chain, loanId: closing.loanId };
-      for (const m of p.milestones) {
-        const esc = closing.escrows.find((e) => e.milestoneId === m.id);
-        if (!esc) throw new DomainError("LEDGER_ERROR", `Ledger returned no escrow for ${m.id}`);
-        assertMilestoneTransition(m.id, m.status, "escrowed");
-        m.status = "escrowed";
-        m.cancelAfter = withDeadlines.milestones[m.index]!.cancelAfter;
-        m.escrow = { owner: esc.owner, offerSequence: esc.offerSequence, condition: esc.condition, createTx: esc.createTx };
-      }
-      getMetaOrThrow(db, projectId).escrowedAt = this.nowIso();
-      db.chainEvents.push(...closing.events);
-      return p;
-    });
-  }
-
-  /** Funding deadline passed without a full raise -> stalled; investors withdraw. Returns true if it stalled. */
-  async checkFundingDeadline(projectId: string): Promise<boolean> {
-    return this.locks.run(`project:${projectId}`, () =>
+  submitEvidence(id: string, mid: string, files: EvidenceFile[]): Promise<{ milestone: Milestone; evidence: Evidence[] }> {
+    if (!files.length) throw new DomainError("VALIDATION", "No evidence files");
+    return this.locks.run(id, () =>
       this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        if (p.status !== "funding" || this.clock.now() < new Date(p.terms.fundingDeadline)) return false;
-        assertProjectTransition(projectId, p.status, "stalled");
-        p.status = "stalled";
-        const meta = getMetaOrThrow(db, projectId);
-        meta.stalledAt = this.nowIso();
-        meta.stalledReason = "Funding deadline missed";
-        return true;
-      }),
-    );
-  }
-
-  // ===== milestones =====
-
-  /** Builder uploads evidence (files already stored; see saveEvidenceBlob). Starts a new review round. */
-  async submitEvidence(projectId: string, milestoneId: string, input: { evidence: EvidenceInput[] }): Promise<{ milestone: Milestone; evidence: Evidence[]; round: number }> {
-    const items = parse(z.array(EvidenceInput).min(1), input.evidence);
-    return this.locks.run(`project:${projectId}`, () =>
-      this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        assertProjectStatus(projectId, p.status, ["escrowed", "repaying"], "submit evidence");
-        const m = getMilestoneOrThrow(p, milestoneId);
-        assertMilestoneTransition(m.id, m.status, "evidence_submitted");
-        if (m.cancelAfter && this.clock.now() >= new Date(m.cancelAfter))
-          throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${m.id} escrow expired at ${m.cancelAfter}`);
-        const round = currentRound(db, m.id) + 1;
+        const p = this.projectIn(db, id);
+        assertProjectStatus(id, p.status, OPEN_PROJECT, "submit evidence");
+        const m = getMilestoneOrThrow(p, mid);
+        let round = currentRound(db, mid);
+        if (m.status === "escrowed" || m.status === "failed") {
+          this.setMilestoneStatus(m, "evidence_submitted");
+          round += 1;
+        } else assertMilestoneStatus(mid, m.status, ["evidence_submitted"], "submit evidence");
         const at = this.nowIso();
-        const evidence: Evidence[] = items.map((e) => ({ ...e, id: newId("ev"), uploadedAt: at }));
-        db.evidence.push(...evidence.map((e) => ({ ...e, projectId, milestoneId, round })));
-        m.status = "evidence_submitted";
-        return { milestone: m, evidence, round };
+        const evidence: Evidence[] = files.map((f) => ({
+          id: newId("ev"),
+          kind: f.kind,
+          filename: f.filename,
+          mimeType: f.mimeType,
+          uri: f.uri,
+          sha256: f.sha256,
+          meta: f.meta ?? {},
+          uploadedAt: at,
+        }));
+        db.evidence.push(...evidence.map((e) => ({ ...e, projectId: id, milestoneId: mid, round })));
+        return { milestone: m, evidence };
       }),
     );
   }
 
-  /** AI verifier checks the current round. pass -> AI approval attested on-chain; fail -> rejected. */
-  async runAiReview(projectId: string, milestoneId: string): Promise<{ verdict: Verdict; milestone: Milestone; attestation?: Attestation }> {
-    return this.locks.run(`project:${projectId}`, async () => {
-      const ctx = await this.store.read((db) => {
-        const project = getProjectOrThrow(db, projectId);
-        const milestone = getMilestoneOrThrow(project, milestoneId);
-        const builder = getBuilderOrThrow(db, project.builderId);
-        const round = currentRound(db, milestoneId);
-        const strip = ({ projectId: _p, milestoneId: _m, round: _r, ...e }: (typeof db.evidence)[number]): Evidence => e;
-        const builderProjects = new Set(db.projects.filter((x) => x.builderId === builder.id).map((x) => x.id));
-        const evidence = db.evidence.filter((e) => e.milestoneId === milestoneId && e.round === round).map(strip);
-        const priorEvidence = db.evidence
-          .filter((e) => builderProjects.has(e.projectId) && !(e.milestoneId === milestoneId && e.round === round))
-          .map(strip);
-        const escrowCreatedAt = db.chainEvents.find((e) => e.kind === "escrow_created" && e.milestoneId === milestoneId)?.at;
-        return { project, milestone, builder, round, evidence, priorEvidence, escrowCreatedAt };
+  // ---------- route 10 ----------
+
+  submitAudit(
+    id: string,
+    mid: string,
+    body: { report: AuditReportInput; photos: StoredFile[]; signedTxBlob?: string },
+  ): Promise<{ milestone: Milestone; audit: InspectorAudit; events: ChainEvent[] }> {
+    return this.locks.run(id, async () => {
+      const { p, m, round, assigned } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, m: getMilestoneOrThrow(p, mid), round: currentRound(db, mid), assigned: assignedInspectors(db, id) };
       });
-      assertMilestoneStatus(milestoneId, ctx.milestone.status, ["evidence_submitted"], "run AI review");
-      const verdict = await this.onVerifier("verifyMilestone", () =>
+      const inspector = body.report.inspector;
+      if (!assigned.includes(inspector)) throw new DomainError("FORBIDDEN", `${inspector} is not an assigned inspector for ${id}`);
+      assertProjectStatus(id, p.status, OPEN_PROJECT, "submit audit");
+      if (round === 0) throw new DomainError("ILLEGAL_TRANSITION", `No builder evidence for ${mid} yet`);
+      if (m.status !== "audited") assertMilestoneTransition(mid, m.status, "audited");
+      const at = this.nowIso();
+      const photos: Evidence[] = body.photos.map((f) => ({
+        id: newId("ap"),
+        kind: "photo",
+        filename: f.filename,
+        mimeType: f.mimeType,
+        uri: f.uri,
+        sha256: f.sha256,
+        meta: {},
+        uploadedAt: at,
+      }));
+      const unsigned: InspectorAudit = {
+        milestoneId: mid,
+        inspector,
+        evidenceBundleHash: body.report.evidenceBundleHash,
+        checklist: body.report.checklist,
+        photos,
+        notes: body.report.notes,
+        at,
+      };
+      const auditHash = sha256Hex(canonicalJson(unsigned));
+      // Inspector-app-signed attestation when provided; otherwise core submits it with the demo key (disclosed).
+      const tx = body.signedTxBlob
+        ? await this.onLedger("submit signed audit", () => this.ledger.submitSignedBlob(body.signedTxBlob!))
+        : await this.attest(
+            "platform",
+            p.chain.spv!,
+            { v: 1, kind: "audit", milestoneId: mid, hash: auditHash, reason: `signed-for ${inspector}` },
+            "attest audit",
+          );
+      const audit: InspectorAudit = { ...unsigned, txHash: tx.hash };
+      const events = this.evs([tx], { projectId: id, milestoneId: mid, kind: "audit_attested", actor: inspector });
+      const allDone = audit.checklist.every((c) => c.status === "done");
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        const m = getMilestoneOrThrow(p, mid);
+        if (m.status !== "audited") this.setMilestoneStatus(m, "audited");
+        const rec: AuditRecord = { ...audit, projectId: id, round };
+        db.audits.push(rec);
+        db.attestations.push({ milestoneId: mid, role: "inspector", signer: inspector, decision: allDone ? "approve" : "reject", notes: audit.notes, txHash: tx.hash, at, projectId: id, round });
+        db.chainEvents.push(...events);
+        return { milestone: m, audit, events };
+      });
+    });
+  }
+
+  // ---------- route 11 ----------
+
+  runChecks(id: string, mid: string): Promise<{ verdict: Verdict; release?: { txHash: string; explorerUrl: string }; events: ChainEvent[] }> {
+    return this.locks.run(id, async () => {
+      const ctx = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        const m = getMilestoneOrThrow(p, mid);
+        const round = currentRound(db, mid);
+        return {
+          p,
+          m,
+          round,
+          b: this.builderOf(db, p),
+          evidence: roundEvidence(db, mid, round).map(stripEvidence),
+          audits: roundAudits(db, mid, round),
+          // ALL projects' evidence except this milestone's own submissions (cross-project duplicate detection)
+          prior: db.evidence.filter((e) => e.milestoneId !== mid),
+          assigned: assignedInspectors(db, id),
+        };
+      });
+      const { p, m, round } = ctx;
+      assertProjectStatus(id, p.status, OPEN_PROJECT, "run checks");
+      assertMilestoneStatus(mid, m.status, ["evidence_submitted", "audited"], "run checks");
+      const policy = this.verifier.policyFor(p, m);
+      const verdict = await this.onVerifier("milestone checks", () =>
         this.verifier.verifyMilestone({
-          project: ctx.project,
-          builder: ctx.builder,
-          milestone: ctx.milestone,
-          template: templateFor(ctx.project, ctx.milestone),
+          project: p,
+          builder: ctx.b,
+          milestone: m,
+          sov: sovFor(p, m),
           evidence: ctx.evidence,
-          priorEvidence: ctx.priorEvidence,
-          escrowCreatedAt: ctx.escrowCreatedAt,
+          audits: ctx.audits,
+          priorEvidence: ctx.prior,
+          escrowCreatedAt: m.escrow?.createdAt,
+          policy,
         }),
       );
-      let attestation: AttestationRecord | undefined;
-      let event: ChainEvent | undefined;
-      if (verdict.decision === "pass") {
-        event = await this.onLedger("attestApproval(ai_agent)", () =>
-          this.ledger.attestApproval({
-            project: ctx.project,
-            milestone: ctx.milestone,
-            role: "ai_agent",
-            signer: this.aiAgentAddress,
-            decision: "approve",
-            notes: verdict.summary,
-          }),
-        );
-        attestation = {
-          projectId,
-          milestoneId,
-          round: ctx.round,
+      const verdictHash = this.verifier.verdictHash(verdict);
+      // Attest the verdict BEFORE any release.
+      const tx = await this.attest("aiAgent", p.chain.spv!, { v: 1, kind: "verdict", milestoneId: mid, hash: verdictHash, decision: verdict.decision }, "attest verdict");
+      const evaluation = evaluateRelease({ milestoneId: mid, verdict, policy, audits: ctx.audits, assignedInspectors: ctx.assigned });
+      const events = this.evs([tx], { projectId: id, milestoneId: mid, kind: "verdict_attested", actor: this.aiAgentAddress });
+      await this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        const m = getMilestoneOrThrow(p, mid);
+        db.verdicts.push({ ...verdict, projectId: id, round, verdictHash, policy2: policy, txHash: tx.hash });
+        db.attestations.push({
+          milestoneId: mid,
           role: "ai_agent",
           signer: this.aiAgentAddress,
-          decision: "approve",
+          decision: evaluation.outcome === "pass" ? "approve" : "reject",
           notes: verdict.summary,
-          txHash: event.txHash,
-          at: event.at,
-        };
-      }
+          txHash: tx.hash,
+          at: this.nowIso(),
+          projectId: id,
+          round,
+        });
+        this.applyOutcome(m, evaluation);
+        db.chainEvents.push(...events);
+      });
+      if (evaluation.outcome !== "pass") return { verdict, events };
+      const rel = await this.releaseVerifiedLocked(id, mid);
+      return { verdict, release: rel.finish, events: [...events, ...rel.events] };
+    });
+  }
+
+  private applyOutcome(m: Milestone, evaluation: ReleaseEvaluation): void {
+    const to: MilestoneStatusV2 = evaluation.outcome === "pass" ? "verified" : evaluation.outcome === "fail" ? "failed" : "needs_human";
+    if (evaluation.outcome === "pending") return;
+    this.setMilestoneStatus(m, to);
+  }
+
+  /** verified -> released via the release service (preflight, release attestation, finish). Caller holds the project lock. */
+  private async releaseVerifiedLocked(id: string, mid: string): Promise<{ finish: { txHash: string; explorerUrl: string }; events: ChainEvent[] }> {
+    const { p, m, b } = await this.read((db) => {
+      const p = this.projectIn(db, id);
+      return { p, m: getMilestoneOrThrow(p, mid), b: this.builderOf(db, p) };
+    });
+    assertMilestoneStatus(mid, m.status, ["verified"], "release");
+    const txs = await this.onLedger("release", () => this.release.release({ project: p, milestone: m }));
+    const finishTx = txs.find((t) => t.kind === "escrow_finished") ?? txs.at(-1)!;
+    const events = txs
+      .map((t) =>
+        t === finishTx
+          ? this.ev(t, { projectId: id, milestoneId: mid, kind: "escrow_finished", actor: b.address, amount: m.amount })
+          : this.ev(t, { projectId: id, milestoneId: mid, kind: t.kind ?? "approval_attested", actor: this.releaseServiceAddress }),
+      )
+      .filter((e): e is ChainEvent => !!e);
+    await this.store.write((db) => {
+      const p = this.projectIn(db, id);
+      const m = getMilestoneOrThrow(p, mid);
+      this.setMilestoneStatus(m, "released");
+      if (m.escrow) m.escrow.finishTx = finishTx.hash;
+      db.attestations.push({
+        milestoneId: mid,
+        role: "release_service",
+        signer: this.releaseServiceAddress,
+        decision: "approve",
+        notes: "test suite green; escrow finished",
+        txHash: txs[0]?.hash,
+        at: this.nowIso(),
+        projectId: id,
+        round: currentRound(db, mid),
+      });
+      this.maybeComplete(db, p);
+      db.chainEvents.push(...events);
+    });
+    return { finish: { txHash: finishTx.hash, explorerUrl: finishTx.explorerUrl }, events };
+  }
+
+  // ---------- route 12 ----------
+
+  resolveNeedsHuman(
+    id: string,
+    mid: string,
+    body: { actor: XrplAddress; decision: "approve" | "reject"; reason: string },
+  ): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
+    this.requirePlatform(body.actor, "Resolve needs_human");
+    const reason = body.reason?.trim();
+    if (!reason) throw new DomainError("VALIDATION", "A reason is required (it is attested on-chain)");
+    if (body.decision !== "approve" && body.decision !== "reject") throw new DomainError("VALIDATION", "decision must be approve | reject");
+    return this.locks.run(id, async () => {
+      const ctx = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        const m = getMilestoneOrThrow(p, mid);
+        const round = currentRound(db, mid);
+        return { p, m, round, verdict: latestVerdict(db, mid), audits: roundAudits(db, mid, round), assigned: assignedInspectors(db, id) };
+      });
+      assertMilestoneStatus(mid, ctx.m.status, ["needs_human"], "resolve");
+      if (!ctx.verdict) throw new DomainError("ILLEGAL_TRANSITION", `No verdict for ${mid}`);
+      // Attest the decision FIRST: the override is public before it has any effect.
+      const tx = await this.attest(
+        "platform",
+        ctx.p.chain.spv!,
+        { v: 1, kind: "decision", milestoneId: mid, hash: sha256Hex(reason), decision: body.decision, reason },
+        "attest operator decision",
+      );
+      const decision: OperatorDecision = { decision: body.decision, reason, txHash: tx.hash };
+      const { projectId: _p, round: _r, verdictHash: _h, policy2, txHash: _t, ...verdict } = ctx.verdict;
+      const evaluation = evaluateRelease({ milestoneId: mid, verdict, policy: policy2, audits: ctx.audits, assignedInspectors: ctx.assigned, operatorDecision: decision });
+      const events = this.evs([tx], { projectId: id, milestoneId: mid, kind: "decision_attested", actor: body.actor });
       const milestone = await this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        const m = getMilestoneOrThrow(p, milestoneId);
-        const next: MilestoneStatus = verdict.decision === "fail" ? "rejected" : "ai_reviewed";
-        assertMilestoneTransition(m.id, m.status, next);
-        m.status = next;
-        db.verdicts.push({ ...verdict, projectId, round: ctx.round });
-        if (attestation) db.attestations.push(attestation);
-        if (event) db.chainEvents.push(event);
+        const p = this.projectIn(db, id);
+        const m = getMilestoneOrThrow(p, mid);
+        db.decisions.push({ projectId: id, milestoneId: mid, round: ctx.round, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
+        db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round });
+        this.applyOutcome(m, evaluation);
+        db.chainEvents.push(...events);
         return m;
       });
-      return { verdict, milestone, attestation };
+      if (evaluation.outcome !== "pass") return { milestone, events };
+      const rel = await this.releaseVerifiedLocked(id, mid);
+      const after = await this.read((db) => getMilestoneOrThrow(this.projectIn(db, id), mid));
+      return { milestone: after, events: [...events, ...rel.events] };
     });
   }
 
-  /**
-   * Inspector signs approve/reject (recorded on-chain). If this approval completes quorum AND the
-   * condition-holding inspector hands over `fulfillment`, the escrow is released in the same call.
-   */
-  async inspectorAttest(
-    projectId: string,
-    milestoneId: string,
-    input: { inspector: XrplAddress; decision: "approve" | "reject"; notes?: string; fulfillment?: string },
-  ): Promise<{ milestone: Milestone; attestation: Attestation; quorum: QuorumStatus; released?: ChainEvent }> {
-    return this.locks.run(`project:${projectId}`, async () => {
-      const ctx = await this.store.read((db) => {
-        const project = getProjectOrThrow(db, projectId);
-        const meta = getMetaOrThrow(db, projectId);
-        const milestone = getMilestoneOrThrow(project, milestoneId);
-        const round = currentRound(db, milestoneId);
-        return { project, meta, milestone, round, prior: roundAttestations(db, milestoneId, round), verdict: latestVerdict(db, milestoneId) };
-      });
-      if (!ctx.meta.inspectors.includes(input.inspector))
-        throw new DomainError("FORBIDDEN", `${input.inspector} is not an inspector on ${projectId}`);
-      assertMilestoneStatus(milestoneId, ctx.milestone.status, ["ai_reviewed", "inspected"], "inspector attest");
-      if (ctx.prior.some((a) => a.role === "inspector" && a.signer === input.inspector))
-        throw new DomainError("CONFLICT", `Inspector ${input.inspector} already attested this round`);
-      if (input.fulfillment && !fulfillmentMatches(ctx.milestone.escrow?.condition ?? "", input.fulfillment))
-        throw new DomainError("VALIDATION", `Fulfillment does not match the escrow condition for ${milestoneId}`);
+  // ---------- route 13 ----------
 
-      const event = await this.onLedger("attestApproval(inspector)", () =>
-        this.ledger.attestApproval({
-          project: ctx.project,
-          milestone: ctx.milestone,
-          role: "inspector",
-          signer: input.inspector,
-          decision: input.decision,
-          notes: input.notes,
-        }),
-      );
-      const attestation: AttestationRecord = {
-        projectId,
-        milestoneId,
-        round: ctx.round,
-        role: "inspector",
-        signer: input.inspector,
-        decision: input.decision,
-        notes: input.notes ?? "",
-        txHash: event.txHash,
-        at: event.at,
-      };
-      const { milestone, quorum } = await this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        const m = getMilestoneOrThrow(p, milestoneId);
-        db.attestations.push(attestation);
-        db.chainEvents.push(event);
-        const next: MilestoneStatus = input.decision === "reject" ? "rejected" : "inspected";
-        if (m.status !== next) {
-          assertMilestoneTransition(m.id, m.status, next);
-          m.status = next;
+  cancelExpired(id: string, mid: string): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
+    return this.locks.run(id, () => this.cancelExpiredLocked(id, mid));
+  }
+
+  private async cancelExpiredLocked(id: string, mid: string): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
+    const { p, m } = await this.read((db) => {
+      const p = this.projectIn(db, id);
+      return { p, m: getMilestoneOrThrow(p, mid) };
+    });
+    if (!m.escrow) throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} has no escrow`);
+    const events: ChainEvent[] = [];
+    if (m.status !== "expired") {
+      // The ledger lets anyone cancel any open escrow after CancelAfter, whatever our workflow state says.
+      if (!isLocked(m.status)) throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} is ${m.status}; its escrow is not open`);
+      if (!m.cancelAfter || this.now() < new Date(m.cancelAfter))
+        throw new DomainError("TOO_SOON", `Escrow for ${mid} can be cancelled after ${m.cancelAfter}`, undefined, { txResult: "tecNO_PERMISSION" });
+      const tx = await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner: m.escrow!.owner, offerSequence: m.escrow!.offerSequence }));
+      const evs = this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.platformAddress, amount: m.amount });
+      events.push(...evs);
+      await this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        const m = getMilestoneOrThrow(p, mid);
+        m.status = "expired"; // forced: ledger reality (cancel succeeded) wins over workflow state
+        if (m.escrow) m.escrow.cancelTx = tx.hash;
+        if (canProjectTransition(p.status, "stalled")) {
+          p.status = "stalled";
+          this.meta(db, id).stalledAt = this.nowIso();
         }
-        return { milestone: m, quorum: quorumFor(db, m) };
+        db.chainEvents.push(...evs);
       });
-      if (quorum.met && input.fulfillment) {
-        const r = await this.releaseLocked(projectId, milestoneId, input.fulfillment);
-        return { milestone: r.milestone, attestation, quorum, released: r.event };
-      }
-      return { milestone, attestation, quorum };
-    });
-  }
-
-  /** Platform co-sign (weight 1) — e.g. when the AI said needs_human. Never sufficient on its own. */
-  async platformAttest(
-    projectId: string,
-    milestoneId: string,
-    input: { decision: "approve" | "reject"; notes?: string },
-  ): Promise<{ milestone: Milestone; attestation: Attestation; quorum: QuorumStatus }> {
-    return this.locks.run(`project:${projectId}`, async () => {
-      const ctx = await this.store.read((db) => {
-        const project = getProjectOrThrow(db, projectId);
-        const milestone = getMilestoneOrThrow(project, milestoneId);
-        const round = currentRound(db, milestoneId);
-        return { project, milestone, round, prior: roundAttestations(db, milestoneId, round) };
-      });
-      assertMilestoneStatus(milestoneId, ctx.milestone.status, ["ai_reviewed", "inspected"], "platform attest");
-      if (ctx.prior.some((a) => a.role === "platform"))
-        throw new DomainError("CONFLICT", "Platform already attested this round");
-      const event = await this.onLedger("attestApproval(platform)", () =>
-        this.ledger.attestApproval({
-          project: ctx.project,
-          milestone: ctx.milestone,
-          role: "platform",
-          signer: this.platformAddress,
-          decision: input.decision,
-          notes: input.notes,
-        }),
-      );
-      const attestation: AttestationRecord = {
-        projectId,
-        milestoneId,
-        round: ctx.round,
-        role: "platform",
-        signer: this.platformAddress,
-        decision: input.decision,
-        notes: input.notes ?? "",
-        txHash: event.txHash,
-        at: event.at,
-      };
-      return this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        const m = getMilestoneOrThrow(p, milestoneId);
-        db.attestations.push(attestation);
-        db.chainEvents.push(event);
-        if (input.decision === "reject") {
-          assertMilestoneTransition(m.id, m.status, "rejected");
-          m.status = "rejected";
-        }
-        return { milestone: m, attestation, quorum: quorumFor(db, m) };
-      });
-    });
-  }
-
-  /** EscrowFinish. Requires quorum + the condition-holding inspector's fulfillment (never stored). */
-  async releaseMilestone(projectId: string, milestoneId: string, input: { fulfillment: string }): Promise<{ milestone: Milestone; event: ChainEvent }> {
-    return this.locks.run(`project:${projectId}`, () => this.releaseLocked(projectId, milestoneId, input.fulfillment));
-  }
-
-  private async releaseLocked(projectId: string, milestoneId: string, fulfillment: string): Promise<{ milestone: Milestone; event: ChainEvent }> {
-    const { project, milestone, quorum } = await this.store.read((db) => {
-      const project = getProjectOrThrow(db, projectId);
-      const milestone = getMilestoneOrThrow(project, milestoneId);
-      return { project, milestone, quorum: quorumFor(db, milestone) };
-    });
-    assertMilestoneTransition(milestoneId, milestone.status, "released");
-    if (!quorum.met)
-      throw new DomainError("QUORUM_NOT_MET", `Milestone ${milestoneId} not approved: ${quorum.missing.join("; ")}`, quorum);
-    if (!milestone.escrow || !fulfillmentMatches(milestone.escrow.condition, fulfillment))
-      throw new DomainError("VALIDATION", `Fulfillment does not match the escrow condition for ${milestoneId}`);
-    const event = await this.onLedger("releaseMilestone", () => this.ledger.releaseMilestone({ project, milestone, fulfillment }));
-    const updated = await this.store.write((db) => {
-      const p = getProjectOrThrow(db, projectId);
-      const m = getMilestoneOrThrow(p, milestoneId);
-      assertMilestoneTransition(m.id, m.status, "released");
-      m.status = "released";
-      if (m.escrow) m.escrow.finishTx = event.txHash;
-      db.chainEvents.push(event);
+    }
+    // Refund the vault: multisig LoanPay from the SPV (separate commit; keeperTick retries if it fails).
+    const tx = await this.onLedger("escrow refund LoanPay", () => this.ledger.repayLoan({ project: p, amount: m.amount, source: "escrow_refund" }));
+    const evs = this.evs([tx], { projectId: id, milestoneId: mid, kind: "loan_payment", actor: p.chain.spv, amount: m.amount });
+    events.push(...evs);
+    const milestone = await this.store.write((db) => {
+      const p = this.projectIn(db, id);
+      const m = getMilestoneOrThrow(p, mid);
+      this.setMilestoneStatus(m, "refunded");
+      db.repayments.push({ projectId: id, milestoneId: mid, amount: m.amount, source: "escrow_refund", tx: tx.hash, at: tx.at ?? this.nowIso() });
+      this.maybeComplete(db, p);
+      db.chainEvents.push(...evs);
       return m;
     });
-    return { milestone: updated, event };
+    return { milestone, events };
   }
 
-  /**
-   * Stall path: CancelAfter passed -> expired -> EscrowCancel (funds back to SPV) -> SPV LoanPay back to
-   * the vault -> project stalled. Investors can then withdraw their share of the returned money.
-   */
-  async expireMilestone(projectId: string, milestoneId: string): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
-    return this.locks.run(`project:${projectId}`, async () => {
-      // Step 1: mark expired (persisted, so a failed cancel can be retried).
-      const { project, milestone } = await this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        const m = getMilestoneOrThrow(p, milestoneId);
-        if (m.status !== "expired") {
-          assertMilestoneTransition(m.id, m.status, "expired");
-          if (!m.cancelAfter || this.clock.now() < new Date(m.cancelAfter))
-            throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${m.id} escrow not expired yet (CancelAfter ${m.cancelAfter ?? "unset"})`);
-          m.status = "expired";
-        }
-        return { project: p, milestone: m };
-      });
-      // Step 2: EscrowCancel, then LoanPay the refunded money back into the vault.
-      const cancelled = await this.onLedger("cancelExpiredMilestone", () => this.ledger.cancelExpiredMilestone({ project, milestone }));
-      const repaid = await this.onLedger("repayLoan(escrow_refund)", () =>
-        this.ledger.repayLoan({ project, amount: milestone.amount, source: "escrow_refund" }),
-      );
-      const updated = await this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        const m = getMilestoneOrThrow(p, milestoneId);
-        assertMilestoneTransition(m.id, m.status, "refunded");
-        m.status = "refunded";
-        if (m.escrow) m.escrow.cancelTx = cancelled.txHash;
-        db.chainEvents.push(cancelled, repaid);
-        db.repayments.push({ projectId, amount: m.amount, source: "escrow_refund", tx: repaid.txHash, at: repaid.at });
-        if (p.status === "escrowed" || p.status === "repaying") {
-          p.status = "stalled";
-          const meta = getMetaOrThrow(db, projectId);
-          meta.stalledAt = this.nowIso();
-          meta.stalledReason = `Milestone "${m.title}" expired; escrow refunded to the vault`;
-        }
+  // ---------- route 14 ----------
+
+  repay(id: string, body: { amount: Rlusd }): Promise<{ project: Project; events: ChainEvent[] }> {
+    const amount = fromMicro(toMicro(body.amount));
+    if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Repayment must be positive");
+    return this.locks.run(id, async () => {
+      const p = await this.read((db) => this.projectIn(db, id));
+      assertProjectStatus(id, p.status, OPEN_PROJECT, "repay");
+      const tx = await this.onLedger("LoanPay", () => this.ledger.repayLoan({ project: p, amount, source: "builder" }));
+      const events = this.evs([tx], { projectId: id, kind: "loan_payment", actor: p.chain.spv, amount });
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        db.repayments.push({ projectId: id, amount, source: "builder", tx: tx.hash, at: tx.at ?? this.nowIso() });
+        if (canProjectTransition(p.status, "repaying")) p.status = "repaying";
         this.maybeComplete(db, p);
-        return m;
+        db.chainEvents.push(...events);
+        return { project: p, events };
       });
-      return { milestone: updated, events: [cancelled, repaid] };
     });
   }
 
-  /** Expire every milestone whose CancelAfter has passed (cron / admin "fast-forward" button). */
-  async sweepExpired(projectId?: string): Promise<{ projectId: string; milestoneId: string }[]> {
-    const due = await this.store.read((db) =>
-      db.projects
-        .filter((p) => !projectId || p.id === projectId)
-        .flatMap((p) =>
-          p.milestones
-            .filter((m) => LOCKED_MILESTONE.includes(m.status) && m.cancelAfter && this.clock.now() >= new Date(m.cancelAfter))
-            .map((m) => ({ projectId: p.id, milestoneId: m.id })),
-        ),
-    );
-    for (const d of due) await this.expireMilestone(d.projectId, d.milestoneId);
-    return due;
-  }
-
-  // ===== loan =====
-
-  /** Builder repays into the SPV, which LoanPays the vault. Fully repaid -> completed. */
-  async repayLoan(projectId: string, input: { amount: Rlusd }): Promise<{ project: Project; event: ChainEvent }> {
-    const { amount } = parse(z.object({ amount: Rlusd }), input);
-    return this.locks.run(`project:${projectId}`, async () => {
-      const { project, outstanding } = await this.store.read((db) => {
-        const project = getProjectOrThrow(db, projectId);
-        return { project, outstanding: vaultPosition(db, project).outstanding };
-      });
-      assertProjectStatus(projectId, project.status, ["escrowed", "repaying", "stalled"], "repay");
-      const amt = toMicro(amount);
-      if (amt <= 0n || amt > outstanding)
-        throw new DomainError("VALIDATION", `Repayment must be in (0, ${fromMicro(outstanding)}] RLUSD`);
-      const event = await this.onLedger("repayLoan", () => this.ledger.repayLoan({ project, amount, source: "builder" }));
-      const updated = await this.store.write((db) => {
-        const p = getProjectOrThrow(db, projectId);
-        db.repayments.push({ projectId, amount, source: "builder", tx: event.txHash, at: event.at });
-        db.chainEvents.push(event);
-        if (p.status === "escrowed") {
-          assertProjectTransition(projectId, p.status, "repaying");
-          p.status = "repaying";
-        }
-        this.maybeComplete(db, p);
-        return p;
-      });
-      return { project: updated, event };
-    });
-  }
-
+  /** repaying -> completed once every milestone is terminal and the loan is repaid. */
   private maybeComplete(db: DbState, p: Project): void {
-    if (p.status !== "repaying" && p.status !== "stalled") return;
-    const v = vaultPosition(db, p);
-    const allSettled = p.milestones.every((m) => m.status === "released" || m.status === "refunded");
-    if (v.outstanding === 0n && allSettled) {
-      assertProjectTransition(p.id, p.status, "completed");
+    if (p.status !== "repaying" || !p.milestones.every((m) => isTerminal(m.status))) return;
+    const repaid = sumMicro(db.repayments.filter((r) => r.projectId === p.id).map((r) => r.amount));
+    if (repaid >= totalOwedMicro(p.terms.principal, p.terms.interestRateBps, p.terms.termDays)) {
       p.status = "completed";
-      getMetaOrThrow(db, p.id).completedAt = this.nowIso();
+      this.meta(db, p.id).completedAt = this.nowIso();
     }
   }
 
-  /** Investor withdraws their pro-rata share of liquid vault assets (default: everything withdrawable). */
-  async withdraw(projectId: string, input: { investor: XrplAddress; amount?: Rlusd }): Promise<{ event: ChainEvent; amount: Rlusd }> {
-    const data = parse(z.object({ investor: XrplAddress, amount: Rlusd.optional() }), input);
-    return this.locks.run(`project:${projectId}`, async () => {
-      const { project, pos } = await this.store.read((db) => {
-        const project = getProjectOrThrow(db, projectId);
-        return { project, pos: investorPosition(db, project, data.investor) };
+  // ---------- route 15 ----------
+
+  withdraw(id: string, body: { investor: XrplAddress; amount: Rlusd }): Promise<{ events: ChainEvent[] }> {
+    const amount = fromMicro(toMicro(body.amount));
+    if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Withdrawal must be positive");
+    return this.locks.run(id, async () => {
+      const { p, pos } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, pos: investorTotals(db, p, body.investor) };
       });
-      const allowed: ProjectStatus[] = ["stalled", "repaying", "completed", "escrowed"];
-      assertProjectStatus(projectId, project.status, allowed, "withdraw");
-      const amt = data.amount ? toMicro(data.amount) : pos.withdrawable;
-      if (amt <= 0n || amt > pos.withdrawable)
-        throw new DomainError("VALIDATION", `Withdrawable for ${data.investor} is ${fromMicro(pos.withdrawable)} RLUSD`);
-      const amount = fromMicro(amt);
-      const event = await this.onLedger("withdrawFromVault", () =>
-        this.ledger.withdrawFromVault({ project, investor: data.investor, amount }),
-      );
-      await this.store.write((db) => {
-        db.withdrawals.push({ projectId, investor: data.investor, amount, tx: event.txHash, at: event.at });
-        db.chainEvents.push(event);
+      if (!p.chain.vaultId) throw new DomainError("ILLEGAL_TRANSITION", `Project ${id} has no vault`);
+      if (vaultPhase(p, this.now()) !== "redemption")
+        throw new DomainError("TOO_SOON", `Withdrawals open at RedemptionDate ${p.chain.redemptionDate}`, undefined, { txResult: "tecTOO_SOON" });
+      if (toMicro(amount) > pos.withdrawable) throw new DomainError("CONFLICT", `Withdrawable now: ${fromMicro(pos.withdrawable)} RLUSD`);
+      const tx = await this.onLedger("vault withdraw", () => this.ledger.withdraw({ project: p, investor: body.investor, amount }));
+      const events = this.evs([tx], { projectId: id, kind: "vault_withdraw", actor: body.investor, amount });
+      return this.store.write((db) => {
+        db.withdrawals.push({ projectId: id, investor: body.investor, amount, tx: tx.hash, at: tx.at ?? this.nowIso() });
+        db.chainEvents.push(...events);
+        return { events };
       });
-      return { event, amount };
+    });
+  }
+
+  // ---------- route 21 ----------
+
+  async resetDemo(body: { seed?: "maple-st" } = {}): Promise<{ ok: true }> {
+    if (body.seed && !this.opts.seed) throw new DomainError("VALIDATION", "Demo seeding is not configured for this ledger mode (use the XRPL prestage script on devnet)");
+    await this.store.reset();
+    await this.release.clear();
+    this.opts.resetLedger?.();
+    if (body.seed) await this.opts.seed!(body.seed);
+    return { ok: true };
+  }
+
+  // ---------- route 22 ----------
+
+  /** Cancels every expired open escrow (+ refund LoanPay), retries pending refunds and pending releases. Idempotent. */
+  async keeperTick(): Promise<{ events: ChainEvent[] }> {
+    const todo = await this.read((db) =>
+      db.projects.flatMap((p) =>
+        p.milestones
+          .filter((m) => m.escrow)
+          .map((m) => ({ pid: p.id, mid: m.id, status: m.status, cancelAfter: m.cancelAfter })),
+      ),
+    );
+    const events: ChainEvent[] = [];
+    const now = this.now();
+    for (const t of todo) {
+      const expired = !!t.cancelAfter && now >= new Date(t.cancelAfter);
+      try {
+        if (t.status === "expired" || (expired && isLocked(t.status))) {
+          events.push(...(await this.cancelExpired(t.pid, t.mid)).events);
+        } else if (t.status === "verified" && !expired) {
+          events.push(...(await this.locks.run(t.pid, () => this.releaseVerifiedLocked(t.pid, t.mid))).events);
+        }
+      } catch {
+        // leave for the next tick; the error is visible on the milestone's next manual action
+      }
+    }
+    return { events };
+  }
+
+  // ---------- route 23 ----------
+
+  tryStealDemo(id: string, mid: string): Promise<TryStealResult> {
+    return this.locks.run(id, async () => {
+      const { p, m } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, m: getMilestoneOrThrow(p, mid) };
+      });
+      if (!m.escrow || !isLocked(m.status) || m.status === "expired") throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} has no open escrow`);
+      const tx = await this.onLedger("try-steal", () => this.release.tryStealDemo({ project: p, milestone: m }));
+      const events = this.evs([tx], { projectId: id, milestoneId: mid, kind: "release_refused", actor: this.platformAddress });
+      await this.store.write((db) => db.chainEvents.push(...events));
+      if (tx.result !== "tecCRYPTOCONDITION_ERROR")
+        throw new DomainError("LEDGER_ERROR", `Expected tecCRYPTOCONDITION_ERROR, ledger said ${tx.result}`, undefined, { txResult: tx.result, txHash: tx.hash });
+      return { result: "tecCRYPTOCONDITION_ERROR", txHash: tx.hash, explorerUrl: tx.explorerUrl };
     });
   }
 }
