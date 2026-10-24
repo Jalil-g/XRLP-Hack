@@ -210,6 +210,8 @@ Observations:
 
 
 
+### 2a. XRPL-01 devnet results (2026-10-24 ~22:50 UTC, `pnpm --filter @xrlp/xrpl spike:loanset`, fresh faucet wallets)
+
 v2 signer list: SPV `rUkEQZJci363W8GwX32tMXe1mXzG9q2VFT` = `{platform, builder, inspector, trustee}` weight 1, quorum 3, master disabled.
 Counterparty signers on the LoanSet: **platform + builder + inspector** (the platform signs both as `Account` and as one of the
 SPV's counterparty signers: accepted). Loan `66FE03B2BFDE7B6AD7C55272384707A9EADC2166C349604858474E5C43D12018`.
