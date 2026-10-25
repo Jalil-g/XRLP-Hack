@@ -307,3 +307,15 @@ Prefer option 1 for a constrained stage demo; option 2 is necessary if arbitrary
 - [10-25] VER-14: added `VERIFIER_PROVIDER=nova` (Amazon Nova 2 Lite via the Bedrock Converse API, same bearer token,
   raw fetch, no new dependency). Reason: the team's AWS account has no Claude model access on Bedrock. Live eval
   matched 14/14 scenarios. Mock remains the stage default. (Rahim)
+
+## Repo front page, screenshots, slide renders, release assets (2026-10-25, Jalil)
+
+- The root `README.md` is now the project's front page: hero (slide 1), a GIF and screenshots of the **live apps on devnet** (core
+  `LEDGER_MODE=devnet`, `VERIFIER_MODE=mock`, Maple St with Foundation released and Framing held), the six slides, the guarantees
+  table, devnet transaction links, run/test instructions. Assets live in `docs/assets/` (`ui/`, `slides/`, `demo.gif`), resized to
+  1800 px wide so the repo stays small (~8 MB total). Re-shoot with headless Chrome via `design/drawproof-ui/tools/cdp.mjs`.
+- The 47 MB demo MP4 is **not committed**; it is attached to the `submission-2026-10-25` GitHub release together with the deck PDF
+  and PPTX. The MP4 was recorded on the design preview (sample data, devnet labelled), which the README and submission page say.
+- Removed `docs/Pitch Deck.pptx` (3-slide v1 upload); `docs/pitch/Drawproof-Pitch.pptx` (six slides, reproducible) is the deck.
+- GitHub repo description and topics set (xrpl, lending, escrow, rlusd, …).
+- Found while screenshotting: the project page crashes for completed projects (#208, `apps/web`).
