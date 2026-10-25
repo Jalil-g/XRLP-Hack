@@ -128,6 +128,12 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] **Stage check = read-only GO / WARN / NO-GO per beat** (`pnpm --filter @xrlp/xrpl stage:check`, D1–D6 + C withdraw). It submits nothing, reads one validated ledger (every read pinned to its index, time = its `close_time`), and judges with the package's own rules rather than restating them: `evaluatePreflight` at the release margin (300 s), `wrongFinishBlockers`, `cancelReadiness`, `planLoanPayment`, `vaultPhase`, `lockTermsCover` (= XRPL-04 cover sizing). Every time gate must hold until ledger now + window (default 60 min); a gate that holds only now is a WARN. Exit 0 = no NO-GO. A check that gates no beat is advisory and can only WARN, so it never blocks the slot. Fixes merge into one `bootstrap` + one `prestage --only <union>` carrying the caller's `WALLETS_FILE`. — why: the operator gets one command to run, and the check can't drift from what release / cancel / repay will actually accept (Jalil's agent, XRPL-16)
 - [10-25] Stage check: the B refund counts as on time only while ledger time ≤ `NextPaymentDueDate` (`planLoanPayment`'s rule), **with no grace credit**. #138's "NextPaymentDueDate + grace" would pass a refund the ledger refuses: from `fixCleanup3_4_0` (on devnet), a LoanPay without `tfLoanLatePayment` after the due date is `tecEXPIRED` (XLS-66 §3.11.4.2 #11), and `GracePeriod` only gates `LoanManage` default. Severity calls: NO-GO = a beat would fail or tell a false story (incl. platform RLUSD < a live lock-terms' cover on A's terms = 3395.58, and investor3 holding KYC); WARN = preimages file not mode 600, a preimage missing for an escrow the demo doesn't release (only A m1 is NO-GO), faucet down, rippled ≠ 3.4.1, `prestage.json` > 60 min old (the ledger checks are authoritative), trustee unfunded (multisig signers need no account), a role under bootstrap's 30 XRP. NO-GO below 2 XRP spendable (balance − reserve). Secrets: preimages are reduced to conditions inside `summarizePreimages`, the wallet file to addresses, and parse errors of both files are reported content-free (Jalil's agent, XRPL-16)
 
+- [10-25] INS-05 history discovers assigned projects through route 18 (including `needs: none`) and reads audits, latest checks,
+  and release transactions from route 2, polling every 5s. Results are explicitly **latest per milestone**, not attributed to an
+  individual audit revision: the contract has no audit-to-verdict reference. A verdict older than a report is labelled as awaiting
+  a new run. Only reports returned by core are shown; superseded reports removed by core cannot be reconstructed. No contract change.
+  Added a completed Oak Ave mock project for Dana's pass/release history and aligned the reused Maple M2 photo's GPS with Oak Ave. (Roro's agent)
+
 ## Pitch review (Jalil's agent, PITCH-09)
 
 - [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected
@@ -144,6 +150,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
+
 
 ## Open
 
