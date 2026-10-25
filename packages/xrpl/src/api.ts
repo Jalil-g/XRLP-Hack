@@ -1,13 +1,13 @@
 // High-level API for @xrlp/core. Each call does real devnet txs and returns ChainEvents.
 // Wallets come from .data/wallets.json (bootstrapWallets). Pass a Wallet to override a role.
-import { ChainEvent as ChainEventSchema, explorerTxUrl, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
+import { explorerTxUrl, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
 import { isoTimeToRippleTime, isValidClassicAddress, rippleTimeToISOTime, type Wallet } from "xrpl";
 import { getClient, ledgerTime, waitForLedgerTimeAfter, type TxResult } from "./client.ts";
 import { submitAttestation, type AttestationPayload } from "./attest.ts";
 import { grantCredential } from "./compliance.ts";
 import { getCredential, revokeCredential, type CredentialStatus, type CredentialType } from "./credentials.ts";
 import { cancelEscrow, createMilestoneEscrow, finishEscrow } from "./escrow.ts";
-import { toChainEvent, type ChainEventKind } from "./events.ts";
+import { toChainEvent } from "./events.ts";
 import {
   COVER_RATE_LIQUIDATION,
   COVER_RATE_MINIMUM,
@@ -169,19 +169,13 @@ export interface ProjectChainSetup {
   redemptionAt: string; // ISO
   /** What LoanBrokerSet + LoanBrokerCoverDeposit put on the ledger. */
   cover: { amount: string; minimum: string; coverRateMinimum: number; coverRateLiquidation: number; managementFeeRate: number; txHash: string };
-  /**
-   * The `cover_deposited` event. TODO(#53): also in `events` only once shared ChainEvent.kind includes it
-   * (detected at runtime), so strict ChainEvent.parse() in core never sees an unknown kind.
-   */
+  /** The `cover_deposited` event (also in `events`, after loan_broker_created). */
   coverEvent: ChainEvent;
   events: ChainEvent[];
   txs: Record<string, TxResult>;
   /** SPV wallet (master key disabled if lockSpv). Only useful when lockSpv=false. */
   spvWallet: Wallet;
 }
-
-// TODO(#53): remove once packages/shared ChainEvent.kind has "cover_deposited" (CORE-01 / shared v2).
-const SHARED_HAS_COVER_KIND = (ChainEventSchema.shape.kind.options as readonly string[]).includes("cover_deposited");
 
 /**
  * Create the per-project SPV (+ signer list, master disabled), a closed-ended RLUSD vault (AssetsMaximum = principal),
@@ -251,11 +245,11 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   txs.loanBrokerCoverDeposit = await depositBrokerCover(w.platform, broker.loanBrokerId, issuer, coverAmount);
   const coverEvent = toChainEvent(txs.loanBrokerCoverDeposit, {
     projectId: project.id,
-    kind: "cover_deposited" as ChainEventKind, // TODO(#53): drop the cast once shared has the kind
+    kind: "cover_deposited",
     actor: w.platform.classicAddress,
     amount: coverAmount,
   });
-  if (SHARED_HAS_COVER_KIND) events.push(coverEvent);
+  events.push(coverEvent);
 
   return {
     spv: spv.classicAddress,

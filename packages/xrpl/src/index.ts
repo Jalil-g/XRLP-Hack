@@ -137,6 +137,13 @@ export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErr
 export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
 export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
 export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
+// Shared v2 alignment (#53): LedgerError conversion for the LedgerPort adapter, shared EscrowSnapshot read,
+// ledger-pinned fetch primitives (used by preflight).
+export { toLedgerError, withLedgerErrors } from "./errors.ts";
+export { getEscrowSnapshot, toEscrowSnapshot, fetchLedgerNow, fetchAccountRoot, fetchEscrowNode, fetchAccountLines, findTrustLine } from "./reads.ts";
+export type { EscrowSnapshot, EscrowNode, TrustLine, ValidatedLedgerNow } from "./reads.ts";
+export type { ChainEventKind, ChainEventTx } from "./events.ts";
+export type { PreflightEscrow } from "./preflight.ts";
 // Hardening follow-ups (XRPL-03/05/08/12): bootstrap credentials + platform cover budget, locked multisig
 export type { BootstrapCredential } from "./api.ts";
 export { credentialPlan, NO_KYC_ROLES, DEFAULT_PLATFORM_RLUSD, platformRlusdFor } from "./wallets.ts";

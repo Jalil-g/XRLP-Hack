@@ -70,9 +70,17 @@ Every submit goes through `src/submit.ts` (pure retry engine, offline-tested) vi
   with the original, so there is no double spend. A validated hash is never resubmitted.
 - **Errors.** `XrplTxError { txType, engineResult, hash?, explorerUrl?, retriable }` (the constructor is backwards
   compatible). `retriable` is true only when nothing was applied and a re-prepared attempt may succeed.
-  `toErrorCode(e)` maps to the docs/05-api.md `ErrorCode`: `tecTOO_SOON → too_soon`,
-  `tecNO_ENTRY/tecNO_TARGET/tecNO_DST/tecOBJECT_NOT_FOUND/tecNO_LINE`, plus RPC `entryNotFound`/`actNotFound` → `not_found`,
-  `tem* → validation`, everything else `ledger_error`.
+  `toErrorCode(e)` maps to the shared `ErrorCode` (`@xrlp/shared`; `ApiErrorCode` is a deprecated alias): a shared
+  `LedgerError` keeps its `code`; preflight refusals (`UnsafeReleaseError`, a refused `PreflightResult`, an
+  `unsafeReleaseError()` body) → `unsafe_release`; `tecTOO_SOON → too_soon`,
+  `tecNO_ENTRY/tecNO_TARGET/tecNO_DST/tecOBJECT_NOT_FOUND/tecNO_LINE`, plus RPC `entryNotFound`/`actNotFound`/`txnNotFound`/`objectNotFound`
+  → `not_found`, `tem* → validation`, everything else `ledger_error`.
+- **LedgerPort errors (shared v2).** `toLedgerError(e)` turns anything this package throws into the shared
+  `LedgerError` the `LedgerPort` must throw: `LedgerError`s (incl. `TooSoonError`, `UnsafeReleaseError`) pass through;
+  `XrplTxError` `tecTOO_SOON` → `TooSoonError`, other `XrplTxError` → `LedgerError("ledger_error")`, both with
+  `txResult` (engine result) and `txHash` (when it reached a ledger); a refused preflight → `LedgerError("unsafe_release")`;
+  anything else → `LedgerError("ledger_error", message)`. The original error is `cause`. `withLedgerErrors(fn)` wraps an
+  adapter method: `return withLedgerErrors(() => depositToVault(...))`.
 - `XRPL_SUBMIT_LOG=1` prints every retry decision with its explorer link.
 
 **Devnet proof** (`pnpm --filter @xrlp/xrpl stress`, 2026-10-24, fresh faucet wallets): 20 parallel RLUSD `Payment`s
@@ -155,9 +163,8 @@ Pure helpers in `src/lending-math.ts` (exported from the package root, unit-test
 - `setupProjectOnChain` validates rates, dates and the cover amount **before any tx**, checks the platform holds enough
   RLUSD, then always deposits cover. An explicit `coverDeposit` below `minimumCover` is rejected. The cover is sized
   for `paymentTotal`/`paymentIntervalS` (default from terms; pass the same values you will pass to `closeLoanAndCreateEscrows`).
-- **`cover_deposited` event:** returned as `setup.coverEvent` (+ `setup.cover` details). It is added to `setup.events`
-  only once `@xrlp/shared` `ChainEvent.kind` includes `cover_deposited` (runtime check, TODO(#53)), so core's strict
-  `ChainEvent` parsing never sees an unknown kind.
+- **`cover_deposited` event:** in `setup.events` (right after `loan_broker_created`) and also returned as
+  `setup.coverEvent` (+ `setup.cover` details).
 - **Origination fee vs escrows:** `LoanSet` sends `principal − fee` to the SPV, but milestone escrows sum to the full
   principal. `closeLoanAndCreateEscrows` therefore has `originationFeePayer` (default demo `builder`) pay the shortfall
   into the SPV just before `LoanSet` ("points paid at closing"), and fails fast with a clear error if the payer lacks
@@ -203,7 +210,8 @@ Non-KYC (or KYC issued but not accepted) `VaultDeposit` into a private vault →
 
 `AttestMemo = { v:1, kind: "audit"|"verdict"|"decision"|"release", milestoneId, hash /*sha256 hex*/, decision?, reason? }`
 (≤ 900 bytes JSON). Event kinds: audit → `audit_attested`, verdict → `verdict_attested`, decision → `decision_attested`,
-release → `approval_attested` (no v2 kind yet). The v2 kinds are cast until shared v2 (#53) merges (`TODO(#53)`).
+release → `approval_attested` (shared v2 has no dedicated release kind). `AttestMemo` is the shared type. Other v2 kinds
+emitted here: `verification_fee_paid`, `credential_issued` + `credential_accepted`.
 
 Inspector-app flow (no platform key involved):
 ```ts
@@ -234,7 +242,8 @@ only to the builder). Signers can't redirect escrowed funds.
 
 A failed `EscrowFinish` carrying the right fulfillment (`tecNO_LINE`, past `CancelAfter`, ...) **publishes the preimage
 while the escrow stays open**. So `finishEscrow` / `releaseMilestone` call `preflightFinish` first and throw
-`UnsafeReleaseError` (`code: "unsafe_release"`, docs/05-api.md) without submitting anything. Pass `skipPreflight: true` only in negative spikes.
+`UnsafeReleaseError` without submitting anything. It **extends the shared `LedgerError`** (`code: "unsafe_release"`,
+plus `reason` and the full `result`), so LedgerPort callers can rethrow it as is. Pass `skipPreflight: true` only in negative spikes.
 
 ```ts
 const r = await preflightFinish({ owner, offerSequence, destination: builder, condition, fulfillment, submitter }); // never submits
@@ -247,7 +256,10 @@ All reads are pinned to one **validated** ledger, and time is that ledger's `clo
 `expired_or_too_close` (`CancelAfter − now < max(marginS=120, lastLedgerOffset=20 × 5s)`), `unsupported_amount` (MPT),
 `destination_not_found`, `deposit_auth`, `no_trustline`, `trustline_limit` (limit − balance < amount, exact decimals),
 `not_authorized`, `frozen`, `submitter_not_found`, `submitter_unfunded`. Fee = `base × (33 + ⌈fulfillment bytes/16⌉)`
-(36 drops on devnet). The pure core `evaluatePreflight(snapshot, now)` is unit-tested offline. Devnet proof:
+(36 drops on devnet). The pure core `evaluatePreflight(snapshot, now)` is unit-tested offline. The fetch layer uses the
+reads.ts primitives (`fetchLedgerNow`, `fetchEscrowNode`, `fetchAccountRoot`, `fetchAccountLines` + `findTrustLine`) pinned to
+one ledger index. `PreflightSnapshot.escrow` is the raw `PreflightEscrow` (the old `EscrowSnapshot` name is a deprecated
+alias in preflight.ts; it is not the shared `EscrowSnapshot`). Devnet proof:
 `pnpm --filter @xrlp/xrpl spike:preflight` (a builder with no trust line is refused and nothing is submitted, then it finishes once the line exists; a short-`CancelAfter` escrow is refused inside the margin).
 
 ### Mapping to core's `LedgerPort` (origin/scaffold/core `packages/core/src/ports.ts`)
@@ -263,6 +275,10 @@ is a follow-up ticket. It maps 1:1:
 - `cancelExpiredMilestone({project, milestone})` → `escrow: milestone.escrow`.
 - `repayLoan({project, amount, source})` → `repayLoan({spv, loanId, amount, mode: amount > periodic ? "overpayment" : undefined})`.
 - `issueCredential` returns `projectId = "_platform"` (`PLATFORM_SCOPE`) by default.
+- `getEscrow(owner, offerSequence)` → `getEscrowSnapshot` (shared `EscrowSnapshot | null`); `getVaultSnapshot` /
+  `getLoanSnapshot` already return the shared types (`undefined` when the object is gone).
+- Errors: wrap each method in `withLedgerErrors(...)` (or `throw toLedgerError(e)`) so callers only ever see the shared
+  `LedgerError` / `TooSoonError`.
 
 ## Read models (`src/reads.ts`, XRPL-09)
 
@@ -275,6 +291,7 @@ RLUSD values are shared `Rlusd` strings (plain decimal, ≤ 6 decimals, **trunca
 |---|---|---|
 | `getVaultSnapshot(vaultId)` | `VaultSnapshot \| undefined` | `{assetsTotal, assetsAvailable, sharesOutstanding, sharePrice, subscriptionDate, redemptionDate, phase}` (05-api §2). `sharesOutstanding` = raw share-MPT units (`OutstandingAmount`); `sharePrice` = `assetsTotal / (sharesOutstanding / 10^Vault.Scale)`, 6 dp, `"1"` with no shares. `phase` from ledger time: `subscription` (now ≤ SubscriptionDate), `investment`, `redemption` (now ≥ RedemptionDate); an open-ended vault reads as `subscription`. |
 | `getLoanSnapshot(loanId)` | `LoanSnapshot \| undefined` | `{principalOutstanding, totalValueOutstanding, periodicPayment, paymentRemaining, nextPaymentDueDate}`. A paid-off loan has `paymentRemaining 0`, outstanding `"0"`, `nextPaymentDueDate ""` (rippled drops the field). |
+| `getEscrowSnapshot(owner, offerSequence)` | shared `EscrowSnapshot \| null` | The `LedgerPort.getEscrow` shape: `{owner, offerSequence, destination, amount, condition?, cancelAfter? (ISO)}`. `null` = consumed or never created. Pure: `toEscrowSnapshot(view, seq?)`. |
 | `getEscrow(owner, offerSequence)` | `EscrowView \| undefined` | `ledger_entry {escrow:{owner, seq}}`. `undefined` = consumed (finished/cancelled) or never created. `{index, owner, offerSequence, destination, currency: "RLUSD"\|"XRP"\|…, issuer?, amount, condition?, cancelAfter?, finishAfter? (ISO + *Ripple), status: "open"\|"expired", finishable, cancellable}`. `expired` = now > CancelAfter (finish fails, anyone can cancel). |
 | `listEscrowsParsed(owner)` | `EscrowView[]` | Escrows **owned** by `owner` (incoming ones dropped), paginated `account_objects`. `offerSequence` comes from `Escrow.Sequence` (present on devnet). |
 | `getBalance(account, "RLUSD"\|"XRP", {issuer?})` | decimal string | RLUSD from `account_lines` (any RLUSD line, or the given issuer); XRP = total incl. reserve. Unfunded / no line → `"0"`; issuer-side negative → `"0"`. |
@@ -286,7 +303,12 @@ Pure parsers (no network; feed them recorded or fetched `result` objects, ripple
 `parseRlusdTrustline(accountLines, issuer?)`, `parseRlusdBalance`, `parseHasRlusdTrustline`, `parseXrpBalance(accountInfo)`.
 Decimal helpers: `toRlusd`, `toPlainDecimal` (expands `1.5e-7`), `divDecimal`, `dropsToXrpDecimal`.
 
-`VaultSnapshot` / `LoanSnapshot` are defined locally in `reads.ts` (mirror of 05-api §2) until they land in `@xrlp/shared`.
+`VaultSnapshot` / `LoanSnapshot` / `EscrowSnapshot` are the `@xrlp/shared` types (re-exported from `reads.ts`). Shared keeps
+`LoanSnapshot.nextPaymentDueDate: string` required, so a paid-off loan reads `""`.
+
+Ledger-pinned fetch primitives (shared with preflight): `fetchLedgerNow()` → `{ledgerIndex, closeTime}`;
+`fetchEscrowNode(owner, seq, ledgerIndex?)` / `fetchAccountRoot(address, ledgerIndex?)` → raw node or `null` (not found);
+`fetchAccountLines(account, issuer?, ledgerIndex?)` → raw `account_lines` result; `findTrustLine(result, currencyHex)` → raw line or `null`.
 
 Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr over 90 s) `AssetsTotal` did not move at
 `LoanSet` but rose by the interest at payoff (`1234.5 → 1234.501426940925`), so `sharePrice` went `1 → 1.000001`.
@@ -298,7 +320,7 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `config.ts` | env (`XRPL_WS_URL`, `XRPL_FAUCET_HOST`, `WALLETS_FILE`, `DATA_DIR`), mainnet guard, RLUSD hex code |
 | `client.ts` | shared `Client` (+`reconnect`), `signAndSubmit`, `submitWithSigner`, `submitBlob`, `withAccountLock`, `ledgerTime`, `waitForLedgerTimeAfter`, `createdNodeId` |
 | `submit.ts` | retry engine: per-account lock, result classification, `submitReliably` (network-free, see Submission semantics) |
-| `errors.ts` | `XrplTxError`, `toErrorCode` → API `ErrorCode` |
+| `errors.ts` | `XrplTxError`, `toErrorCode` → shared `ErrorCode`, `toLedgerError` / `withLedgerErrors` → shared `LedgerError` |
 | `wallets.ts` | wallet store (`WALLETS_FILE`), roles, pure `migrateWalletFile` / `rlusdTopUpPlan`, faucet funding, role resolution |
 | `rlusd.ts` | issuer flags, trust lines, issue/pay, balances |
 | `vault.ts` | closed-ended `VaultCreate`, deposit/withdraw, share balance, phase |
