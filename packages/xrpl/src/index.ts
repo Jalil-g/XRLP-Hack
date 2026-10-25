@@ -302,6 +302,8 @@ export {
   PROVEN_RIPPLED_VERSION,
   RELEASE_MARGIN_S,
   DEVNET_NETWORK_ID,
+  AMENDMENTS_LEDGER_INDEX,
+  amendmentId,
 } from "./stage-check.ts";
 export type {
   StageReport,

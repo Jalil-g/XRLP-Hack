@@ -7,6 +7,7 @@ import { LSF_LOAN_OVERPAYMENT, type LoanEntry } from "../src/loan.ts";
 import { PRESTAGE_VERSION, type PrestageEscrow, type PrestageEscrowState, type PrestageFile, type PrestageKey, type PrestageProject } from "../src/prestage-types.ts";
 import type { EscrowNode, VaultNode } from "../src/reads.ts";
 import {
+  amendmentId,
   evaluateStage,
   fmtDuration,
   lockTermsCover,
@@ -584,6 +585,10 @@ test("walletAddresses: addresses only; a role without a seed counts as missing",
 
 test("lockTermsCover = the cover prestage A posted on devnet (30000 @ 10%, 6 × 30 d)", () => {
   assert.equal(lockTermsCover({ principal: "30000", interestRateBps: 1000, paymentTotal: 6, paymentIntervalS: 30 * DAY }), "3395.579039");
+});
+
+test("amendmentId = SHA-512Half of the name (rippled feature keys)", () => {
+  assert.equal(amendmentId("RequireFullyCanonicalSig"), "00C1FC4A53E60AB02C864641002B3172F38677E29C26C5406685179B37E1EDAC");
 });
 
 test("fmtDuration", () => {

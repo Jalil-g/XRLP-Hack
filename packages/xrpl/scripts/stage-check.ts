@@ -19,7 +19,10 @@ import type { TrustlineSnapshot } from "../src/preflight.ts";
 import { parsePrestageFile, PRESTAGE_KEYS, type PrestageFile, type PrestageKey, type PrestageProject } from "../src/prestage-types.ts";
 import { fetchAccountLines, fetchEscrowNode, findTrustLine, rawRequest, type RawResult, type VaultNode } from "../src/reads.ts";
 import {
+  amendmentId,
+  AMENDMENTS_LEDGER_INDEX,
   evaluateStage,
+  REQUIRED_AMENDMENTS,
   renderStageReport,
   summarizePreimages,
   walletAddresses,
@@ -164,11 +167,10 @@ async function readDevnet(w: StageSnapshot["wallets"], file: PrestageFile | unde
   } catch (e) {
     return { devnet: { reachable: false, error: msg(e) } };
   }
-  let info: RawResult, feature: RawResult, fee: RawResult, led: RawResult;
+  let info: RawResult, fee: RawResult, led: RawResult;
   try {
-    [info, feature, fee, led] = await Promise.all([
+    [info, fee, led] = await Promise.all([
       rawRequest({ command: "server_info" }),
-      rawRequest({ command: "feature" }).catch((e: unknown) => ({ error: msg(e) }) as RawResult),
       rawRequest({ command: "fee" }),
       rawRequest({ command: "ledger", ledger_index: "validated" }),
     ]);
@@ -178,13 +180,11 @@ async function readDevnet(w: StageSnapshot["wallets"], file: PrestageFile | unde
   const i = (info.info ?? {}) as Record<string, unknown>;
   const vl = (i.validated_ledger ?? {}) as Record<string, unknown>;
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-  const amendments: Record<string, boolean> = {};
-  for (const f of Object.values((feature.features ?? {}) as Record<string, { name?: string; enabled?: boolean }>)) if (f.name) amendments[f.name] = f.enabled === true;
   const devnet: StageDevnet = {
     reachable: true,
     reserveBaseXrp: num(vl.reserve_base_xrp) ?? 1,
     reserveIncXrp: num(vl.reserve_inc_xrp) ?? 0.2,
-    amendments,
+    amendments: {},
   };
   const networkId = num(i.network_id);
   const age = num(vl.age);
@@ -192,16 +192,39 @@ async function readDevnet(w: StageSnapshot["wallets"], file: PrestageFile | unde
   if (typeof i.build_version === "string") devnet.buildVersion = i.build_version;
   if (typeof i.server_state === "string") devnet.serverState = i.server_state;
   if (age !== undefined) devnet.validatedAgeS = age;
-  if (feature.error) devnet.featureError = String(feature.error);
   const l = led.ledger as { ledger_index?: string | number; close_time?: number } | undefined;
   if (led.error || !l?.close_time) return { devnet };
   const now: LedgerNow = { ledgerIndex: Number(l.ledger_index), closeTime: l.close_time };
+  await readAmendments(devnet, now.ledgerIndex);
   const drops = (fee.drops ?? {}) as { base_fee?: string; open_ledger_fee?: string };
   const baseFeeDrops = Math.max(Number(drops.base_fee ?? 10), Number(drops.open_ledger_fee ?? 0)) || 10;
   try {
     return { devnet, now, ledger: { baseFeeDrops, ...(await readPinned(now.ledgerIndex, w, file)) } };
   } catch (e) {
     return { devnet, now, ledger: { baseFeeDrops, projects: {}, error: msg(e) } };
+  }
+}
+
+/** Enabled amendments from the snapshot ledger's Amendments object; the `feature` command only as a fallback. */
+async function readAmendments(devnet: Extract<StageDevnet, { reachable: true }>, at: number): Promise<void> {
+  try {
+    const r = await rawRequest({ command: "ledger_entry", index: AMENDMENTS_LEDGER_INDEX, ledger_index: at });
+    if (!r.error) {
+      const enabled = new Set(((r.node as { Amendments?: string[] }).Amendments ?? []).map((x) => x.toUpperCase()));
+      for (const name of REQUIRED_AMENDMENTS) devnet.amendments[name] = enabled.has(amendmentId(name));
+      devnet.amendmentsFrom = "ledger";
+      return;
+    }
+  } catch {
+    // fall through to `feature`
+  }
+  try {
+    const f = await rawRequest({ command: "feature" });
+    if (f.error) throw new Error(String(f.error));
+    for (const x of Object.values((f.features ?? {}) as Record<string, { name?: string; enabled?: boolean }>)) if (x.name) devnet.amendments[x.name] = x.enabled === true;
+    devnet.amendmentsFrom = "feature";
+  } catch (e) {
+    devnet.featureError = msg(e);
   }
 }
 
@@ -327,7 +350,8 @@ async function fetchStageSnapshot(paths: { prestage: string; preimages?: string 
 
 async function main(): Promise<number> {
   if (flag("help") || flag("h")) {
-    console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("//")).map((l) => l.slice(3)).join("\n"));
+    const src = readFileSync(new URL(import.meta.url), "utf8").split("\n");
+    console.log(src.slice(0, src.findIndex((l) => !l.startsWith("//"))).map((l) => l.replace(/^\/\/ ?/, "")).join("\n"));
     return 0;
   }
   const windowS = minutes(opt("window-min") ?? process.env.STAGE_WINDOW_MIN, "--window-min", 60) * 60;
