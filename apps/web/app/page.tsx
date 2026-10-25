@@ -5,12 +5,16 @@ import { Tag } from "@/components/ui/tag";
 import { Empty } from "@/components/ui/layout";
 import { api } from "@/lib/api";
 import { PROJECT_STATUS, PROJECT_TYPE } from "@/lib/display";
+import { fundingCountdown, MARKETPLACE_TYPES, marketplaceProjects, parseProjectType } from "@/lib/marketplace";
 import { BRAND, formatAmount, formatBps, formatDate, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default async function ProjectsPage() {
-  const projects = await api.listProjects({ status: "verified" });
+type Props = { searchParams: Promise<{ type?: string | string[] }> };
+
+export default async function ProjectsPage({ searchParams }: Props) {
+  const selectedType = parseProjectType((await searchParams).type);
+  const projects = marketplaceProjects(await api.listProjects(), selectedType);
 
   return (
     <div className="space-y-16">
@@ -25,18 +29,31 @@ export default async function ProjectsPage() {
       </header>
 
       <section>
-        <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-heading">Verified projects</h2>
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-heading">Verified projects</h2>
+            <nav className="mt-3 flex flex-wrap gap-2" aria-label="Filter projects by type">
+              <FilterLink href="/" active={!selectedType}>All</FilterLink>
+              {MARKETPLACE_TYPES.map((type) => (
+                <FilterLink key={type} href={`/?type=${type}`} active={selectedType === type}>{PROJECT_TYPE[type]}</FilterLink>
+              ))}
+            </nav>
+          </div>
           <span className="text-caption text-ink-2">{projects.length} listed</span>
         </div>
 
         {projects.length === 0 ? (
-          <Empty title="No verified projects yet" action={<Link href="/demo" className="text-small text-link hover:underline">See how project verification works</Link>}>
-            Projects appear here after they pass verification. This list refreshes automatically.
+          <Empty
+            title={selectedType ? "No matching verified projects" : "No verified projects yet"}
+            action={selectedType
+              ? <Link href="/" className="text-small text-link hover:underline">Clear the type filter</Link>
+              : <Link href="/demo" className="text-small text-link hover:underline">See how project verification works</Link>}
+          >
+            {selectedType ? `No ${PROJECT_TYPE[selectedType].toLowerCase()} projects are listed right now.` : "Projects appear here after they pass verification. This list refreshes automatically."}
           </Empty>
         ) : (
           <div className="overflow-x-auto" role="region" aria-label="Verified projects table" tabIndex={0}>
-          <table className="w-full min-w-[720px] border-collapse text-left">
+          <table className="w-full min-w-[820px] border-collapse text-left">
             <thead>
               <tr className="border-y border-line bg-band text-caption text-ink-2">
                 <th className="px-4 py-2.5 font-medium">Project</th>
@@ -69,11 +86,20 @@ export default async function ProjectsPage() {
                         {formatAmount(p.raised)} <span className="text-ink-2">of {formatAmount(p.principal)}</span>
                       </div>
                       <Progress value={pct} className="mt-2" label={`${Math.floor(pct)}% raised`} />
-                      {p.status === "funding" && <div className="mt-1.5 text-caption text-ink-2">Funding closes {formatDate(p.fundingDeadline)}</div>}
+                      {p.status === "funding" && (
+                        <div className="mt-1.5 text-caption text-ink-2" title={`Funding closes ${formatDate(p.fundingDeadline)}`}>
+                          {fundingCountdown(p.fundingDeadline)}
+                        </div>
+                      )}
                     </td>
                     <td className="tabular px-4 py-4 text-right text-small">{p.interestRateBps !== undefined ? formatBps(p.interestRateBps) : "—"}</td>
                     <td className="px-4 py-4">
-                      <Tag tone={status.tone}>{status.label}</Tag>
+                      <div className="relative z-10 flex flex-wrap gap-1.5">
+                        <Link href={`/projects/${p.id}/verification`} aria-label={`Open ${p.name} verification report`}>
+                          <Tag tone="pass">Verified</Tag>
+                        </Link>
+                        {p.status !== "verified" && <Tag tone={status.tone}>{status.label}</Tag>}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -84,5 +110,17 @@ export default async function ProjectsPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function FilterLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={`rounded-control px-3 py-1.5 text-small transition-colors duration-150 ${active ? "bg-ink text-page" : "bg-band text-ink hover:bg-line"}`}
+    >
+      {children}
+    </Link>
   );
 }
