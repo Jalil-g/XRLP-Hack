@@ -236,6 +236,12 @@ Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regressio
   escrows; resume matches conditions against open escrows **and** consumed ones in history.
 - **Loan math / default**: `planLoanPayment` bounds; `defaultLoan` only when ledger time > due + grace (exclusive, devnet
   fixCleanup3_4_0), idempotent via `PreviousTxnID`.
+- **Endpoints / faucet**: the only hard-coded endpoints are devnet defaults (`config.ts`) and the devnet explorer (shared
+  `explorerTxUrl`). `fundFromFaucet` sends only the address (xrpl.js `fundWallet`), so an env-redirected `XRPL_FAUCET_HOST`
+  receives nothing secret.
+- **Condition uniqueness**: within a close and against the SPV's open escrows here (`planLoanClose`), across every escrow
+  ever issued in core (`release-service.ts` `conditionsForClose` refuses a condition it has issued before), and against
+  consumed escrows on resume (`planEscrowResume`).
 - **Locks**: FIFO, re-entrant, released on throw; Batch takes nested locks in sorted order. Locks are per process: two
   processes on one wallets file are safe for different intents (Sequence exclusivity + `tefPAST_SEQ` handling, now also
   after H1), not for the same intent at the same time (e.g. two closes of one project); run one writer per project.
@@ -251,6 +257,10 @@ Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regressio
     fulfillment `tecCRYPTOCONDITION_ERROR` then the right one ([BE3512BD…](https://devnet.xrpl.org/transactions/BE3512BD7EFDEE97DA13419066D323EE17DCEAFF2291BBCC4223311AC88501AA));
     builder without trust line refused by preflight, nothing submitted; finish after CancelAfter `tecNO_PERMISSION` + cancel.
   - `stress`: 20 parallel Payments from one account → 20/20 `tesSUCCESS`, Sequences 6395864..6395883 contiguous.
+  - `spike:preflight` (fresh faucet wallets): `finishEscrow` to a builder without a trust line refused client-side
+    (`unsafe_release: no_trustline`), and no tx of source / builder / submitter carries the fulfillment; after the TrustSet the
+    preflighted finish lands ([A530B2B6…](https://devnet.xrpl.org/transactions/A530B2B6A7F74730E49726EE1EE55998D309AE59D64F5DA0B36030170C168739));
+    a finish 56 s before CancelAfter is refused (`expired_or_too_close`, 300 s margin) and B's fulfillment never reaches the ledger.
   - `adapter:e2e` (fresh bootstrap store, written by the new atomic save): every port method green, incl. the close with the new
     destination / master-key checks ([LoanSet 73390DFC…](https://devnet.xrpl.org/transactions/73390DFC9536CD65715A48EDDD0F25CD2DC79760CD23DD9DF088921A1DAAF09B)),
     finish ([071D85E9…](https://devnet.xrpl.org/transactions/071D85E95AA6F07D9CDBDC192CC20AA19BDEFED2F2F87E020334BD91E97BF5F3)), a second finish refused
