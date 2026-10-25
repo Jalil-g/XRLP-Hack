@@ -569,7 +569,7 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
     if (destinationIssues.length) throw new CloseValidationError(destinationIssues);
     if (info) {
       const why = spvCountersignProblems(info, signers.map((s) => s.classicAddress));
-      if (why.length) throw new CloseValidationError(why.map((w) => `SPV signers cannot countersign: ${w}`));
+      if (why.length) throw new CloseValidationError(why.map((m) => `SPV signers cannot countersign: ${m}`));
     }
 
     const originationFee = opts.originationFee ?? originationFeeFor(project.terms.principal);

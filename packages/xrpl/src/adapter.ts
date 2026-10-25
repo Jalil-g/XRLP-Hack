@@ -78,7 +78,7 @@ export class XrplLedgerAdapter implements LedgerPort {
   /** Idempotent: an already issued + accepted credential returns `[]` (nothing submitted). */
   issueCredential(p: Arg<"issueCredential">): Promise<PortTxResult[]> {
     return this.run("issueCredential", async () => {
-      const r = await grantCredential({ subject: this.key(p.subject, `${p.type} subject`, SIGNING_ROLES[p.type]), type: p.type });
+      const r = await grantCredential({ subject: this.key(p.subject, `${p.type} subject`, SIGNING_ROLES[p.type] ?? []), type: p.type });
       const out: PortTxResult[] = [];
       if (r.createTx) out.push(this.tx(`CredentialCreate ${p.type}`, r.createTx, "credential_issued"));
       if (r.acceptTx) out.push(this.tx(`CredentialAccept ${p.type}`, r.acceptTx, "credential_accepted"));
