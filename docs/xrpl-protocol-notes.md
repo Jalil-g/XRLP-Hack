@@ -315,15 +315,60 @@ Observations:
 4. The released-but-unrepaid part is real credit loss. The platform can `LoanManage tfLoanDefault` after
    due+grace. First-loss cover absorbs `DefaultCovered`, and the vault writes down the rest.
 
-### 3b. XRPL-08 devnet results (credentials, domain, private vault)
+### 3a. XRPL-04 devnet results
 
+`pnpm --filter @xrlp/xrpl spike:broker` (fresh faucet wallets, single-key SPV; 2026-10-24). Vault dates from
+`vaultDatesFor()`, broker rates from `createLoanBroker()` defaults, cover from `minimumCover()` / `defaultCoverDeposit()`,
+fee from `originationFeeFor()` (`src/lending-math.ts`). Terms: 1000 RLUSD @ 10 %/yr, 2 × 15 days (realistic interval,
+so interest and the management fee are visible; the spike never waits for `RedemptionDate`).
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | VaultCreate closed-ended, `AssetsMaximum` 1000, `RedemptionDate = Sub + 2×15d + 60 + 1h` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C2A84A3F51195BAD19A3657F251FE8CC4F1B75296E127B82C1635958B95F3646 |
+| 2 | LoanBrokerSet defaults: `CoverRateMinimum 10000`, `CoverRateLiquidation 100000`, `ManagementFeeRate 10000` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4AAEA4888FDF4482FF027F8F991BCA644091900ED2D167CF8711A83911F61795 |
+| 3 | LoanBrokerCoverDeposit 50 (below the 100.61686 minimum) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4A5C80078CB871E3DF8957A39A98695377BA8CC85415EFA86ADEBA30FDE66DCE |
+| 4 | VaultDeposit 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/5A3AD10F7A5FCE5C4D4242E03219C255C59E0A4F6C30DE44ED6BB4FD5AC22AC8 |
+| 5 | **LoanSet with cover 50 < minimum** | **`tecINSUFFICIENT_FUNDS`** (as spec'd) | https://devnet.xrpl.org/transactions/3C45AF4B859045A0069832118A948902289EA3961D4CF264EE1818622C4391D3 |
+| 6 | LoanBrokerCoverDeposit +60.678546 (total 110.678546 = minimum + 10 % headroom) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/838A9C19F4FB4E629852C8D3191FCB81932977792AF144FE958529879E87F240 |
+| 7 | **LoanSet 1000, `LoanOriginationFee` 15** (1.5 %), `tfLoanOverpayment` | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/37B59EFA9A8CC564ED912B470D9131148412D88265BF8FE724EF4806497A14A3 |
+
+Observations:
+- Broker entry carries `CoverRateMinimum=10000 CoverRateLiquidation=100000 ManagementFeeRate=10000` (readable on the explorer).
+- **Origination fee lands with the platform:** SPV `0 → 985`, platform `+15`. Consequence for the close path: milestone
+  escrows sum to the full principal, so the SPV is 15 short. `closeLoanAndCreateEscrows` has the builder pay the
+  shortfall into the SPV before `LoanSet` (see `docs/decisions.md`).
+- `expectedInterest()` predicted 6.168597; the ledger booked `TotalValueOutstanding = 1006.168597084243` (exact to 6 dp).
+  `Loan.ManagementFeeOutstanding = 0.616859708424` = 10 % of interest, as `managementFeeOn()` predicts.
+- After LoanSet: `Broker.DebtTotal = 1000` (principal only, not principal + interest), `CoverAvailable = 110.678546`.
+  **`Vault.AssetsTotal` stayed 1000** even with 6.17 of interest booked. So on this devnet build the vault does *not*
+  book the scheduled interest into `AssetsTotal` at `LoanSet` (contrary to the §3 reading of §3.8.6 #6); interest
+  presumably arrives with `LoanPay`. Re-check share price in the XRPL-07 repay test before using the "booked at
+  origination" line in the demo.
+- 50 < 10 % × 1000 → rejected, so we cannot tell from this run whether the check uses `DebtTotal + principal` or
+  `+ interest` too. `minimumCover()` includes interest (conservative); the 10 % headroom covers either reading.
+- Client-side guard: `validateBrokerRates` rejects `CoverRateMinimum 10000 / CoverRateLiquidation 0` before
+  submission (the ledger would return `temINVALID`, which is not on-ledger).
+
+Full `pnpm demo` through `setupProjectOnChain` / `closeLoanAndCreateEscrows` (bootstrap wallets, multisig SPV, 30000
+principal, 4 × 300 s): default cover **3300.007849** (minimum 3000.007135) deposited; builder paid the 450 origination
+shortfall into the SPV; multisig LoanSet with `LoanOriginationFee 450`; 3 escrows; **SPV liquid RLUSD after escrows = 0**.
+
+| step | result | explorer |
+|---|---|---|
+| LoanBrokerSet (default rates) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/352178626E211BA65E693B543C4ED7C6ACA973AFB48AB519F0AF04B5A0BEE522 |
+| LoanBrokerCoverDeposit 3300.007849 (mandatory, default) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/75C6777AC164EB3EB589F53C7627A79583861D585E27BDC85215F93EAF87DEC5 |
+| builder → SPV 450 (origination fee shortfall) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/060C4832103A851D006A0992A01A22E4615B20CCB2A6DE7E400275C7EC9C99C2 |
+| LoanSet multisig countersign, `LoanOriginationFee 450` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0CF84E10A53C5B30BA433050BA87344AA698F4522769731E1E7A2E5DCB72A62F |
+| LoanPay 9000 (escrow refund, overpayment) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/7395A3FC078351AA15389DE58778E63D8535DF949A830A4B4B0C43CDB6F1B2AB |
+
+- Confirms the share-price finding: `Vault.AssetsTotal` was **30000** after LoanSet and **30000.02568** only after the
+  LoanPay. **On devnet, interest reaches the vault (and the share price) as it is paid, not at LoanSet.** The "booked at
+  origination" demo tooltip should become "share value rises as interest is repaid".
+### 3b. XRPL-08 devnet results (credentials, domain, private vault)
 `pnpm --filter @xrlp/xrpl compliance` (2026-10-24, fresh faucet wallets, `scripts/compliance.ts`). All green on the first run.
 Accounts: platform `rfXuWyuiDB6YebmqkmGPFVkgX5VzoSYXQ5` · builder `rMiCidC2QvSt5Eqxv7AFxQF2Y3WJX4B6eB` · investor1 `rpq36NP8EqGCMYmD4FjVk94qX9AoC9rt9v` ·
 investor2 `rsPRm5t57J4AFNagPbqLZD1eqZcyHg44sc` · investor3 `r3BiGirvzzcSVhqc6cTZ7UpvLstdjhSiWw` · inspector1 `r3KYuCJCpircLrFJuKq2fcKxBqpCM1VixN` ·
 aiAgent `rHw8ajV19p3i79Z6GXAPXyCPCpgnqUodij` · releaseService `rnGRf8Xi1XJYRMLZGg7mvEamYfBwrJRpZH` · attestation target ("SPV") `rhemmtSz5vbYkvSv4pSV9d6VZBjGX5B4tU`.
-
-| # | step | result | explorer |
-|---|---|---|---|
 | 1 | CredentialCreate VERIFIED_BUILDER → builder | `tesSUCCESS` | https://devnet.xrpl.org/transactions/2093B0D492B5C4304CD09BD31DDC72354C1258EFD0B5B7FE93BED224CAF8541C |
 | 2 | CredentialAccept VERIFIED_BUILDER (builder) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/FA22A7DE4DB77DC11CA8F6DD23AC3C66618FB25B85024541E3EE3711CABCD8B3 |
 | 3 | CredentialCreate VERIFIED_INSPECTOR → inspector1 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/FAEC2E6EA06F90E286FC4C370B14BDBEAD87CBA6AB1F3E4D43EC9F910A26D3A5 |
@@ -341,9 +386,7 @@ aiAgent `rHw8ajV19p3i79Z6GXAPXyCPCpgnqUodij` · releaseService `rnGRf8Xi1XJYRMLZ
 | 15 | attest `verdict` (aiAgent) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0CFBA141DC9A1D61D260CD4847D65985D127FD1F170A894673D201600DE39499 |
 | 16 | attest `decision` (platform, with reason) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/11CD030C7FFDD4A423351270F850807BF97BE16C927D08E1F7CC6F37022E6117 |
 | 17 | attest `release` (releaseService) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/02BAD5D0FAE4C0B1043E945696F8F4A7EBC5031EC3EF134C0C90A7781736E9A0 |
-
 (Issuer `AccountSet`/`TrustSet`/RLUSD funding txs omitted; full table in the script output and `.data/xrpl08-compliance-*.json`.)
-
 What devnet showed:
 - **`tecNO_AUTH` is on-ledger** (a tec, fee charged, has an explorer link), both for "no credential" and for "credential issued
   but not accepted". So `CredentialAccept` is mandatory for investors (the KYC button must do issue **and** accept).
