@@ -156,8 +156,10 @@ export function checkNoDuplicatePhoto(
   const failIds = new Set<string>();
   const warnIds = new Set<string>();
   const validHash = (hash: string | undefined): hash is string => !!hash && /^[0-9a-f]{16}$/i.test(hash);
-  for (const old of others.filter((p) => p.evidence.kind === "photo" && p.evidence.meta?.perceptualHash && !validHash(p.evidence.meta.perceptualHash))) {
-    warns.push(`Prior photo ${old.evidence.filename} has an invalid perceptual hash; reprocessing required`);
+  // A prior photo we cannot fingerprint can't be ruled out as the source of a re-encoded copy: never skip it silently.
+  for (const old of others.filter((p) => p.evidence.kind === "photo" && !validHash(p.evidence.meta?.perceptualHash))) {
+    if (photos.some((p) => p.sha256 && p.sha256 === old.evidence.sha256)) continue; // byte-identical: reported as a fail below
+    warns.push(`Prior photo ${old.evidence.filename} has ${old.evidence.meta?.perceptualHash ? "an invalid" : "no"} perceptual hash; reuse cannot be ruled out, reprocessing required`);
   }
   const where = (p: PriorEvidence) =>
     p.projectId === "unknown"
