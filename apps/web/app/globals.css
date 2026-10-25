@@ -3,17 +3,60 @@
 
 /* Opt-in presentation mode; semantic colors and transaction behavior stay intact. */
 html[data-projector="true"] {
-  font-size: 20px;
-  --color-ink-2: #45454a;
-  --color-ink-3: #55555b;
-  --color-line: #c7c7ce;
+  font-size: 18px;
+  --color-ink-2: #3f3f3f;
+  --color-ink-3: #3f3f3f;
+  --color-line: #d6d6d6;
 }
 
-/* Keep names, reasons, and proof together instead of clipping the desktop checks grid. */
-.check-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); }
+/* Cards are kept for the checks suite and dialogs; everything else sits on the canvas. */
+.finance-surface { border: 1px solid var(--color-line); border-radius: var(--radius-panel); background: var(--color-surface); padding: 24px; }
+
+/* Capital overview: the number sits on the white canvas, no slab. */
+.capital-summary { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); gap: 24px 56px; align-items: end; color: var(--color-ink); }
+.financial-amount { font-size: 64px; line-height: 68px; letter-spacing: -.045em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.capital-compact .financial-amount { font-size: 48px; line-height: 52px; }
+.financial-amount > span { margin-left: 4px; font-size: 17px; line-height: 24px; letter-spacing: 0; font-weight: 500; color: var(--color-ink-2); }
+.capital-detail { display: grid; align-content: end; gap: 10px; }
+.capital-detail > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; font-size: 14px; line-height: 20px; border-bottom: 1px solid var(--color-line); padding-bottom: 10px; }
+.capital-detail span { color: var(--color-ink-2); }
+.capital-detail strong { font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Project hero (one number, one bar, one quiet row). */
+.hero-amount { font-size: 64px; line-height: 1; letter-spacing: -.045em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hero-amount > span { margin-left: 2px; font-size: 17px; letter-spacing: 0; font-weight: 500; color: var(--color-ink-2); }
+
+/* The release: the paid figure gets a lime marker once money has reached the builder. */
+.paid-mark { border-radius: 6px; padding: 0 6px; margin-left: -6px; transition: background-color 400ms var(--ease-out); }
+.paid-mark[data-paid="true"] { background: var(--color-accent); }
+.capital-moving [role="img"] { animation: capital-swell 1200ms var(--ease-out); }
+@keyframes capital-swell { 0%, 100% { transform: scaleY(1); } 35% { transform: scaleY(1.5); } }
+
+/* Proof disclosure: plumbing on demand. */
+.proof > summary { list-style: none; cursor: pointer; }
+.proof > summary::-webkit-details-marker { display: none; }
+.proof[open] .proof-chevron { transform: rotate(90deg); }
+
+@media (max-width: 767px) {
+  :root { --text-display: 2.75rem; --text-display--line-height: 3rem; --text-title: 1.875rem; --text-title--line-height: 2.25rem; }
+  .capital-summary { grid-template-columns: minmax(0, 1fr); }
+  .financial-amount, .capital-compact .financial-amount, .hero-amount { font-size: 44px; line-height: 48px; }
+  .finance-surface { padding: 20px 16px; }
+  .responsive-finance-table, .responsive-finance-table tbody { display: block; }
+  .responsive-finance-table thead { display: none; }
+  .responsive-finance-table tr { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; padding: 24px 0; }
+  .responsive-finance-table td { display: block; min-width: 0; padding: 0; text-align: left; }
+  .responsive-finance-table td:first-child { grid-column: 1 / -1; }
+  .responsive-finance-table td[data-label]:not(:first-child)::before { content: attr(data-label); display: block; margin-bottom: 6px; font-size: 12px; line-height: 16px; color: var(--color-ink-2); font-weight: 400; }
+  .responsive-finance-table td:last-child { align-self: end; }
+}
+
+/* Checks rows: icon, name, detail, flagged evidence. Name and detail stack below 1024px. */
+.check-row { display: grid; grid-template-columns: 20px minmax(0, 1fr); }
 .check-row > :nth-child(n + 3) { grid-column: 2; justify-self: start; min-width: 0; }
+.check-row > :nth-child(3) { justify-self: stretch; }
 @media (min-width: 1024px) {
-  .check-row { grid-template-columns: 18px 250px minmax(0, 1fr) auto; }
+  .check-row { grid-template-columns: 20px 280px minmax(0, 1fr) auto; }
   .check-row > :nth-child(n + 3) { grid-column: auto; }
   .check-row > :last-child { justify-self: end; }
 }

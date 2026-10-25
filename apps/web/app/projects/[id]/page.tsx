@@ -8,10 +8,12 @@ import { Activity } from "@/components/project/activity";
 import { EvidenceStrip } from "@/components/project/evidence-strip";
 import { InvestDialog } from "@/components/project/invest-dialog";
 import { MilestoneTabs } from "@/components/project/milestone-tabs";
-import { MoneyMap } from "@/components/project/money-map";
+import { ProjectHero } from "@/components/project/project-hero";
+import { ReleaseStage } from "@/components/project/release-stage";
 import { SovTable } from "@/components/project/sov-table";
+import { Proof } from "@/components/checks/proof";
 import { Button } from "@/components/ui/button";
-import { PageHeader, Properties, Section } from "@/components/ui/layout";
+import { Properties, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { LOCKED_MILESTONE_V2 } from "@xrlp/shared";
@@ -58,23 +60,49 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const audits = (selected && d.audits[selected.id]) ?? [];
   const investment = investmentAvailability(p.status, d.vault?.phase, d.vault?.subscriptionDate);
 
+  const loanFacts = [
+    { label: "Rate", value: formatBps(p.terms.interestRateBps) },
+    { label: "Term", value: `${Math.round(p.terms.termDays / 30.4)} months` },
+    ...(p.status === "funding"
+      ? [{ label: "Closes", value: formatDate(p.terms.fundingDeadline) }]
+      : [{ label: "Released", value: `${p.milestones.filter((m) => m.status === "released").length} of ${p.milestones.length}` }]),
+    { label: "Builder", value: builder.name },
+  ];
+
   return (
-    <div className="space-y-10">
+    <div>
       <AutoRefresh ms={3000} />
 
-      <div>
-        <Link href="/" className="text-caption text-ink-2 hover:text-ink">
-          Projects
-        </Link>
-        <PageHeader
-          className="mt-2"
-          title={p.name}
-          meta={<Tag tone={status.tone}>{status.label}</Tag>}
-          description={`${builder.name} · ${p.siteAddress}`}
-          action={
-            p.status === "funding" && session.investor
-              ? investment.available
-                ? <InvestDialog
+      <ReleaseStage>
+        <div className="space-y-8">
+          <header>
+            <Link href="/" className="text-small font-medium text-ink-3 hover:text-ink">
+              Projects
+            </Link>
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              <h1 className="text-[28px] leading-9 font-semibold tracking-[-0.025em]">{p.name}</h1>
+              <Tag tone={status.tone}>{status.label}</Tag>
+            </div>
+          </header>
+
+          <ProjectHero
+            money={
+              p.status === "funding"
+                ? { mode: "funding", raisedCents: raised, targetCents: toCents(p.terms.principal) }
+                : {
+                    mode: "loan",
+                    principalCents: toCents(p.terms.principal),
+                    releasedCents: sum(["released"]),
+                    escrowCents: sum([...LOCKED_MILESTONE_V2]),
+                    returnedCents: sum(["refunded"]),
+                    pendingCents: sum(["pending"]),
+                  }
+            }
+            facts={loanFacts}
+            action={
+              p.status === "funding" && session.investor ? (
+                investment.available ? (
+                  <InvestDialog
                     projectId={p.id}
                     projectName={p.name}
                     remaining={fromCents(toCents(p.terms.principal) - raised)}
@@ -82,164 +110,143 @@ export default async function ProjectPage({ params, searchParams }: Props) {
                     investor={session.investor}
                     redemptionDate={d.vault?.redemptionDate}
                   />
-                : <Button size="lg" disabled title={investment.reason}>{investment.label}</Button>
-              : undefined
-          }
-        />
-      </div>
-
-      <section className="space-y-5">
-        <MilestoneTabs milestones={p.milestones} selectedId={selected?.id} />
-        {selected && (
-          <>
-            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-caption text-ink-2">
-              <span>
-                Pays for SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
-                {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}, then the money can only go back`}
-              </span>
-              {selected.escrow && (
-                <span>
-                  EscrowCreate <TxLink hash={selected.escrow.createTx} />
-                </span>
-              )}
-            </div>
-            <ChecksPanel
-              key={selected.id}
-              milestone={selected}
-              status={checks}
-              audits={audits}
-              attestations={d.attestations[selected.id] ?? []}
-              builderName={builder.name}
-              builderBalance={d.balances?.builder}
-              evidence={d.evidence?.[selected.id]}
-              names={names}
-              run={{ projectId: p.id, pinHref: `?m=${encodeURIComponent(selected.id)}` }}
-            />
-            <EvidenceStrip evidence={d.evidence?.[selected.id] ?? []} audit={audits[audits.length - 1]} results={[...checks.required, ...checks.optional]} />
-          </>
-        )}
-      </section>
-
-      {d.vault && (
-        <Section title="Where the money is" aside="Moves only by ledger transactions">
-          <MoneyMap
-            nodes={[
-              {
-                key: "vault",
-                label: "Vault",
-                amount: d.vault.assetsAvailable,
-                note: p.chain.loanId ? `available · ${formatAmount(d.vault.assetsTotal)} RLUSD total` : "deposits waiting for the loan to close",
-              },
-              { key: "spv", label: "Project account", amount: d.balances?.spv ?? "0", note: "3 of 4 signers · holds ≈ 0 by design" },
-              {
-                key: "escrows",
-                label: "Milestone escrows",
-                amount: fromCents(sum(LOCKED_MILESTONE_V2 as Milestone["status"][])),
-                note: `${p.milestones.filter((m) => (LOCKED_MILESTONE_V2 as readonly string[]).includes(m.status)).length} locked · pay the builder or go back`,
-              },
-              {
-                key: "builder",
-                label: builder.name,
-                amount: fromCents(sum(["released"])),
-                note: d.balances ? `received · balance ${formatAmount(d.balances.builder)} RLUSD` : "received from escrows",
-                tone: "pass",
-              },
-            ]}
+                ) : (
+                  <Button size="lg" disabled title={investment.reason}>{investment.label}</Button>
+                )
+              ) : undefined
+            }
           />
-        </Section>
-      )}
 
-      <div className="grid gap-12 border-t border-line pt-10 md:grid-cols-3">
+          <section className="space-y-4" aria-label="Milestone checks">
+            <MilestoneTabs milestones={p.milestones} selectedId={selected?.id} />
+            {selected && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-caption text-ink-2">
+                  <span>
+                    Pays for SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
+                    {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}, then the money can only go back`}
+                  </span>
+                  {selected.escrow && (
+                    <span>
+                      EscrowCreate <TxLink hash={selected.escrow.createTx} />
+                    </span>
+                  )}
+                </div>
+                <ChecksPanel
+                  key={selected.id}
+                  milestone={selected}
+                  status={checks}
+                  audits={audits}
+                  attestations={d.attestations[selected.id] ?? []}
+                  builderName={builder.name}
+                  evidence={d.evidence?.[selected.id]}
+                  names={names}
+                  run={{ projectId: p.id, pinHref: `?m=${encodeURIComponent(selected.id)}` }}
+                />
+                <EvidenceStrip evidence={d.evidence?.[selected.id] ?? []} audit={audits[audits.length - 1]} results={[...checks.required, ...checks.optional]} />
+              </div>
+            )}
+          </section>
+        </div>
+      </ReleaseStage>
+
+      <div className="mt-20 grid gap-x-14 gap-y-12 md:grid-cols-3">
         <Section title="Loan">
           <Properties
-            labelWidth={124}
-            items={[
-              { label: "Principal", value: <Val main={`${formatAmount(p.terms.principal)} RLUSD`} note={`${formatBps(p.terms.interestRateBps)} a year · ${Math.round(p.terms.termDays / 30.4)} months`} /> },
-              ...(d.loan
+            labelWidth={120}
+            items={
+              d.loan
                 ? [
-                    { label: "Still owed", value: <Val main={`${formatAmount(d.loan.totalValueOutstanding)} RLUSD`} note={`${formatAmount(d.loan.principalOutstanding)} principal`} /> },
-                    { label: "Payments", value: <Val main={`${formatAmount(d.loan.periodicPayment)} RLUSD`} note={`${d.loan.paymentRemaining} left · next ${formatDate(d.loan.nextPaymentDueDate)}`} /> },
+                    { label: "Still owed", value: <Num>{formatAmount(d.loan.totalValueOutstanding)}</Num> },
+                    { label: "Principal left", value: <Num>{formatAmount(d.loan.principalOutstanding)}</Num> },
+                    { label: "Next payment", value: <Num>{formatAmount(d.loan.periodicPayment)}</Num> },
+                    { label: "Due", value: formatDate(d.loan.nextPaymentDueDate) },
+                    { label: "Payments left", value: <Num>{d.loan.paymentRemaining}</Num> },
                   ]
-                : [{ label: "Status", value: <Val main="Not closed yet" note={`Closes after funding ends ${formatDate(p.terms.fundingDeadline)}`} /> }]),
-            ]}
+                : [
+                    { label: "Principal", value: <Num>{formatAmount(p.terms.principal)}</Num> },
+                    { label: "Status", value: "Not closed" },
+                    { label: "Closes", value: formatDate(p.terms.fundingDeadline) },
+                  ]
+            }
           />
         </Section>
 
         <Section title="Vault">
           {d.vault ? (
             <Properties
-              labelWidth={124}
+              labelWidth={120}
               items={[
-                { label: "Phase", value: <Val main={VAULT_PHASE[d.vault.phase]} note={`${formatAmount(raised / 100)} RLUSD from ${new Set(d.investments.map((i) => i.investor)).size} investors`} /> },
-                { label: "Share price", value: <span title="Devnet vaults are cash basis: assets stay at principal when the loan closes, and the interest in each repayment raises the share price."><Val main={`${Number(d.vault.sharePrice).toFixed(4)} RLUSD`} note="Rises as interest is repaid" /></span> },
-                { label: "Available", value: <Val main={`${formatAmount(d.vault.assetsAvailable)} RLUSD`} note="Repayments and refunds land here" /> },
-                { label: "Withdrawals", value: <Val main={d.vault.phase === "redemption" ? "Open" : `From ${formatDate(d.vault.redemptionDate)}`} note="Vault RedemptionDate" /> },
+                { label: "Phase", value: VAULT_PHASE[d.vault.phase] },
+                { label: "Investors", value: <Num>{new Set(d.investments.map((i) => i.investor)).size}</Num> },
+                { label: "Share price", value: <Num>{Number(d.vault.sharePrice).toFixed(4)}</Num> },
+                { label: "Available", value: <Num>{formatAmount(d.vault.assetsAvailable)}</Num> },
+                { label: "Withdrawals", value: d.vault.phase === "redemption" ? "Open" : `From ${formatDate(d.vault.redemptionDate)}` },
               ]}
             />
           ) : (
-            <p className="text-small text-ink-2">Opens when the platform locks terms.</p>
+            <p className="text-small text-ink-2">Opens when terms lock.</p>
           )}
         </Section>
 
         <Section title="Project account">
           <Properties
-            labelWidth={124}
+            labelWidth={120}
             items={[
-              ...(p.chain.spv ? [{ label: "Account", value: <Val main={<Address address={p.chain.spv} />} note="Master key disabled" /> }] : []),
-              { label: "Signers", value: <Val main="3 of 4 needed" note="Platform, builder, inspector, trustee" /> },
-              {
-                label: "Inspector",
-                value: d.inspectors.length ? <Val main={d.inspectors.map((i) => i.name).join(", ")} note="Assigned from the verified panel when terms locked" /> : <Val main="Not assigned yet" note="Assigned from the verified panel when terms lock" />,
-              },
-              { label: "Releases", value: <Val main="Decided by the checks" note="Escrows pay the builder or go back" /> },
+              { label: "Signers", value: "3 of 4" },
+              { label: "Inspector", value: d.inspectors.length ? d.inspectors.map((i) => i.name).join(", ") : "Not assigned" },
+              { label: "Holds", value: <Num>{formatAmount(d.balances?.spv ?? "0")}</Num> },
+            ]}
+          />
+          <Proof
+            className="mt-1"
+            items={[
+              { label: "Account", value: p.chain.spv && <Address address={p.chain.spv} /> },
+              { label: "Master key", value: p.chain.spv && "Disabled" },
+              { label: "Signer set", value: "Platform, builder, inspector, trustee" },
+              { label: "Loan", value: p.chain.loanId && <span className="font-mono text-[12px] break-all">{p.chain.loanId}</span> },
             ]}
           />
         </Section>
       </div>
 
       {(p.sov?.length ?? 0) > 0 && (
-        <Section title="Schedule of Values" aside="AIA G703 lines; each milestone escrow pays for its lines only">
+        <Section title="Schedule of Values" className="mt-16">
           <SovTable sov={p.sov ?? []} milestones={p.milestones} selectedId={selected?.id} />
         </Section>
       )}
 
-      <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Section title="Activity" aside="Every line is an XRPL transaction">
-          <Activity events={d.events} who={who} roleOf={roleNamer(session.parties)} builderName={builder.name} milestoneTitle={title} limit={14} />
+      <div className="mt-16 grid gap-x-14 gap-y-12 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Section title="Activity">
+          <Activity events={d.events} who={who} roleOf={roleNamer(session.parties)} builderName={builder.name} milestoneTitle={title} limit={10} />
         </Section>
-        <aside className="space-y-10">
-          <Section title="Builder">
-            <Properties
-              labelWidth={140}
-              items={[
-                { label: "Name", value: builder.name },
-                { label: "Credential", value: builder.verified ? <Val main={<span className="text-pass">VERIFIED_BUILDER</span>} note={builder.credentialTx ? <TxLink hash={builder.credentialTx} /> : undefined} /> : "Not verified" },
-                { label: "Licence", value: builder.licenseNumber },
-                { label: "Track record", value: `${builder.completedProjects} completed projects` },
-                {
-                  label: "Verification",
-                  value: d.verification ? (
-                    <Link href={`/projects/${p.id}/verification`} className="text-link hover:underline">
-                      Report: {d.verification.decision === "pass" ? "verified" : d.verification.decision === "fail" ? "rejected" : "needs a visit"}
-                    </Link>
-                  ) : (
-                    "Not verified yet"
-                  ),
-                },
-              ]}
-            />
-          </Section>
-        </aside>
+        <Section title="Builder">
+          <Properties
+            labelWidth={120}
+            items={[
+              { label: "Name", value: builder.name },
+              { label: "Status", value: builder.verified ? <span className="font-medium text-pass">Verified</span> : "Not verified" },
+              { label: "Licence", value: builder.licenseNumber },
+              { label: "Completed", value: <Num>{`${builder.completedProjects} projects`}</Num> },
+              {
+                label: "Report",
+                value: d.verification ? (
+                  <Link href={`/projects/${p.id}/verification`} className="font-medium text-ink underline decoration-line-2 underline-offset-4 hover:decoration-ink">
+                    {d.verification.decision === "pass" ? "Verified" : d.verification.decision === "fail" ? "Rejected" : "Needs a visit"}
+                  </Link>
+                ) : (
+                  "Not verified"
+                ),
+              },
+            ]}
+          />
+          <Proof className="mt-1" items={[{ label: "Credential", value: builder.credentialTx && <TxLink hash={builder.credentialTx} /> }]} />
+        </Section>
       </div>
     </div>
   );
 }
 
-function Val({ main, note }: { main: React.ReactNode; note?: React.ReactNode }) {
-  return (
-    <>
-      <span className="tabular text-ink">{main}</span>
-      {note && <span className="block text-caption text-ink-2">{note}</span>}
-    </>
-  );
+function Num({ children }: { children: React.ReactNode }) {
+  return <span className="tabular-nums">{children}</span>;
 }

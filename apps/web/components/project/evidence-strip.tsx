@@ -9,8 +9,8 @@ export function EvidenceStrip({ evidence, audit, results }: { evidence: Evidence
   if (!evidence.length && !inspector.length) return null;
   return (
     <div className="flex flex-wrap gap-x-12 gap-y-6">
-      {evidence.length > 0 && <Group title={`Builder evidence · ${evidence.length} files`} items={evidence} flagged={flagged} />}
-      {inspector.length > 0 && <Group title={`Inspector photos · ${inspector.length}`} items={inspector} flagged={flagged} />}
+      {evidence.length > 0 && <Group title="Builder evidence" items={evidence} flagged={flagged} />}
+      {inspector.length > 0 && <Group title="Inspector photos" items={inspector} flagged={flagged} />}
     </div>
   );
 }
@@ -18,7 +18,9 @@ export function EvidenceStrip({ evidence, audit, results }: { evidence: Evidence
 function Group({ title, items, flagged }: { title: string; items: Evidence[]; flagged: Set<string> }) {
   return (
     <div>
-      <h3 className="mb-2 text-caption text-ink-2">{title}</h3>
+      <h3 className="mb-2 text-small font-medium text-ink">
+        {title} <span className="ml-1 font-normal tabular-nums text-ink-3">{items.length}</span>
+      </h3>
       <ul className="flex flex-wrap gap-2">
         {items.map((e) => (
           <li key={e.id}>
@@ -26,9 +28,9 @@ function Group({ title, items, flagged }: { title: string; items: Evidence[]; fl
               href={fileUrl(e)}
               target="_blank"
               rel="noreferrer"
-              title={`${e.filename}${flagged.has(e.id) ? " · flagged by a check" : ""}`}
+              title={`${e.filename}${flagged.has(e.id) ? ", flagged" : ""}`}
               className={cn(
-                "flex h-[54px] w-[72px] items-center justify-center overflow-hidden rounded-control bg-band text-caption font-medium text-ink-2 transition-opacity duration-150 hover:opacity-80",
+                "flex h-[56px] w-[76px] items-center justify-center overflow-hidden rounded-control bg-band text-caption font-medium text-ink-2 transition-opacity duration-150 hover:opacity-80",
                 flagged.has(e.id) && "ring-2 ring-fail",
               )}
             >

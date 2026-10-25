@@ -1,24 +1,23 @@
 @import "tailwindcss";
 @import "../../styles/drawproof.css";
 
-/* Compatibility names for inspector components; values come from the shared theme. */
+/* Compatibility names for inspector components; values come from the shared theme (white canvas, neutral greys). */
 @theme inline {
   --color-canvas: var(--color-page);
-  --color-surface: var(--color-page);
   --color-subtle: var(--color-band);
   --color-line-strong: var(--color-line-2);
   --color-muted: var(--color-ink-2);
-  --color-faint: var(--color-ink-2);
+  --color-faint: var(--color-ink-3);
   --color-brand: var(--color-action);
   --color-brand-600: var(--color-action-hover);
-  --color-brand-50: var(--color-info-bg);
-  --color-brand-100: var(--color-info-bg);
+  --color-brand-50: var(--color-band);
+  --color-brand-100: var(--color-band-2);
   --color-ok: var(--color-pass);
   --color-ok-bg: var(--color-pass-bg);
   --color-ok-line: var(--color-pass);
   --color-warn: var(--color-review);
   --color-warn-bg: var(--color-review-bg);
-  --color-warn-line: var(--color-review);
+  --color-warn-line: var(--color-review-icon);
   --color-bad: var(--color-fail);
   --color-bad-bg: var(--color-fail-bg);
   --color-bad-line: var(--color-fail);
@@ -27,9 +26,26 @@
   --color-lock-bg: var(--color-neutral-bg);
   --color-lock-line: var(--color-line-2);
 }
+
+/* The queue's one number, on the canvas (same scale as the web project hero). */
+.hero-amount { font-size: 64px; line-height: 1; letter-spacing: -.045em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hero-amount > span { margin-left: 4px; font-size: 17px; letter-spacing: 0; font-weight: 500; color: var(--color-ink-2); }
+@media (max-width: 639px) { .hero-amount { font-size: 48px; } }
+
+/* Proof disclosure: plumbing on demand. */
+.proof > summary { list-style: none; cursor: pointer; }
+.proof > summary::-webkit-details-marker { display: none; }
+.proof[open] .proof-chevron { transform: rotate(90deg); }
+
+/* Plain disclosures (Done means, previous report, report details). */
+.disclosure > summary { list-style: none; cursor: pointer; }
+.disclosure > summary::-webkit-details-marker { display: none; }
+.disclosure[open] > summary .disclosure-chevron { transform: rotate(90deg); }
+
+/* Opt-in presentation mode; semantic colors and signing behaviour stay intact. Matches apps/web. */
 html[data-projector="true"] {
-  font-size: 20px;
-  --color-ink-2: #45454a;
-  --color-ink-3: #55555b;
-  --color-line: #c7c7ce;
+  font-size: 18px;
+  --color-ink-2: #3f3f3f;
+  --color-ink-3: #3f3f3f;
+  --color-line: #d6d6d6;
 }

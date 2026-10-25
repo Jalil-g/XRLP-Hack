@@ -1,27 +1,23 @@
 import { ShieldAlert, ShieldCheck } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import type { Inspector } from "@/lib/types";
 import { API_MODE } from "@/lib/api";
-import { explorerTxUrl } from "@/lib/utils";
+import { cn, explorerTxUrl } from "@/lib/utils";
 
-/** VERIFIED_INSPECTOR credential (XLS-70), linked to its CredentialCreate tx when known. */
-export function VerifiedInspectorBadge({ inspector }: { inspector: Inspector }) {
-  if (!inspector.verified) {
-    return (
-      <Badge tone="warn">
-        <ShieldAlert /> Not verified
-      </Badge>
-    );
-  }
-  const badge = (
-    <Badge tone="ok" >
-      <ShieldCheck /> Verified inspector
-    </Badge>
+/** VERIFIED_INSPECTOR credential (XLS-70) as an inline mark, linked to its CredentialCreate tx when known. */
+export function VerifiedInspectorBadge({ inspector, className }: { inspector: Inspector; className?: string }) {
+  const mark = inspector.verified ? (
+    <span className={cn("inline-flex items-center gap-1 text-pass", className)}>
+      <ShieldCheck className="size-3.5" aria-hidden /> Verified inspector
+    </span>
+  ) : (
+    <span className={cn("inline-flex items-center gap-1 text-review", className)}>
+      <ShieldAlert className="size-3.5" aria-hidden /> Not verified
+    </span>
   );
-  if (!inspector.credentialTx || API_MODE === "mock") return badge;
+  if (!inspector.verified || !inspector.credentialTx || API_MODE === "mock") return mark;
   return (
-    <a href={explorerTxUrl(inspector.credentialTx)} target="_blank" rel="noreferrer" title="Credential on XRPL devnet" className="hover:opacity-80">
-      {badge}
+    <a href={explorerTxUrl(inspector.credentialTx)} target="_blank" rel="noreferrer" title="Credential on XRPL devnet" className="hover:underline">
+      {mark}
     </a>
   );
 }

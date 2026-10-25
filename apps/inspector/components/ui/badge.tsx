@@ -1,35 +1,28 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+/** Small soft chip (apps/web Tag). Tone carries state; the label always says it in words. Use only when state differs between rows. */
 export const tones = {
-  neutral: "bg-subtle text-ink-2 ring-line",
-  brand: "bg-brand-50 text-brand ring-brand-100",
-  ok: "bg-ok-bg text-ok ring-ok-line",
-  warn: "bg-warn-bg text-warn ring-warn-line",
-  bad: "bg-bad-bg text-bad ring-bad-line",
-  info: "bg-info-bg text-info ring-info-line",
-  lock: "bg-lock-bg text-lock ring-lock-line",
+  neutral: "bg-neutral-bg text-neutral",
+  brand: "bg-neutral-bg text-ink",
+  ok: "bg-pass-bg text-pass",
+  warn: "bg-review-bg text-review",
+  bad: "bg-fail-bg text-fail",
+  info: "bg-info-bg text-info",
+  lock: "bg-neutral-bg text-neutral",
 } as const;
 
 export type Tone = keyof typeof tones;
 
-export function Badge({
-  tone = "neutral",
-  className,
-  dot,
-  ...props
-}: React.HTMLAttributes<HTMLSpanElement> & { tone?: Tone; dot?: boolean }) {
+export function Badge({ tone = "neutral", className, ...props }: React.HTMLAttributes<HTMLSpanElement> & { tone?: Tone }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-tag px-2 py-0.5 text-caption font-medium whitespace-nowrap [&_svg]:size-3.5",
+        "inline-flex h-[22px] items-center gap-1 rounded-full px-2.5 text-[12px] font-medium whitespace-nowrap [&_svg]:size-3.5",
         tones[tone],
         className,
       )}
       {...props}
-    >
-
-      {props.children}
-    </span>
+    />
   );
 }

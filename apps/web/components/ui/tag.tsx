@@ -1,7 +1,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
-/** Notion-style soft chip. Tone carries state; the label always says it in words. */
+/** Small soft chip. Tone carries state; the label always says it in words. Use only when state differs between rows. */
 export const tagTones = {
   neutral: "bg-neutral-bg text-neutral",
   info: "bg-info-bg text-info",
@@ -16,7 +16,7 @@ export function Tag({ tone = "neutral", className, ...props }: React.HTMLAttribu
   return (
     <span
       className={cn(
-        "inline-flex h-6 items-center gap-1 rounded-tag px-2 text-caption font-medium whitespace-nowrap [&_svg]:size-3.5",
+        "inline-flex h-[22px] items-center gap-1 rounded-full px-2.5 text-[12px] font-medium whitespace-nowrap [&_svg]:size-3.5",
         tagTones[tone],
         className,
       )}

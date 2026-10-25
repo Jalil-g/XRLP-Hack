@@ -1,29 +1,22 @@
-// The AI verdict over the whole suite: decision, confidence, model, and the attestation recorded before any release.
-import { TxLink } from "@/components/chain";
+// The AI verdict over the whole suite: decision and confidence. Model, hash and attestation tx live in Proof.
 import type { Verdict } from "@/lib/contract";
 import { ROW_GRID, StatusIcon } from "./status-icon";
 
 const WORD = { pass: "Pass", fail: "Fail", needs_human: "Needs review" } as const;
 
-export function VerdictRow({ verdict, attestationTx, hash, released }: { verdict: Verdict; attestationTx?: string; /** verdictHash as attested */ hash?: string; released: boolean }) {
+export function VerdictRow({ verdict }: { verdict: Verdict }) {
   const state = verdict.decision === "pass" ? "pass" : verdict.decision === "fail" ? "fail" : "warn";
   return (
-    <div className={`${ROW_GRID} border-t border-line bg-band`}>
-      <StatusIcon state={state} className="mt-0.5" />
-      <span className="text-body font-medium text-ink">AI verdict</span>
-      <span className="text-body text-ink-2">
-        <span className="font-medium text-ink">{WORD[verdict.decision]}</span> · confidence{" "}
-        <span className="tabular font-medium text-ink">{verdict.confidence.toFixed(2)}</span> · {verdict.model === "mock" ? "mock verifier" : verdict.model}
-        <span className="block text-caption">
-          {released ? "Attested on-chain before the escrow was released" : "Attested on-chain"}
-          {hash && (
-            <>
-              {" "}· hash <span className="font-mono text-[12px]" title={hash}>{hash.slice(0, 10)}…</span>
-            </>
-          )}
+    <div className={`${ROW_GRID} border-t border-line`}>
+      <StatusIcon state={state} />
+      <span className="text-body font-semibold text-ink">AI verdict</span>
+      <span className="flex items-baseline gap-3 text-small">
+        <span className="font-semibold text-ink">{WORD[verdict.decision]}</span>
+        <span className="text-ink-2">
+          Confidence <span className="tabular font-semibold text-ink">{verdict.confidence.toFixed(2)}</span>
         </span>
       </span>
-      <span className="justify-self-end">{attestationTx && <TxLink hash={attestationTx} />}</span>
+      <span />
     </div>
   );
 }

@@ -16,31 +16,28 @@ export function SiteHeader({ session }: { session: Session }) {
         : null;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-page">
-      <div className="mx-auto flex min-h-14 max-w-[1184px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-1.5 sm:px-8">
-        <Link href="/" className="text-body font-semibold tracking-[-0.01em] text-ink">
+    <header className="sticky top-0 z-40 border-b border-line bg-surface/90 backdrop-blur-md">
+      <div className="mx-auto flex min-h-14 max-w-[1264px] flex-wrap items-center gap-x-8 gap-y-1 px-4 py-1.5 sm:px-8">
+        <Link href="/" className="text-[19px] font-bold tracking-[-0.04em] text-ink">
           {BRAND.name}
         </Link>
         <NavLinks role={session.role} />
         <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
           {API_MODE === "mock" ? (
-            <span
-              className="rounded-tag bg-review-bg px-2 py-0.5 text-caption font-medium text-review"
-              title="NEXT_PUBLIC_API_MODE=mock: fixture data, no ledger. Tx hashes are not real."
-            >
-              Mock data
+            <span className="rounded-tag border border-line px-1.5 text-[11px] leading-5 font-medium text-ink-3" title="NEXT_PUBLIC_API_MODE=mock: fixture data, no ledger. Tx hashes are not real.">
+              Mock
             </span>
           ) : (
-            <span className="text-caption text-ink-2" title="NEXT_PUBLIC_API_MODE=http">
-              Live API
+            <span className="text-[11px] leading-5 font-medium text-ink-3" title="NEXT_PUBLIC_API_MODE=http">
+              Devnet
             </span>
           )}
           <details className="relative">
-            <summary className="flex h-11 max-w-[200px] cursor-pointer list-none items-center gap-2 rounded-control px-2 text-caption font-medium hover:bg-band [&::-webkit-details-marker]:hidden">
+            <summary className="flex h-11 max-w-[200px] lg:max-w-[320px] cursor-pointer list-none items-center gap-2 rounded-control px-2 text-caption font-medium hover:bg-band [&::-webkit-details-marker]:hidden">
               <span className="capitalize">{session.role}</span><ChevronDown className="size-3.5 shrink-0 text-ink-2" aria-hidden />
               <span className="hidden truncate text-ink-2 lg:inline">{session.role === "investor" ? session.investor?.name : session.role === "builder" ? session.builder?.name : "Operator"}</span>
             </summary>
-            <div className="absolute right-0 z-50 mt-2 w-[min(360px,calc(100vw-2rem))] space-y-4 rounded-panel border border-line bg-page p-4 shadow-overlay">
+            <div className="absolute right-0 z-50 mt-2 w-[min(360px,calc(100vw-2rem))] space-y-4 rounded-panel border border-line bg-surface p-4 shadow-overlay">
               <p className="text-small font-medium">Demo account</p>
               <RoleSwitcher role={session.role} identities={identities} />
               <ProjectorToggle />
@@ -50,7 +47,7 @@ export function SiteHeader({ session }: { session: Session }) {
       </div>
       {session.directoryUnavailable && (
         <p role="alert" className="border-t border-line bg-review-bg px-4 py-2 text-center text-small text-review">
-          Account details are unavailable. Names and account actions may be missing; refresh before transacting.
+          Account details unavailable. Refresh before transacting.
         </p>
       )}
     </header>

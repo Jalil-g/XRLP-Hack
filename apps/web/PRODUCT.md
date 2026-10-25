@@ -45,8 +45,7 @@ Needs review. The ledger fixes *where* money can go; the suite makes *when* publ
 ## Brand Commitments
 
 - Name: **Drawproof**. Line: "Construction money that moves only when the building does."
-- Visual bar (user decision, 2026-10-24): **simple, like Apple's and Notion's web design**. Familiar, quiet, exact. No theme
-  costume, no decoration. See `DESIGN.md`.
+- Visual bar (user decision, 2026-10-25): **confident finance-platform craft, alongside Ramp, Robinhood, and Apple**. Warm neutral workspaces, dark capital summaries, selective chartreuse, precise financial typography and intuitive guided tasks. The canonical redesign brief is `../../docs/ideas/shared-frontend-style.md`; it supersedes the former Apple/Notion restraint. Keep product truth and review-before-commitment behavior.
 - Say: the ledger fixes where money goes; the suite decides when. Don't say: "trustless AI", "ledger-enforced release",
   "mainnet-ready", "automatic refunds to investors". Share value rises as interest is repaid (not at LoanSet: devnet is cash basis, decisions.md 10-24); refunds are withdrawable from RedemptionDate.
 

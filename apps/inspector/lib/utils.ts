@@ -24,6 +24,11 @@ export function formatRlusd(amount: string) {
   return `${usd0.format(Number(amount))} RLUSD`;
 }
 
+/** "120000.00" → "120,000" (the unit sits beside it, quieter). */
+export function formatAmount(amount: string) {
+  return usd0.format(Number(amount));
+}
+
 // ---------- identifiers ----------
 
 export function shortAddress(addr: string, head = 6, tail = 4) {
@@ -50,4 +55,11 @@ const dateTimeFmt = new Intl.DateTimeFormat("en-US", {
 
 export function formatDateTime(iso: string) {
   return `${dateTimeFmt.format(new Date(iso))} UTC`;
+}
+
+const dateFmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** "Dec 15" (UTC). */
+export function formatDate(iso: string) {
+  return dateFmt.format(new Date(iso));
 }

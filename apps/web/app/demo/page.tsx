@@ -1,20 +1,21 @@
 // /demo control room for the driver: the scenes of docs/04-demo-script.md in order, each with its one action, its live
 // state, and a link to the screen the audience should be looking at. Targets are found from data, not hard-coded ids.
+// The script itself lives in docs/04-demo-script.md; this page carries titles, buttons and state only.
 import Link from "next/link";
+import { Check, ChevronRight } from "lucide-react";
 import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { TxLink } from "@/components/chain";
 import { CloseLoanButton } from "@/components/demo/close-loan-button";
 import { DecisionForm } from "@/components/demo/decision-form";
 import { buttonClass } from "@/components/ui/button";
-import { PageHeader } from "@/components/ui/layout";
-import { Tag } from "@/components/ui/tag";
+import type { Tone } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
-import { DUPLICATE_PHOTO_CHECK, failedChecks, findStall } from "@/lib/demo-scenes";
+import { failedChecks, findStall } from "@/lib/demo-scenes";
 import { MILESTONE_STATUS, PROJECT_STATUS, checkName } from "@/lib/display";
 import { getSession } from "@/lib/session";
-import { formatAmount, fromCents, toCents } from "@/lib/utils";
+import { cn, formatAmount, fromCents, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Demo" };
@@ -51,116 +52,107 @@ export default async function DemoPage() {
   const [m1, m2, m3] = a?.project.milestones ?? [];
   const refused = a?.events.find((e) => e.kind === "release_refused");
   const { failed: m2Failed, headline: failedCheck } = failedChecks(m2 && a?.checks[m2.id]);
-  const reusedPhoto = failedCheck?.check === DUPLICATE_PHOTO_CHECK;
   const bExpired = stall?.overdue;
   const bRefunded = stall?.refunded;
+  const nextScene = !a ? undefined : !a.builder.verified ? 1 : !m1?.escrow ? 2 : m1.status !== "released" ? 3 : 4;
+
+  const done = [!!a?.builder.verified, !!m1?.escrow, m1?.status === "released", m2?.status === "failed" || m2?.status === "released"];
+  const progress = (n: number) => (done[n - 1] ? "done" : nextScene === n ? "current" : "todo") as Progress;
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-10">
       <AutoRefresh ms={2500} />
-      <PageHeader
-        title="Demo control room"
-        description="Prepare the 100-second recording: show the project, review the evidence, release one milestone, and hold a failed milestone."
-        action={
-          <div className="flex gap-2">
-            <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>
-              Open inspector app
-            </a>
-            <ActionButton variant="secondary" action={{ kind: "resetDemo" }}>
-              Reset demo
-            </ActionButton>
-          </div>
-        }
-      />
+      <header className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <h1 className="text-[28px] leading-9 font-semibold tracking-[-0.025em]">Demo control room</h1>
+          {a && <span className="text-body text-ink-2">{a.project.name}</span>}
+        </div>
+        <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>
+          Open inspector
+        </a>
+      </header>
 
-      {!a && <p className="rounded-panel bg-review-bg px-5 py-4 text-small text-review">No pre-staged demo project found. Run Reset demo, or pre-stage Project A (XRPL-11).</p>}
+      {!a && (
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-panel bg-band px-5 py-4">
+          <p className="text-body font-medium">No demo project</p>
+          <ActionButton variant="secondary" action={{ kind: "resetDemo" }}>Reset demo</ActionButton>
+        </div>
+      )}
 
-      <ol className="divide-y divide-line border-y border-line">
+      <ol className="border-t border-line" aria-label="Recording sequence">
         <Scene
           n={1}
+          progress={progress(1)}
           title="Verified project"
-          body="The builder paid to be checked; the AI verified identity, feasibility and capability; the credential is on the ledger."
-          state={a && (a.builder.verified ? <Tag tone="pass">Builder verified</Tag> : <Tag>Not verified</Tag>)}
-          screen={<ScreenLink href="/builder" label="Builder page" />}
+          status={a && <State tone={a.builder.verified ? "pass" : "neutral"}>{a.builder.verified ? "Verified" : "Not verified"}</State>}
+          screen={<ScreenLink href="/builder" label="builder" />}
         />
         <Scene
           n={2}
+          progress={progress(2)}
           title="Locked state"
-          body="Investors funded the vault, the loan went to the project account, and every milestone sits in its own escrow."
-          state={a && <Tag tone={PROJECT_STATUS[a.project.status].tone}>{PROJECT_STATUS[a.project.status].label}</Tag>}
-          detail={a?.vault && `${a.project.milestones.filter((m) => m.escrow).length} escrows · vault ${formatAmount(a.vault.assetsTotal)} RLUSD · share price ${Number(a.vault.sharePrice).toFixed(4)}`}
-          screen={a && <ScreenLink href={`/projects/${a.project.id}`} label={a.project.name} />}
+          status={a && <State tone={PROJECT_STATUS[a.project.status].tone}>{PROJECT_STATUS[a.project.status].label}</State>}
+          facts={a?.vault ? [`${a.project.milestones.filter((m) => m.escrow).length} escrows`, `Vault ${formatAmount(a.vault.assetsTotal)}`, `Share price ${Number(a.vault.sharePrice).toFixed(4)}`] : undefined}
+          screen={a && <ScreenLink href={`/projects/${a.project.id}`} label="project" />}
         />
         <Scene
           n={3}
-          title="Review evidence and release"
-          body="The inspector's signed audit plus the AI's checks run on the first milestone. All green, so the release service finishes the escrow."
-          state={m1 && <MilestoneTag m={m1} />}
-          detail={m1?.status === "released" && a?.balances ? `Builder balance ${formatAmount(a.balances.builder)} RLUSD` : undefined}
+          progress={progress(3)}
+          title="Release"
+          status={m1 && <MilestoneState m={m1} />}
+          facts={[m1 && `${m1.title} ${formatAmount(m1.amount)}`, m1?.status === "released" && a?.balances ? `Builder balance ${formatAmount(a.balances.builder)}` : undefined]}
           action={a && m1 && RUNNABLE.includes(m1.status) && <ActionButton action={{ kind: "runChecks", projectId: a.project.id, milestoneId: m1.id }}>Run checks</ActionButton>}
-          screen={a && m1 && <ScreenLink href={`/projects/${a.project.id}?m=${m1.id}`} label={m1.title} />}
+          screen={a && m1 && <ScreenLink href={`/projects/${a.project.id}?m=${m1.id}`} label="milestone" />}
         />
         <Scene
           n={4}
+          progress={progress(4)}
           title="Failed check: funds stay locked"
-          body={
-            m2Failed.length
-              ? `${reusedPhoto ? "The second milestone includes a photo reused from another project. " : ""}${m2Failed.length} required check${m2Failed.length === 1 ? " fails" : "s fail"} and the money stays locked.`
-              : "The second milestone includes a photo reused from another project. A required check fails and the money stays locked."
-          }
-          state={m2 && <MilestoneTag m={m2} />}
-          detail={
-            failedCheck &&
-            `${checkName(failedCheck.check)}: ${failedCheck.reason}${m2Failed.length > 1 ? ` (+${m2Failed.length - 1} more failed check${m2Failed.length === 2 ? "" : "s"})` : ""}`
-          }
+          status={m2 && <MilestoneState m={m2} />}
+          facts={[
+            m2 && `${m2.title} ${formatAmount(m2.amount)}`,
+            failedCheck
+              ? `${checkName(failedCheck.check)}: ${failedCheck.reason}${m2Failed.length > 1 ? ` (+${m2Failed.length - 1} more failed check${m2Failed.length === 2 ? "" : "s"})` : ""}`
+              : undefined,
+          ]}
           action={a && m2 && RUNNABLE.includes(m2.status) && m2.status !== "failed" && <ActionButton action={{ kind: "runChecks", projectId: a.project.id, milestoneId: m2.id }}>Run checks</ActionButton>}
-          screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label={m2.title} />}
+          screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label="milestone" />}
         />
       </ol>
 
-      <details className="space-y-4">
-        <summary className="min-h-11 cursor-pointer py-2 text-heading">Extended walkthrough and engineering checks</summary>
-        <p className="text-small text-ink-2">Outside the timed pitch. Use these controls for preparation or technical Q&A.</p>
-        <ol className="divide-y divide-line border-y border-line">
-        <Scene
-          title="Ledger says no"
-          body="A wrong fulfillment is rejected. This tests the escrow condition; it does not prove that the ledger enforces AI checks."
-          state={refused && <Tag tone="fail">Refused by the ledger</Tag>}
-          detail={
-            refused && (
-              <>
-                {refused.result ?? "tecCRYPTOCONDITION_ERROR"} · EscrowFinish <TxLink hash={refused.txHash} />
-              </>
-            )
-          }
-          action={
-            a &&
-            m2?.escrow &&
-            !m2.escrow.finishTx &&
-            !m2.escrow.cancelTx && (
-              <ActionButton variant="danger" action={{ kind: "tryStealDemo", projectId: a.project.id, milestoneId: m2.id }}>
-                {refused ? "Try again" : "Platform tries to release"}
-              </ActionButton>
-            )
-          }
-          screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label={m2.title} />}
-        />
-        <Scene
-          title="Stall: escrow expires, money goes back"
-          body="An escrow passed its CancelAfter. The keeper cancels it, and the project account repays the vault. Investors redeem at maturity."
-          state={b && (bExpired ? <Tag tone="review">{bExpired.status === "expired" ? "Expired" : "Past CancelAfter"}, not cancelled yet</Tag> : bRefunded ? <Tag>Returned to the vault</Tag> : <Tag>Nothing expired</Tag>)}
-          detail={b?.vault && `${b.project.name} vault available ${formatAmount(b.vault.assetsAvailable)} RLUSD`}
-          action={bExpired && <ActionButton action={{ kind: "keeperTick" }}>Keeper tick</ActionButton>}
-          screen={b && <ScreenLink href={`/projects/${b.project.id}`} label={b.project.name} />}
-        />
+      <details className="proof">
+        <summary className="inline-flex min-h-11 items-center gap-1 text-small font-medium text-ink-2 hover:text-ink">
+          <ChevronRight className="proof-chevron size-4 transition-transform duration-150" aria-hidden />
+          Extended walkthrough and engineering checks (outside the timed pitch)
+        </summary>
+        <ol className="border-t border-line">
+          <Scene
+            title="Ledger says no (tests the escrow condition, not the AI checks)"
+            status={refused && <State tone="fail">Refused</State>}
+            facts={refused ? [refused.result ?? "tecCRYPTOCONDITION_ERROR", <TxLink key="tx" hash={refused.txHash} />] : undefined}
+            action={
+              a &&
+              m2?.escrow &&
+              !m2.escrow.finishTx &&
+              !m2.escrow.cancelTx && (
+                <ActionButton variant="danger" action={{ kind: "tryStealDemo", projectId: a.project.id, milestoneId: m2.id }}>
+                  {refused ? "Try again" : "Platform tries to release"}
+                </ActionButton>
+              )
+            }
+            screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label="milestone" />}
+          />
+          <Scene
+            title="Stall: escrow expires, money goes back"
+            status={b && (bExpired ? <State tone="review">{bExpired.status === "expired" ? "Expired" : "Past CancelAfter"}, not cancelled yet</State> : bRefunded ? <State tone="neutral">Returned to the vault</State> : <State tone="neutral">Nothing expired</State>)}
+            facts={b?.vault ? [b.project.name, `Available ${formatAmount(b.vault.assetsAvailable)}`] : undefined}
+            action={bExpired && <ActionButton action={{ kind: "keeperTick" }}>Run keeper tick</ActionButton>}
+            screen={b && <ScreenLink href={`/projects/${b.project.id}`} label="project" />}
+          />
           <Scene
             title="Operator decision"
-            body={
-              review
-                ? `${review.m.title} on ${review.d.project.name} passed its checks below the confidence it needs. Approve or reject with a reason; the reason is attested on-chain.`
-                : "When a milestone comes back below its confidence minimum, the platform operator approves or rejects it with a reason attested on-chain."
-            }
-            state={review ? <MilestoneTag m={review.m} /> : m3 && <MilestoneTag m={m3} />}
+            status={review ? <MilestoneState m={review.m} /> : m3 && <MilestoneState m={m3} />}
+            facts={review ? [review.m.title, review.d.project.name] : m3 ? [m3.title] : undefined}
             action={
               review && platform ? (
                 <DecisionForm projectId={review.d.project.id} milestoneId={review.m.id} actor={platform} />
@@ -169,21 +161,24 @@ export default async function DemoPage() {
                 m3 &&
                 RUNNABLE.includes(m3.status) && (
                   <ActionButton size="sm" variant="secondary" action={{ kind: "runChecks", projectId: a.project.id, milestoneId: m3.id }}>
-                    Run checks on {m3.title}
+                    Run checks
                   </ActionButton>
                 )
               )
             }
-            screen={(review ?? (a && m3 && { d: a, m: m3 })) && <ScreenLink href={`/projects/${(review?.d ?? a)!.project.id}?m=${(review?.m ?? m3)!.id}`} label={(review?.m ?? m3)!.title} />}
+            screen={(review ?? (a && m3 && { d: a, m: m3 })) && <ScreenLink href={`/projects/${(review?.d ?? a)!.project.id}?m=${(review?.m ?? m3)!.id}`} label="milestone" />}
           />
           <Scene
-            title="Builder repays an instalment"
-            body="Repayments flow to the vault through LoanPay. The interest in each one raises the vault's share price."
-            detail={a?.loan && a.vault && `Share price ${Number(a.vault.sharePrice).toFixed(4)} · ${a.loan.paymentRemaining} payments left`}
+            title="Loan repayment"
+            facts={a?.loan && a.vault ? [`Share price ${Number(a.vault.sharePrice).toFixed(4)}`, `${a.loan.paymentRemaining} payments left`] : undefined}
             action={a?.loan && <ActionButton size="sm" variant="secondary" disabled={toCents(a.loan.totalValueOutstanding) <= 0} context={a.project.name} action={{ kind: "repay", projectId: a.project.id, amount: a.loan.periodicPayment }}>Repay {formatAmount(a.loan.periodicPayment)} RLUSD</ActionButton>}
-            screen={a && <ScreenLink href={`/projects/${a.project.id}`} label={a.project.name} />}
+            screen={a && <ScreenLink href={`/projects/${a.project.id}`} label="project" />}
           />
           {onboard && <OnboardScene d={onboard} platform={platform} investor={investor?.address} />}
+          <li className="flex items-center justify-between gap-4 py-4">
+            <span className="text-body font-semibold">Reset</span>
+            <ActionButton variant="secondary" action={{ kind: "resetDemo" }}>Reset demo</ActionButton>
+          </li>
         </ol>
       </details>
     </div>
@@ -197,10 +192,9 @@ function OnboardScene({ d, platform, investor }: { d: ProjectDetail; platform?: 
   const remaining = toCents(p.terms.principal) - raised;
   return (
     <Scene
-      title={`Onboard a project: ${p.name}`}
-      body="Pay the verification fee, run verification (credential on first pass), lock terms (inspector assigned, vault opened), fill the vault, close the loan."
-      state={<Tag tone={PROJECT_STATUS[st].tone}>{PROJECT_STATUS[st].label}</Tag>}
-      detail={st === "funding" || st === "funded" ? `Raised ${formatAmount(raised / 100)} of ${formatAmount(p.terms.principal)} RLUSD` : undefined}
+      title="Onboard project"
+      status={<State tone={PROJECT_STATUS[st].tone}>{PROJECT_STATUS[st].label}</State>}
+      facts={[p.name, st === "funding" || st === "funded" ? `Raised ${formatAmount(raised / 100)} of ${formatAmount(p.terms.principal)}` : undefined]}
       action={
         st === "draft" ? (
           <ActionButton size="sm" context={p.name} action={{ kind: "payFee", projectId: p.id, builder: d.builder.address }}>
@@ -216,62 +210,89 @@ function OnboardScene({ d, platform, investor }: { d: ProjectDetail; platform?: 
           </ActionButton>
         ) : st === "funding" && investor && remaining > 0 ? (
           <ActionButton size="sm" context={p.name} action={{ kind: "invest", projectId: p.id, investor, amount: fromCents(remaining) }}>
-            Investors fill the vault
+            Fill vault
           </ActionButton>
         ) : st === "funded" && platform ? (
           <CloseLoanButton projectId={p.id} actor={platform} opensAt={d.vault?.subscriptionDate} />
         ) : undefined
       }
-      screen={<ScreenLink href={`/projects/${p.id}`} label={p.name} />}
+      screen={<ScreenLink href={`/projects/${p.id}`} label="project" />}
     />
   );
 }
 
+type Progress = "done" | "current" | "todo";
+
+/** Same language as the milestone rail: lime disc once done, ink ring for the next scene, grey ring before. */
+function Marker({ progress }: { progress: Progress }) {
+  const base = "flex size-[22px] shrink-0 items-center justify-center rounded-full [&_svg]:size-3.5 [&_svg]:stroke-[3]";
+  if (progress === "done") return <span className={cn(base, "bg-accent text-ink ring-1 ring-black/10")}><Check aria-hidden /><span className="sr-only">Done</span></span>;
+  if (progress === "current") return <span className={cn(base, "border-2 border-ink")}><span className="size-2 rounded-full bg-ink" /><span className="sr-only">Next</span></span>;
+  return <span className={cn(base, "border-2 border-line-2")} />;
+}
+
+const STATE_TEXT: Record<Tone, string> = { neutral: "text-ink-3", info: "text-ink-2", pass: "text-pass", fail: "text-fail", review: "text-review" };
+
+function State({ tone, children }: { tone: Tone; children: React.ReactNode }) {
+  return <span className={cn("text-small font-medium", STATE_TEXT[tone])}>{children}</span>;
+}
+
+function MilestoneState({ m }: { m: Milestone }) {
+  const s = MILESTONE_STATUS[m.status];
+  return <State tone={s.tone}>{s.label}</State>;
+}
+
 function Scene({
   n,
+  progress,
   title,
-  body,
-  state,
-  detail,
+  status,
+  facts,
   action,
   screen,
 }: {
   n?: number;
+  progress?: Progress;
   title: string;
-  body: string;
-  state?: React.ReactNode;
-  detail?: React.ReactNode;
+  status?: React.ReactNode;
+  facts?: React.ReactNode[];
   action?: React.ReactNode;
   screen?: React.ReactNode;
 }) {
+  const shown = facts?.filter((f) => f !== undefined && f !== false && f !== "");
   return (
-    <li className="grid grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-x-4 py-5">
-      <span className="tabular pt-0.5 text-body text-ink-2">{n ?? ""}</span>
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-3">
-          <h3 className="text-body font-semibold">{title}</h3>
-          {state}
+    <li aria-current={progress === "current" ? "step" : undefined} className="border-b border-line">
+    <div className={cn("-mx-3 grid items-center gap-x-4 gap-y-2 rounded-[12px] px-3 py-4 md:grid-cols-[minmax(0,1fr)_auto]", progress === "current" && "bg-band")}>
+      <div className="flex min-w-0 items-start gap-4">
+        {progress ? <span className="mt-0.5 flex w-[22px] shrink-0 justify-center"><Marker progress={progress} /></span> : null}
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-3">
+            {n !== undefined && <span className="text-body tabular-nums text-ink-3">{n}</span>}
+            <h3 className="text-[19px] leading-7 font-semibold tracking-[-0.01em]">{title}</h3>
+            {status}
+          </div>
+          {shown && shown.length > 0 && (
+            <p className="mt-0.5 flex flex-wrap gap-x-5 text-small text-ink-2 tabular-nums">
+              {shown.map((f, i) => <span key={i}>{f}</span>)}
+            </p>
+          )}
         </div>
-        <p className="mt-1 max-w-[72ch] text-small text-ink-2">{body}</p>
-        {detail && <p className="mt-1.5 text-small font-medium text-ink">{detail}</p>}
       </div>
-      <div className="flex flex-col items-end gap-2">
-        {action}
-        {screen}
-      </div>
+      {(action || screen) && (
+        <div className={cn("flex flex-wrap items-center gap-2 md:justify-end", progress ? "pl-[38px] md:pl-0" : "")}>
+          {action}
+          {screen}
+        </div>
+      )}
+    </div>
     </li>
   );
 }
 
 function ScreenLink({ href, label }: { href: string; label: string }) {
   return (
-    <Link href={href} className="text-caption text-link hover:underline">
+    <Link href={href} className="inline-flex min-h-11 items-center px-1 text-small font-medium text-ink-2 underline decoration-line-2 underline-offset-4 hover:text-ink hover:decoration-ink">
       Show {label}
     </Link>
   );
-}
-
-function MilestoneTag({ m }: { m: Milestone }) {
-  const s = MILESTONE_STATUS[m.status];
-  return <Tag tone={s.tone}>{s.label}</Tag>;
 }

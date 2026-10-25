@@ -37,7 +37,8 @@ const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFra
 export function formatAmount(amount: string | number, opts: { cents?: boolean; compact?: boolean } = {}) {
   const n = typeof amount === "number" ? amount : toCents(amount) / 100;
   if (opts.compact) return compact.format(n);
-  return opts.cents ? usd2.format(n) : usd0.format(n);
+  // One rule everywhere: whole amounts without decimals, fractional amounts at full cent precision.
+  return opts.cents || !Number.isInteger(n) ? usd2.format(n) : usd0.format(n);
 }
 
 export function formatRlusd(amount: string | number, opts: { cents?: boolean; compact?: boolean } = {}) {

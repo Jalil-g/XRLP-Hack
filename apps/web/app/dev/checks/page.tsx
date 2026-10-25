@@ -1,6 +1,6 @@
 // WEB-04 review page: every state of the checks panel, from the mock fixtures. Not linked from the app.
 import { ChecksPanel, type ChecksPanelProps } from "@/components/checks/checks-panel";
-import { PageHeader, Section } from "@/components/ui/layout";
+import { Section } from "@/components/ui/layout";
 import type { Attestation, ChecksStatus, Milestone, MilestoneStatus } from "@/lib/contract";
 import { AI_AGENT, PLATFORM, fakeHash, seed } from "@/lib/mock/fixtures";
 
@@ -47,12 +47,12 @@ export default function DevChecksPage() {
 
   const states: { title: string; note: string; props: ChecksPanelProps }[] = [
     { title: "Ready to run", note: "Evidence and the inspector's signed audit are in; nothing has run.", props: panel(m1, "audited", pending()) },
-    { title: "Pass → released", note: "Foundation: every check green, verdict attested, escrow finished.", props: panel(m1, "released", script.verdicts[m1.id]!(at)) },
+    { title: "Passed", note: "Foundation: every check green, verdict attested, escrow finished.", props: panel(m1, "released", script.verdicts[m1.id]!(at)) },
     { title: "Fail: reused photo", note: "Framing: one red check with the flagged photo; money stays locked.", props: panel(m2, "failed", script.verdicts[m2.id]!(at)) },
     { title: "Fail: missing audit", note: "No signed audit from the assigned inspector, so the suite cannot pass.", props: panel(m3, "failed", script.missingAudit(maple, m3, at), { audits: false }) },
     { title: "Needs review", note: "Roof & dry-in: checks pass but confidence is below the milestone's minimum.", props: panel(m3, "needs_human", script.verdicts[m3.id]!(at)) },
     {
-      title: "Operator approved → released",
+      title: "Operator approved",
       note: "The operator's signed reason shows in the banner.",
       props: panel(m3, "released", script.verdicts[m3.id]!(at), { decision: "North-side windows confirmed by the inspector's photos." }),
     },
@@ -60,12 +60,21 @@ export default function DevChecksPage() {
   ];
 
   return (
-    <div className="space-y-14">
-      <PageHeader title="Checks panel states" description="Every state of the milestone checks panel, rendered from the mock fixtures. For review only; not linked from the app." />
-      {states.map((s) => (
-        <Section key={s.title} title={s.title} aside={s.note}>
-          <ChecksPanel {...s.props} />
-        </Section>
+    <div className="space-y-8">
+      <h1 className="text-[28px] leading-9 font-semibold tracking-[-0.025em]">Checks panel states</h1>
+      <nav aria-label="States" className="flex flex-wrap gap-x-5 gap-y-1">
+        {states.map((state, index) => (
+          <a key={state.title} href={`#state-${index}`} className="inline-flex min-h-11 items-center text-small font-medium text-ink-2 hover:text-ink">
+            {state.title}
+          </a>
+        ))}
+      </nav>
+      {states.map((s, index) => (
+        <div key={s.title} id={`state-${index}`} className="scroll-mt-24">
+          <Section title={s.title} aside={s.note}>
+            <ChecksPanel {...s.props} />
+          </Section>
+        </div>
       ))}
     </div>
   );

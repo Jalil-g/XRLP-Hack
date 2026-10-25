@@ -264,6 +264,17 @@ export const ASSIGNMENTS: Record<string, string[]> = {
 
 let photoN = 2040;
 
+/** Real CC0 site photos from packages/verifier/fixtures/evidence, served by app/fixture-files. Scenes without a matching photo keep the drawn stand-in. */
+const FIXTURE_PHOTOS: Partial<Record<Exclude<Scene, "document">, string[]>> = {
+  excavation: ["maple-st/foundation/foundation-01-wide.jpg"],
+  foundation: ["maple-st/foundation/foundation-01-wide.jpg", "maple-st/foundation/foundation-02-bolts.jpg", "maple-st/foundation/foundation-03-walls.jpg"],
+  framing: ["maple-st/framing/framing-01-wide.jpg", "maple-st/framing/framing-02-corner.jpg", "maple-st/framing/framing-03-wall.jpg"],
+};
+const photoUri = (scene: Exclude<Scene, "document">, filename: string, i: number) => {
+  const set = FIXTURE_PHOTOS[scene];
+  return set ? `/fixture-files/${set[i % set.length]}` : photoArt(scene, filename, i);
+};
+
 function photoEv(milestoneId: string, scene: Exclude<Scene, "document">, geo: { lat: number; lng: number }, takenAt: string, uploadedAt: string, i: number, over: Partial<Evidence["meta"]> & { filename?: string } = {}): Evidence {
   const { filename = `IMG_${photoN++}.jpg`, ...meta } = over;
   const id = `${milestoneId}:photo-${i + 1}`;
@@ -272,7 +283,7 @@ function photoEv(milestoneId: string, scene: Exclude<Scene, "document">, geo: { 
     kind: "photo",
     filename,
     mimeType: "image/jpeg",
-    uri: photoArt(scene, filename, i),
+    uri: photoUri(scene, filename, i),
     sha256: fakeHash(`file:${id}`).toLowerCase(),
     meta: { takenAt, gps: { lat: geo.lat + 0.00007 * (i - 1), lng: geo.lng - 0.00009 * (i - 1) }, perceptualHash: `phash:${id}`, ...meta },
     uploadedAt,

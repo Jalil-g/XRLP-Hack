@@ -1,16 +1,22 @@
 "use client";
 
 // The milestone's test suite, like GitHub checks: outcome banner, the inspector's signed audit, one row per check
-// (failures first), and the attested AI verdict. "Run checks" shows rows running, then resolves them top to bottom.
+// (failures first), the attested AI verdict, and one Proof disclosure for hashes and signers. "Run checks" shows rows
+// running, then resolves them top to bottom; on a release the last row hands off to the page's release motion
+// (ReleaseStage): the banner amount counts up while the hero's escrow counts down and the bar fills lime.
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Address, TxLink } from "@/components/chain";
+import { useStageHold, useTween } from "@/components/project/release-stage";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
 import type { Attestation, CheckResult, ChecksStatus, Evidence, InspectorAudit, Milestone } from "@/lib/contract";
+import { formatDate, toCents } from "@/lib/utils";
 import { AuditRow } from "./audit-row";
 import { CheckRow } from "./check-row";
 import { OutcomeBanner, outcomeOf } from "./outcome-banner";
+import { Proof } from "./proof";
 import type { RowState } from "./status-icon";
 import { VerdictRow } from "./verdict-row";
 
@@ -25,7 +31,7 @@ export type ChecksPanelProps = {
   attestations: Attestation[];
   evidence?: Evidence[];
   builderName: string;
-  /** Builder's RLUSD balance, shown in the released banner so the payout is visible where it happens. */
+  /** Builder's RLUSD balance. Accepted for compatibility; the hero carries the payout now. */
   builderBalance?: string;
   /** Address → display name (inspector on the audit row). */
   names?: Record<string, string>;
@@ -33,7 +39,7 @@ export type ChecksPanelProps = {
   run?: { projectId: string; /** Where to land after the run, e.g. "?m=<id>" so the selection doesn't move. */ pinHref?: string };
 };
 
-export function ChecksPanel({ milestone: m, status, audits, attestations, evidence, builderName, builderBalance, names = {}, run }: ChecksPanelProps) {
+export function ChecksPanel({ milestone: m, status, audits, attestations, evidence, builderName, names = {}, run }: ChecksPanelProps) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const verdictAt = status.verdict?.createdAt;
@@ -61,10 +67,18 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
 
   const latest = (kind: Attestation["kind"]) => [...attestations].reverse().find((a) => a.kind === kind);
   const audit = audits[audits.length - 1];
+  const verdictTx = latest("verdict")?.txHash;
+  const verdictHash = latest("verdict")?.hash;
+  const decisionTx = latest("decision")?.txHash;
   const revealing = revealed < rows.length + 1;
   const failed = results.filter((c) => c.result === "fail").length;
   const total = ran ? results.length : (status.suite?.length ?? 0);
   const canRun = !!run && ["evidence_submitted", "audited", "failed"].includes(m.status);
+  const outcome = revealing && ran ? "running" : outcomeOf(m, running);
+
+  // Hold the page's release motion until the last row has landed, then count the payout up from zero.
+  useStageHold(`checks:${m.id}`, running || (revealing && ran));
+  const { values: [paid = 0] } = useTween([outcome === "released" ? toCents(m.amount) : 0]);
 
   const runChecks = async () => {
     if (!run) return;
@@ -83,19 +97,19 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
   };
 
   return (
-    <div className="overflow-hidden rounded-panel border border-line">
+    <div className="overflow-hidden rounded-panel border border-line bg-surface">
       <OutcomeBanner
-        outcome={revealing && ran ? "running" : outcomeOf(m, running)}
+        outcome={outcome}
         milestone={m}
         builderName={builderName}
-        builderBalance={builderBalance}
+        paidCents={paid}
         total={total}
         failed={failed}
         decision={latest("decision")}
         failedChecks={results.filter((c) => c.result === "fail").map((c) => c.check)}
         action={
           canRun && (
-            <Button variant={m.status === "failed" ? "secondary" : "primary"} onClick={runChecks} disabled={running}>
+            <Button size="lg" variant={m.status === "failed" ? "secondary" : "primary"} className={m.status === "failed" ? "bg-surface hover:bg-band" : undefined} onClick={runChecks} disabled={running}>
               {m.status === "failed" ? "Run again" : "Run checks"}
             </Button>
           )
@@ -112,9 +126,24 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
           <CheckRow key={r.check.check} check={r.check} state={stateAt(i + 1, r.result)} evidence={evidence} />
         ))}
       </ul>
-      {status.verdict && !running && !revealing && (
-        <VerdictRow verdict={status.verdict} attestationTx={latest("verdict")?.txHash} hash={latest("verdict")?.hash} released={m.status === "released"} />
-      )}
+      {status.verdict && !running && !revealing && <VerdictRow verdict={status.verdict} />}
+      <Proof
+        className="border-t border-line px-5"
+        items={[
+          { label: "Escrow created", value: m.escrow?.createTx && <TxLink hash={m.escrow.createTx} /> },
+          { label: "Released", value: m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} /> },
+          { label: "Returned", value: m.escrow?.cancelTx && <TxLink hash={m.escrow.cancelTx} /> },
+          { label: "Escrow expires", value: m.cancelAfter && formatDate(m.cancelAfter) },
+          { label: "Audit", value: audit?.txHash && <TxLink hash={audit.txHash} /> },
+          { label: "Audit signer", value: audit && <Address address={audit.inspector} /> },
+          { label: "Audit note", value: audit?.notes && `“${audit.notes}”` },
+          { label: "Verdict", value: verdictTx && <TxLink hash={verdictTx} /> },
+          { label: "Verdict hash", value: verdictHash && <span className="font-mono text-[12px] break-all">{verdictHash}</span> },
+          { label: "Model", value: status.verdict && (status.verdict.model === "mock" ? "Mock verifier" : status.verdict.model) },
+          { label: "Decision", value: decisionTx && <TxLink hash={decisionTx} /> },
+          { label: "SoV lines", value: (m.sovCodes ?? []).join(", ") },
+        ]}
+      />
     </div>
   );
 }

@@ -1,98 +1,144 @@
-# Drawproof shared frontend direction
+# Drawproof — finance workspace design system
 
-Adopted shared direction · 2026-10-25 · applies to investor, builder, inspector, and demo surfaces. Apple/Notion direction and guided steps confirmed by the user.
+2026-10-25 · Canonical direction for `apps/web` and `apps/inspector`.
 
-## Direction
+This replaces the earlier Apple/Notion white-and-blue polish. The user explicitly requested a more impressive finance platform, referencing Ramp, Robinhood, and Apple. Preserve the existing product and review flows; replace the visual hierarchy, compositions, and component treatment. This is a redesign, not a palette swap.
 
-Apple's clarity and restraint; Notion's readable structure and familiar controls. White canvas, one system type family, precise spacing, blue actions, semantic status colors. The goal is an interface that helps users finish the right task with little interpretation.
+## The point of view
 
-This extends the existing `apps/web/DESIGN.md` across both apps. It does not replace the product flow or authorize a new visual identity. The user's Apple/Notion preference takes precedence over generic advice to make a design more expressive.
+**Capital in focus. Proof within reach.** Drawproof should feel like a serious financial product with the confidence to be memorable. Warm off-white workspaces, precise near-black typography, a dark capital summary, and a sharp chartreuse accent create a recognizable system. Large, beautifully aligned amounts make the stakes tangible. Evidence and transaction receipts make the confidence earned.
 
-Use Impeccable's Operate mode: familiarity, scanability, consistency, and reliable feedback. Reference: https://github.com/pbakaus/impeccable/tree/936867543ac2576920d663cc9803597f6044f3ac/plugin/skills/impeccable (v4.7.1).
+Reference intent (not a claim of a current live-site audit):
 
-## Ownership and evidence
+- [Ramp](https://ramp.com): disciplined workspace navigation, useful density, clear financial hierarchy. Borrow the prioritization, not its logo or exact screens.
+- [Robinhood](https://robinhood.com): confident financial typography, strong contrast, selective vivid color. Borrow immediacy; never add trading theater, fabricated charts, or urgency.
+- [Apple](https://www.apple.com): careful spacing, concise copy, coherent interactions and immaculate detail. Borrow craft, not giant marketing whitespace in a working form.
 
-- Brian: `apps/web`, investor marketplace and portfolio, builder onboarding and evidence, project details/checks, `/demo`. Epic #3; WEB-02 through WEB-12, issues #32–42.
-- Roro: `apps/inspector`, queue, audit form, signed submissions, audit history, pre-construction visits, re-audits. Epic #4; issues #43–45, #78–82.
-- Elmir: co-assigned to web polish #42 and inspector polish #82.
-- Local worktrees: `XRLP-Hack-web01` on WEB-01; `XRLP-Hack-web04` was on `bri-yin/WEB-11-control-room` during this review and contains active edits. No app files were edited for this brief.
-- Reviewed the existing product/design guides, both apps' CSS/layout/header implementations, project details, checks panel, investment dialog, inspector queue and audit/signing code. This is a code-based review, not a completed rendered-app audit.
+One system owns the screen. Do not combine a Robinhood hero, Notion table, and unrelated SaaS sidebar. The visual signature is **a dark money summary above a light, precise working surface**, connected by a labeled milestone rail. It must work on project details, a portfolio, and an inspector audit without turning each page into the same dashboard.
 
-## Shared visual rules
+## Product commitments
 
-- One Drawproof wordmark and solid 56px header. Show the active role, identity, and data environment consistently. Distinguish Devnet from mock data; a network label alone does not establish that the displayed data is live.
-- Content width: 1120px inside an outer 1184px container with 32px desktop gutters. Use 16px mobile gutters. Align header and content edges.
-- System sans for everything except hashes and addresses. Titles 28/34px, section headings 20/26px, body 17/26px, supporting copy 15/22px, metadata 13/18px. Use 40/44px display type sparingly. Tabular numerals for financial values.
-- White `#ffffff` page; secondary surface `#f5f5f7`; primary text `#1d1d1f`; secondary text `#6e6e73`; separators `#e5e5ea`. Pale text must not carry critical instructions.
-- Action blue `#0071e3`; link blue `#0066cc`. Green pass/released, red failed, amber needs review, neutral pending. All states have explicit text; color alone is never the message.
-- 8px control radius, 12px panel radius, 6px status-label radius. Flat page content; shadows reserved for overlays. Group related fields using headings, spacing, and separators. A border may enclose a single object such as a checks panel.
-- 48px section spacing, 16px heading-to-content spacing, 8px within small groups. Table rows at least 48px and expandable for wrapping. Numbers align right.
-- One visually dominant action per current task. Secondary actions remain easy to discover. Main task controls should have 44px touch targets; compact controls must retain usable hit areas.
-- 150–200ms transitions for feedback. Honor reduced motion. No loading choreography, pulsing decorative indicators, or simulated progress.
+Drawproof finances construction projects. A signed inspector audit and automated/AI checks inform the platform release service; the ledger constrains where escrow funds go. An audit signature alone does not release money. Preserve API contracts, evidence-version protections, monetary validation, signing, and transaction reconciliation.
 
-## The interaction rule
+Show project, milestone, active identity and environment around consequential actions. Distinguish mock data from Devnet connectivity. Never invent yield history, customers, performance, site photographs, or claims of autonomous ledger enforcement. Use actual API/fixture data and label mocks. A value that is unavailable is “Not available,” not zero.
 
-At any point users should be able to answer:
+## Palette and semantic tokens
 
-1. Which project and milestone am I working on?
-2. What has happened, and what does that mean for the money or audit?
-3. What should I do next, and why?
+| Purpose | Value | Usage |
+| --- | --- | --- |
+| Workspace | `#F5F5EF` | Warm page canvas; avoid pure white everywhere |
+| Surface | `#FFFFFF` | Working tables, forms, evidence and receipts |
+| Subtle surface | `#EBEDE5` | Quiet inset regions and hover |
+| Ink | `#17251C` | Main text and default primary buttons |
+| Secondary ink | `#59645B` | Supporting text on light backgrounds |
+| Divider | `#DDE2D8` | Section rules and panel boundaries |
+| Strong border | `#8C978C` | Inputs and necessary boundaries |
+| Capital surface | `#17251C` | One dominant financial summary per overview |
+| Capital text | `#F7F8F2` | Amounts and labels on dark surfaces |
+| Capital secondary | `#C2CCBE` | Supporting dark-surface text |
+| Brand accent | `#D8F36A` | Selected progress, one focal action on dark, small brand moments |
+| Accent hover | `#C9E65A` | Hover on accent buttons |
+| Link / focus | `#285D3C` | Underlined inline links; strong light-surface focus |
+| Success | `#226442` / `#E7F2E9` | Confirmed passed/released status |
+| Attention | `#805716` / `#FFF2D6` | Review, expiry, missing requirements |
+| Failure | `#A72E35` / `#FBEAEC` | Failed checks, failed submissions |
+| Information | `#285E8C` / `#EAF1F8` | In progress and factual notices |
 
-Keep the project name, milestone, amount where relevant, and active identity visible near consequential actions. Preserve that context when moving between the web app and inspector app. Keep role-specific navigation concise; the two apps need a shared visual shell, not an identical menu.
+Chartreuse is a brand color, **not a success signal**. Use dark text on it, never white. Default primary buttons are dark on light pages; chartreuse buttons belong on dark surfaces. A hold remains unmistakably amber/red regardless of surrounding brand color. Every status has words and, when useful, a consistent icon. Verify contrast in the rendered states, including disabled, focus, hover, and dark summary metadata.
 
-Use short, named steps for evidence submission, audit signing, and payments. Show the current step in text; completed steps can be revisited without losing entered information. Keep Back visible and predictable. The final review summarizes the actual submission or payment; its primary button names the consequential action. After success, show a receipt and one clear next destination. A review is not a generic “Are you sure?” dialog layered over the flow.
+Canonical implementation: `apps/styles/drawproof.css`. Both apps consume it. Keep inspector compatibility aliases where useful; do not copy competing token sets. No styling in domain-contract `packages/shared`.
 
-Put the current task before history and technical detail. Show financial outcomes beside the checks outcome. Keep transaction proof adjacent to the claim it supports, with raw payloads and extended diagnostics behind disclosure controls.
+## Typography and rhythm
 
-### Investor
+Use one reliable system sans stack (SF Pro/Segoe UI/Roboto), with intentional weight and scale. No remote font dependency needed. Mono is reserved for hashes, addresses, and technical payloads; financial values use the sans with tabular numerals.
 
-Verified projects → project and funding terms → enter amount → review deposit → confirmed deposit and receipt. Explain who is investing, the amount, the project, and withdrawal availability before commitment. Portfolio prioritizes invested amount, current location of funds, and withdrawal timing.
+| Role | Desktop | Mobile | Weight |
+| --- | --- | --- | --- |
+| Main financial amount | 52/56px | 36/40px | 550–600 |
+| Page title | 34/40px | 28/34px | 600 |
+| Section title | 22/28px | 20/26px | 600 |
+| Body / form text | 16/24px | 16/24px | 400 |
+| Controls / table body | 15/22px | 15/22px | 450–500 |
+| Supporting metadata | 13/18px | 13/18px | 400–500 |
+
+Use -0.035em tracking for display amounts, -0.025em for page titles, normal tracking for body. No blanket uppercase navigation or tracked eyebrows. Currency units sit beside amounts at a smaller but readable size. Right-align comparable numeric columns and preserve decimal precision supplied by the domain. Display large values responsively without truncating their meaning.
+
+Spacing: 4, 8, 12, 16, 24, 32, 48, 64px. Use 32–48px between major regions, 16–24px within panels, 8px between label and control. Dense information belongs in orderly rows; breathing room belongs around the decision.
+
+## Shell and component language
+
+- Shared 64px solid header, existing Drawproof wordmark, concise role-specific navigation, clear active state. Identity/role controls and an honest environment label occupy the same positions across both apps. Avoid adding a sidebar solely to look like fintech.
+- Align header and main content to a 1200px maximum content width, 32px desktop and 16px mobile gutters. Working forms can narrow to 760px; detail pages may use an approximately 2:1 content/context split.
+- On mobile keep the brand/account row compact and put navigation in a separate scrollable row. Never hide core destinations inside an unlabeled icon.
+- Panels: 16px radius; financial summary may use 20px. Controls: 10px; badges: 6px. Borders and a very light single shadow may distinguish white surfaces from the warm canvas. No nested card stacks.
+- Buttons: 44px minimum target, solid fill, precise label, small consistent icon only when it explains the action. Secondary: white/surface with visible border. Quiet: text with clear hover. One dominant action per active task region.
+- Fields: persistent labels, 44–48px controls, visible boundaries, inline help/errors. Errors retain all input. Avoid floating labels and placeholder-only instruction.
+- Tables: 52–64px rows, quiet headings, thin separators, intentional numeric alignment. Click targets are explicit; do not nest links inside a full-row overlay. On narrow screens turn project/queue rows into structured lists; reserve horizontal scrolling for inherently wide financial schedules.
+- Dialogs: concise title, persistent project context, readable summary, Back and an explicitly named final action. Focus containment, Escape, focus restoration, keyboard operation, and scroll handling must work.
+- Icons: one existing icon family, 18–20px, consistent stroke. Use for navigation, file type, status, and meaningful actions. Do not put an icon in every heading.
+
+## Compose each screen for its task
+
+### Marketplace
+
+Open with a compact page title and one sentence about verified construction financing. The project collection is the main content, not a giant generic slogan. Give each project a clear name/location, amount raised against principal, rate with its existing meaning, funding state and an explicit destination. A featured project is allowed only with an honest selection rule; do not invent “recommended” or “best return.” Use a strong typography-led lead region and a precise project list rather than a grid of interchangeable metric cards.
+
+### Project detail — the flagship screen
+
+First viewport: breadcrumb/name and state; a dark capital summary with the actual relevant amount, funding/escrow context and valid next action; then a labeled milestone rail leading into the current milestone. Pair the checks/evidence working area with a compact money-and-next-step context column. At 1280×720 the viewer should understand project, milestone, outcome, and financial consequence. Put history, Schedule of Values, and raw payloads below the main task or inside clear disclosures.
+
+The money summary must label what its amount means. “In escrow” is not “Available to withdraw.” Show amounts in separate labeled rows where multiple locations matter. A chart is justified only by real comparable data; otherwise use a labeled proportional funding bar or money-location diagram.
+
+### Portfolio
+
+Lead with the user's actual invested amount and available/locked context. Follow with holdings and their next relevant dates/actions. Avoid invented profit lines, sparkline ornaments, or percent-change badges. Empty portfolios get a useful path to projects, not a wall of zeros.
 
 ### Builder
 
-Project → current milestone → required evidence → submission → checks and outcome. Show missing evidence next to the upload action. A failed check gives a concrete reason and repair action. If running checks may trigger release, explain that consequence before the action.
+Lead with the active project and next required action. Use a milestone rail and a generous upload/evidence working surface. Requirements remain visible before file selection. Distinguish selected, uploading, submitted, checks pending, and failed evidence. Successful submission keeps a durable receipt or confirmation visible even when refreshed data changes the surrounding page.
 
-### Inspector
+### Inspector queue and audit
 
-Assigned audits → project/milestone → evidence and checklist → review → sign and submit → receipt. The review identifies the inspector, project, milestone, and evidence version. Audit submission is not shown as approval or release of funds. Preserve the existing protection against evidence changing during review; a changed evidence bundle requires an explicit re-review.
+Queue: “Assigned audits,” actionable task count, compact inspector credentials, and prioritized rows grouped by required work. This is an inbox for judgment, not an investor dashboard; never put decorative capital totals here.
 
-### Demo operator
+Audit: project/milestone context at top, evidence at useful inspection size, checklist in a clean working surface, and review action in a predictable location. On wide screens evidence and the current checklist may sit side by side. On mobile use a linear sequence. Keep evidence version and signing identity in the review. Changing evidence invalidates the review exactly as the domain requires. History uses the same receipt and status language.
 
-Use the same product shell and components. Sequence controls by the demo script, indicate the current step, and expose prerequisites inline. Separate reset or failure demonstrations from ordinary task actions. Switching roles should preserve the project and milestone rather than require finding them again.
+### Verification, onboarding, site visits, and demo
 
-## Preventing avoidable mistakes
+Carry the same typography, surfaces, controls and state vocabulary to every route, including loading/error/empty states and developer checks gallery. Use focused forms for setup and verification, not oversized dashboard panels.
 
-- Persistent labels, explicit units, specific verbs. Prefer “Sign and submit audit” to “Submit,” and “Deposit 10,000 RLUSD” to “Confirm.”
-- Validate next to the field and retain entered values on errors. Explain an unavailable action beside it rather than relying on a disabled button or hover tooltip.
-- Use a concise review before a payment or signature; do not add confirmation dialogs to ordinary navigation, file selection, or every step.
-- During submission, prevent duplicate activation and show actual progress. An uncertain transaction result must be reconciled before offering a new payment attempt.
-- Use separate states for “Audit submitted,” “Checks passed,” “Release pending,” and “Funds released.” Show release only from confirmed backend/ledger state, not from a green check animation.
-- Label stale data with its last successful update. Preserve the last known result; do not imply a green live state while disconnected.
-- Empty states explain the next step. Failure messages explain what happened, whether anything changed, and the available recovery.
-- Keep keyboard focus visible, return focus after dialogs, announce important asynchronous state changes, and preserve readable contrast. Do not remove essential instructions to achieve a minimal appearance.
+The demo control room follows the canonical 100-second recording story: one release, one hold. A visible current step and project/milestone context guide the operator. Keep reset and engineering controls separate. In projector mode enlarge the evidence, outcome and money; remove low-value chrome, not essential disclosures. Do not change the six-slide pitch or transaction story as part of this redesign.
 
-## Consistency changes to prioritize
+## Review before commitment
 
-1. Match the inspector app to the web app's system font, white canvas, blue actions, typography scale, solid header, and status-label treatment. Replace purely decorative shadowed containers with sections where appropriate.
-2. Standardize header/role/identity/environment display, Button, StatusLabel, Field, PageHeader, Section, EvidenceRow, TransactionLink, and async feedback states. Keep business logic and each app's data access separate.
-3. Move the project-level money summary closer to the active milestone/check outcome; currently the reviewed project page places it below loan details, Schedule of Values, and activity.
-4. Apply the same plain-language state vocabulary across audit submission, checks, release, errors, and the demo. Preserve inspector evidence-version handling.
-5. Treat a shared token file as the first extraction. Reusable UI packaging can follow the existing workspace conventions; do not put styling into `packages/shared`, which owns domain contracts. During any temporary duplication, record one canonical source and compare both copies.
+Evidence: choose → review → submit → receipt. Payments: enter/select → review → pay → receipt. Audits/site visits: complete → review → sign and submit → receipt.
 
-## Avoid
+Back preserves the draft. The review names project, milestone, amount/unit or evidence version, acting identity, and consequence. The final button names the action (“Deposit 10,000 RLUSD”, “Sign and submit audit”). Signing an audit must never be labeled “Release funds.” Keep distinct states for audit submitted, checks passed, release pending and funds released. Explain blocked actions beside them. Reconcile an uncertain payment result before offering retry.
 
-Gradient headlines, translucent/glass headers, neon or glowing indicators, decorative metric tiles, nested card grids, ornamental icons, uppercase eyebrow labels, tiny low-contrast instructions, jargon in primary actions, and animations that imply work has finished before it has.
+## Motion and finish
 
-Use real site evidence where it helps inspection. Do not introduce stock imagery, invented financial numbers, testimonials, or AI mascots as decoration.
+Use 140–200ms transitions for hover, disclosure and focus feedback. A real outcome change can receive one brief emphasis. Reduced motion removes nonessential animation. No staged fake checks, count-up balances, pulsing live dots, confetti, entry choreography, or animations that imply financial completion early. Skeletons follow final content geometry and never resemble actual financial values.
 
-## Review criteria
+## What makes this professional rather than template-generated
 
-- At 1280×720, a viewer can identify the project, selected milestone, result, and money state without hunting or scrolling through technical sections.
-- A new user can identify the next valid action and explain its consequence without coaching. Verify with a quick task walkthrough; visual simplicity alone cannot establish usability.
-- At narrow mobile widths, audit fields remain readable, photos retain useful context, actions remain reachable, and the page does not overflow horizontally. Wide data tables may scroll within a clearly indicated region.
-- Keyboard-only users can complete the central task. Long project names, missing evidence, failed uploads, stale audits, empty queues, submission failures, and pending transactions have deliberate states.
-- A demo handoff from builder to inspector to project outcome retains the same project, milestone, typography, visual hierarchy, and status meanings.
+- Compose around the decision and the actual data, not three equal KPI tiles followed by a generic chart.
+- Create contrast through one dominant amount, deliberate surfaces and controlled density. Do not make everything a hero.
+- No purple/blue gradient backgrounds, glass panels, ambient blobs, neon glows, oversized pill navigation, or repeated icon-card grids.
+- No arbitrary left-border accents or meaningless badges. No status communicated only by color.
+- Use genuine evidence images where available; never decorate projects with unrelated stock buildings or AI site photos.
+- Do not add fake metrics, fabricated activity, aspirational claims or new marketing copy to fill space.
+- Avoid flattening everything into anonymous white sections. Panels, contrast and selective depth are useful when they express real hierarchy.
+- Polish long names, wrapped labels, aligned amounts, empty states, receipts, pending states, validation and failure paths as carefully as the ideal screenshot.
 
-## Confirmed interaction choice
+## Acceptance and agent handoff
 
-The user selected guided steps with a review before signing or paying. Overview and queue screens remain directly scannable. This brief captures the agreed direction. Implementation now shares tokens in `apps/styles/drawproof.css`; the app design files document the shared shell, review steps, and responsive behavior.
+Implementation must visibly replace the old composition, not merely recolor existing classes. Preserve working behavior and both apps' data adapters. Read app AGENTS.md and Next.js version-specific docs. Use Impeccable new-work with this user-selected familiar finance direction; its layout/typeset/harden/polish references are focused passes, not permission to change the product.
+
+1. Establish shared tokens and primitives before app-specific compositions. Update both app DESIGN.md files and `.impeccable/design.json` to the actual built system; retire conflicting Apple/Notion instructions.
+2. Inventory every route in both apps. Check 390px mobile, 768px tablet, and 1280×720 / 1440×900 desktop. No unintended page overflow or obscured task actions.
+3. Exercise investment review/back/receipt, builder evidence review/back/receipt, inspector audit review/back/signature, stale evidence protection, a released milestone and a held milestone. Verify focus and errors, not just screenshots.
+4. Use the collaborative preview first. Capture real rendered screens and review composition, density, contrast and continuity between roles. Run relevant typechecks, tests and builds.
+5. Obtain an independent visual reviewer verdict against this guide. Resolve material findings and recapture. Passing tests alone does not establish design quality.
+6. Commit/push checkpoints; open a PR with screenshots, route coverage, test evidence and honest limitations. Do not merge automatically.
+
+The pitch deck's existing timing and storyline stay authoritative. Its older Apple/Notion palette is historical; any future deck visual revision should use this palette and typographic hierarchy without changing slide content or timing.
