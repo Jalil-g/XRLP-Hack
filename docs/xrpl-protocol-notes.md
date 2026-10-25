@@ -164,6 +164,65 @@ Observations:
   clock). `EscrowCancel` by a non-owner, non-signer account (releaseService) succeeded and returned the 40 RLUSD to
   the SPV; no SPV signature needed to recover funds.
 
+### 1b. XRPL-07 devnet results (finish, cancel, repay, withdraw; 2026-10-25 ~00:22 UTC)
+
+Script: `WALLETS_FILE=… pnpm --filter @xrlp/xrpl spike:release` (`packages/xrpl/scripts/spike-release.ts`, ~7 min). It uses only
+the high-level API (`releaseMilestone`, `tryFinishWithWrongFulfillment`, `cancelExpiredMilestone`, `builderPayToSpv`,
+`repayLoan`, `withdrawFromVault`) on bootstrap wallets, with a fresh project: v2 SPV multisig, closed-ended vault (Subscription
+~90 s, Redemption = Subscription + 330 s), broker with default rates, cover 4400.016744. Terms: **40 000 RLUSD @ 100 %/yr
+(XLS-66 max), 3 × 60 s**, `tfLoanOverpayment`; m1 = 16 000 (finish), m2 = 24 000 (expires, then cancel + refund). We use the
+max rate so a few minutes of interest show up in `AssetsTotal`; a real loan gets the same move at a normal rate over days.
+0 submit retries.
+
+Accounts: SPV `rL5KirT8Ewut4o4QM5rNy9dwZvV4AY9qup` · platform `rKWaFJA6r1TQM9zhBLmAJG4SrNXyaMsmZv` · builder `rfr3qY9cgyy4K31bUoKhiXEmWyPSEyXxUA` ·
+releaseService `rP1ao4CQTF1tfdEvxJGUKCxKSYVh84MJYK` · investor1 `rEyBxq16NH7Lu7TVqd3cBxah4QsWjPtPre` · vault `97BE43F6…A7792` · loan `611C01C4…4B59F`
+
+| step | result | explorer |
+|---|---|---|
+| VaultCreate (closed-ended) / LoanBrokerSet / LoanBrokerCoverDeposit 4400.016744 | `tesSUCCESS` | [2A0B80AF…](https://devnet.xrpl.org/transactions/2A0B80AF3905C6FC392AB16B4C85FB44EB7DDB32E7D1990B6C034A6B4AA469CD) · [4DBE5EB9…](https://devnet.xrpl.org/transactions/4DBE5EB95BCC5AE8B8E13070E2B0928D0D55DD613DFDAF8A99008764B9B27B84) · [3C70F83A…](https://devnet.xrpl.org/transactions/3C70F83A5E747526972B298CF933D28B74D5E3C08B64F210FF97A05E5C294FF6) |
+| VaultDeposit 15 000 + 15 000 + 10 000 | `tesSUCCESS` | [D9B74C21…](https://devnet.xrpl.org/transactions/D9B74C21B4B8E3C4EC79AF2B65339A90C85FC3E1E256B257FC652F7AD7D903EB) · [71936E30…](https://devnet.xrpl.org/transactions/71936E30099F06B2A455F5F11A5C213F18A370ACFD1084C5395753116A6ECB77) · [C1F4B1A3…](https://devnet.xrpl.org/transactions/C1F4B1A3342A9E6D1671647295735E5E1C9CB34885ACE0770DAF9F340F602723) |
+| LoanSet 40 000 (SPV multisig countersign, origination fee 600) | `tesSUCCESS` | [9B1F5283…](https://devnet.xrpl.org/transactions/9B1F528320BE8FCE01A006717FD56E2356CFFA070BF63AF439A4055589291861) |
+| EscrowCreate m1 16 000 / m2 24 000 | `tesSUCCESS` | [46685484…](https://devnet.xrpl.org/transactions/466854843BAA01C877C8BAD9BC680C3687335E6EC49A995CE201A95F5D3E1F51) · [D804AFE3…](https://devnet.xrpl.org/transactions/D804AFE3F4F599E82785359634C54974B181D36710ADA13BE895791797A9DCB2) |
+| `cancelExpiredMilestone` m2 **before** CancelAfter ("63s to go") | **`TooSoonError`**, client-side, releaseService Sequence unchanged | — (not submitted) |
+| `withdrawFromVault` investor1 in the Investment phase ("302s to go") | **`TooSoonError`**, client-side, investor Sequence unchanged | — (not submitted) |
+| `tryFinishWithWrongFulfillment` m1 (platform, random 32-byte preimage) → event `release_refused` | **`tecCRYPTOCONDITION_ERROR`** (resolved, not thrown) | [9F48441B…](https://devnet.xrpl.org/transactions/9F48441B8CAFE999D17AD94C2705A943CF86852BF480A62320B235C6F47B1C47) |
+| `releaseMilestone` m1 by **releaseService**, Fee 36 drops, preflighted → `escrow_finished 16000` (builder 400 → 16 400) | `tesSUCCESS` | [5F205253…](https://devnet.xrpl.org/transactions/5F205253D913C670232267CB039331DA0BA8A6ABDE0CEBB01A342403FC2338BB) |
+| `builderPayToSpv` 13 333.38407 (one periodic payment, rounded up) | `tesSUCCESS` | [04B1AB4F…](https://devnet.xrpl.org/transactions/04B1AB4F0B7B6BB5CF04B3C255AE39B0E54BB1CF053A89F90CC86114696C9157) |
+| `repayLoan` source builder → mode `regular` | `tesSUCCESS` | [2E3A2491…](https://devnet.xrpl.org/transactions/2E3A249141294854EF029F54DAFC9685DC622BAA6A02B675D8ABF24576D6246F) |
+| `repayLoan` 1000 (< one periodic payment) | **`LoanPayAmountError`**, client-side, SPV Sequence unchanged | — (not submitted) |
+| `cancelExpiredMilestone` m2 by releaseService after CancelAfter → `escrow_cancelled 24000` | `tesSUCCESS` | [96C5E876…](https://devnet.xrpl.org/transactions/96C5E87637B2A3F0F8CE22DD05DC7AF3B3496F94D400E533ED3CF6946F67DB63) |
+| `repayLoan` 24 000 source escrow_refund → mode **`overpayment`** | `tesSUCCESS` | [34E51801…](https://devnet.xrpl.org/transactions/34E51801DA4FEC126DC64709ED3B6B52E24DB18FE440229C0A4CCB9E42FDD726) |
+| `withdrawFromVault` investor1 1000 after RedemptionDate | `tesSUCCESS` | [4320B972…](https://devnet.xrpl.org/transactions/4320B972A9C1C818C75B81C0A83070A371E1EA70AB9DB873CF8409B032C92DD1) |
+
+Vault (`getVaultSnapshot`) along the way:
+
+| moment | AssetsTotal | AssetsAvailable | sharePrice |
+|---|---|---|---|
+| after deposits | 40000 | 40000 | 1 |
+| after LoanSet | 40000 | 0 | 1 |
+| after builder LoanPay (one periodic) | **40000.068493** | 13333.376458 | **1.000001** |
+| after refund LoanPay (overpayment 24 000) | **40000.114155** | 37333.371385 | **1.000002** |
+| after investor1 withdraws 1000 | 39000.114155 | 36333.371385 | 1.000002 |
+
+Observations:
+- **Share price moves at LoanPay, not at LoanSet** (again): +0.068493 for the first period's interest (net of the 10 % management fee),
+  +0.045662 at the refund payment. The ratio is tiny because the loan ran only minutes. The mechanism is what we pitch.
+- **Overpayment re-amortizes:** the 24 000 refund paid period 2 (13 333.38) and put the rest into principal.
+  PrincipalOutstanding 26 666.69 → 2 666.74, PaymentRemaining 2 → 1, PeriodicPayment 13 333.38 → 2 666.75. The SPV kept
+  0.00000096657 RLUSD of dust (we round the periodic payment up to 6 dp).
+- **Withdraw burns shares at the current price:** investor1 15 000 000 000 → 14 000 002 854 shares (1000 RLUSD at 1.0000029
+  per share); RLUSD 35 000 → 35 999.99999987428 (IOU precision, not exactly +1000).
+- The finish used preflight's Fee (36 drops for a 36-byte fulfillment) and a LastLedgerSequence 18 ledgers out
+  (spike passes `lastLedgerMargin: 20`; default 60). Submitter = releaseService, as in Direction v2.
+- Client-side refusals were proven by the submitting account's `Sequence` staying put: nothing reached the ledger, so the
+  TooSoon / amount errors cost no fee and leak nothing.
+- **Re-run on main after merging XRPL-06 and the hardening follow-ups (locked `submitMultisigned` for LoanPay, `planLoanClose`)**,
+  2026-10-25 ~00:34 UTC, same numbers, 0 retries: wrong fulfillment [44C99ACC…](https://devnet.xrpl.org/transactions/44C99ACC8C811B0D19F067FC4C52C4ABDD9FEB22BEE26AAFB7C589E81C215C3A) `tecCRYPTOCONDITION_ERROR` ·
+  finish [8175B5F2…](https://devnet.xrpl.org/transactions/8175B5F240E36FC93AB8DC9829F3F135380207A9DAA1F316F544E6F532C8E79F) · builder LoanPay [3F36268E…](https://devnet.xrpl.org/transactions/3F36268EC995EC3076006442D4262CB7805AE964023416C9119D95F6DF103E0D) ·
+  cancel [5206FBF3…](https://devnet.xrpl.org/transactions/5206FBF347522B5C25B1D4FBDAEEB0048954668857ACD6C91A0F1CF0AE75B046) · refund overpayment [FCC906F7…](https://devnet.xrpl.org/transactions/FCC906F7BB8F68F1C1DAF5FD1EC3424BEF2E1C251F9382766F48E51A27179A8A) ·
+  withdraw [D68D6A4C…](https://devnet.xrpl.org/transactions/D68D6A4C58B0A8A1742F90EF609FA2E6A87DE2BC926D945FE372444FE10C598F). Bootstrap first hit
+  `Decimal precision out of range` topping up investor1 from 35 999.99999987428 (left by run 1's withdraw); fixed in `topUpRlusd` (round the shortfall up to 6 dp).
+
 ---
 
 ## 2. (b) LoanSet: multisig borrower and countersigning

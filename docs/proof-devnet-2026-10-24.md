@@ -1,5 +1,7 @@
 # Devnet proof — full money path on real XRPL (2026-10-24, ~22:05–22:25 UTC)
 
+> **Superseded by [proof-devnet-2026-10-25-v2.md](proof-devnet-2026-10-25-v2.md)** (v2 model, merged `main`, all spikes + demo together).
+
 Run by Jalil's agent with `pnpm --filter @xrlp/xrpl demo` from `scaffold/xrpl` (`DEMO_SUBSCRIPTION_S=60 DEMO_M3_CANCEL_S=150`), fresh
 faucet wallets. Every row is a real devnet transaction. **Caveat:** this run still uses the scaffold's v1 signer list (inspectors w2 / AI w1 /
 platform w1) and script-generated conditions; XRPL-05/06 + CORE-12 move it to the v2 model. The ledger mechanics proven here are unchanged by v2.

@@ -84,13 +84,13 @@ describe("route 18: queue", () => {
 });
 
 describe("route 10: submit audit", () => {
+  // Unsigned (core signs with the inspector's demo key). App-signed submissions: test/signing.test.ts.
   it("files the audit: milestone audited, audit_attested event, task leaves the queue", async () => {
     const res = await api.submitAudit({
       projectId: "maple-st-duplex",
       milestoneId: "maple-st-duplex:m1",
       report: report(ADDR.dana, "maple-st-duplex:m1", ["02-100", "03-100", "03-300"]),
       photos: [],
-      signedTxBlob: "1200032200000000",
     });
     assertExact(SubmitAuditResult, res);
     assert.equal(res.milestone.status, "audited");

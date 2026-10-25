@@ -173,14 +173,13 @@ async function runDemo() {
     log.info(`M2 escrow seq ${e2.offerSequence} still on-ledger: ${(await escrowStillOpen(e2)) ? "yes, locked" : "NO?!"}`);
 
     log.say("5. Ledger says no: the platform tries to release M2 anyway", "Here's us trying to release it anyway. The ledger refuses.");
-    await tryWrongFulfillment(log, e2);
+    await tryWrongFulfillment(log, project, e2);
     log.info(`M2 escrow still on-ledger: ${(await escrowStillOpen(e2)) ? "yes" : "NO?!"}`);
 
     log.say(
       `6. Stall: milestone 3 CancelAfter (${e3.cancelAfter}) passes -> EscrowCancel -> refund LoanPay`,
       "If a project stalls, the escrow expires, the money can only go back to the project account, which repays the vault.",
     );
-    // after XRPL-07 merge: cancelExpiredMilestone keeps this shape.
     const can = await cancelExpiredMilestone({ projectId, milestoneId: m3.id, escrow: e3.escrow, cancelAfter: e3.cancelAfter, wait: true, amount: m3.amount, onWait: tick("CancelAfter") });
     process.stdout.write("\n");
     log.rec(`EscrowCancel m3 ${m3.amount} -> SPV`, can.tx);
@@ -190,7 +189,7 @@ async function runDemo() {
     if (Number(before.spvRlusd) + 1e-6 < periodic) {
       log.note(`refund ${before.spvRlusd} < periodic payment ${periodic}: an overpayment LoanPay would fail tecINSUFFICIENT_PAYMENT; skipping (raise DEMO_PAYMENT_TOTAL)`);
     } else {
-      await spvLoanPay(log, project, { amount: before.spvRlusd, mode: "overpayment", label: "escrow refund" });
+      await spvLoanPay(log, project, { amount: before.spvRlusd, mode: "overpayment", source: "escrow_refund", label: "escrow refund" });
     }
 
     log.say("7. Snapshots", "Share value rises as interest is repaid; repayments turn principal back into withdrawable liquidity.");
@@ -203,7 +202,7 @@ async function runDemo() {
       await waitForLedgerTimeAfter(isoTimeToRippleTime(setup.redemptionAt) - 1, tick("RedemptionDate"));
       process.stdout.write("\n");
       const amt = Math.min(1000, Math.floor(Number(after.vault?.assetsAvailable ?? 0))).toString();
-      // after XRPL-07 merge: withdrawFromVault throws TooSoonError before RedemptionDate.
+      // withdrawFromVault throws TooSoonError before RedemptionDate (XRPL-07); we waited for it.
       const wd = await withdrawFromVault({ projectId, vaultId: setup.vaultId, investor: "investor1", amount: amt });
       log.rec(`VaultWithdraw investor1 ${amt}`, wd.tx);
     } else {

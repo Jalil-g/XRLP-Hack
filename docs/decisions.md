@@ -34,7 +34,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   and builder capability; inspectors only when the AI escalates (`needs_human` → pre-construction site visit). `VERIFIED_BUILDER` on first pass. (Jalil)
 - [10-24] **Schedule of Values** (AIA G702/G703) defines milestones for any project size; residential templates are pre-filled SoVs. Demo = Maple St. (Jalil)
 - [10-24] **Inspector assignment fully automated by AI** from a verified panel (`VERIFIED_INSPECTOR`), at lock-terms. Roadmap: robots/sensors through the same signed-audit interface. (Jalil)
-- [10-24] **No hardware-wallet (Ledger device) work.** Software inspector key; `packages/ledger-signer` keeps the interface. (Jalil)
+- [10-24] **No hardware-wallet (Ledger device) work.** Software inspector key; `packages/ledger-signer` keeps the interface (→ renamed `packages/attest-signer`, device code removed, INS-04). (Jalil)
 - [10-24] Sponsor stance: Lending & Borrowing track; AWS only as Bedrock provider swap if confirmed at booth; no Quicknode (no devnet), no Mastercard AP4M. (Jalil)
 - [10-24] Marketplace framing kept: KYC'd investors choose verified projects; institutional lender = same rail, one depositor. (Jalil)
 - [10-24] **Name: Drawproof.** (Jalil)
@@ -60,6 +60,8 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Default escrow `CancelAfter` = **maturity − one payment interval** (was now + termDays, which equals maturity and would now be rejected) — a refunded escrow still lands in time to pay the last installment. Callers (core, demo, prestage) should pass `cancelAfters` explicitly. (Jalil's agent, XRPL-06)
 - [10-25] `generateMilestoneCondition` dropped from the public API (only a `@deprecated` re-export so `scripts/demo.ts` compiles); tests/spikes use `packages/xrpl/test/support/conditions.ts`. Remove the deprecated export once demo.ts and the G-owned spikes switch. (Jalil's agent, XRPL-06)
 - [10-25] Batch atomic close: devnet rippled 3.4.1 rejects LoanSet (all Lending/SAV types) as a Batch inner tx with `temINVALID_INNER_BATCH` until `LendingProtocolV1_2`. So `closeLoanAtomic` defaults to mode "escrows": countersigned LoanSet, then one `tfAllOrNothing` Batch of every milestone EscrowCreate from the SPV (2 txs, SPV liquid ~2 ledgers). Mode "full" (platform outer, LoanSet + escrows, SPV BatchSigner) is implemented and offline-tested for when V1_2 lands. Not wired into `closeLoanAndCreateEscrows` yet (api.ts owned elsewhere). See protocol-notes §2d (Jalil's agent, XRPL-13)
+- [10-25] XRPL-07 money-out defaults: finish/cancel submitted by `releaseService`; EscrowFinish LLS margin 60 ledgers, so preflight wants ≥ 300 s to CancelAfter (real escrows are days away; spikes pass `lastLedgerMargin: 20`); `repayLoan` auto-mode = `late` if past due, `overpayment` only for `source: "escrow_refund"` above one periodic payment, else `regular` (builder repayments never silently prepay principal); amounts are checked client-side (≥ one periodic payment rounded up, ≤ total outstanding) → `LoanPayAmountError` code `validation`, nothing submitted; cancel/withdraw timing is checked against validated-ledger close time → shared `TooSoonError` before submitting; `builderPayToSpv` returns no ChainEvent until shared has a kind for it; the wrong-fulfillment demo refuses a missing/expired escrow so a demo click can't waste the beat on `tecNO_PERMISSION` — why: a failed finish leaks the preimage and a rejected LoanPay/withdraw costs a demo minute, so refuse early with a typed error (Jalil's agent, XRPL-07)
+- [10-25] Merged `main` @ e67052a verified on devnet end-to-end (bootstrap ×2 idempotent, demo, 5 spikes, compliance, stress, withdraw) — all green, proof in `docs/proof-devnet-2026-10-25-v2.md`. Gaps: demo still uses v1 `attestApproval`; `setupProjectOnChain` creates public vaults (no DomainID); `finishEscrow` always uses the 120 s preflight margin; submit lock ≈ 6.6 s/tx/account (Jalil's agent, devnet verification)
 
 ## Inspector lane (Roro's agent, challenge freely)
 
@@ -79,6 +81,19 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Inspector mock Maple St moved to the verifier's site (41 Maple St, Brooklyn, 40.6795/-73.962, r=120 m) — the demo photos are
   geotagged there. **Open:** core's demo scenario still puts Maple St in Beacon, NY (41.5048/-73.9696); with the verifier's photos that
   fails `gps_within_site`. Core + verifier should agree on one site.
+- [10-25] **Inspector audit attestation = the XRPL-08 Payment format** (Roro): 1-drop Payment inspector → project SPV, one memo
+  `xrlp/attest/v1` `{v:1, kind:"audit", milestoneId, hash}`, signed in the inspector app (`@xrlp/attest-signer`) and sent as route 10
+  `signedTxBlob`. The v1 `AccountSet` / `xrlp/attestation/v1` builder is gone. Test: an app-signed blob passes packages/xrpl
+  `verifyAttestBlob`; devnet smoke (`pnpm --filter @xrlp/attest-signer smoke:devnet`) tesSUCCESS.
+- [10-25] Audit memo `hash` = `auditHash(audit)`: sha256 of canonical JSON (keys sorted, no whitespace) of
+  `{v:1, milestoneId, inspector, evidenceBundleHash, checklist (sorted by sovCode; note trimmed, omitted if empty), notes (trimmed),
+  photos: sorted sha256 of the uploaded files}` — only what core receives and keeps from route 10, none of what core assigns
+  (`txHash`, `at`, photo ids). Proposed on #53 for core to recompute and compare.
+- [10-25] Inspector keys: mock mode signs with ed25519 keys from **public** entropy `sha256("drawproof/mock/inspector-<name>")[0..16]`
+  (worthless by design). http mode: the inspector pastes their devnet seed once; it stays in that browser's localStorage, only the signed
+  blob leaves. No key → the audit is filed unsigned and core signs with the demo key (05-api §1), labelled as such in the UI.
+  Seeds are never put in `NEXT_PUBLIC_*` env (they would ship in the JS bundle). Autofill uses `XRPL_WS_URL`, `LastLedgerSequence` +75.
+- [10-25] `@xrlp/attest-signer` tests run with `node --import tsx` (like core/verifier) because the parity test imports `@xrlp/xrpl`.
 
 - [10-25] Prestage (XRPL-11) = three fresh projects per run, pipelined C → B → A (C first: it must wait for its RedemptionDate). A: 6 × 30-day loan, escrow CancelAfter +30/60/90 d. B: M1 released, **M2 (12k) is the stall escrow** (CancelAfter past before the file is written), 12 × 30-day loan so the refund LoanPay is on time and ≥ one periodic payment. C: 2 × 240 s loan (XRPL-06 needs PaymentTotal ≥ 2 and CancelAfter < maturity: C's escrows cancel at +360 s), all escrows released, builder → SPV → two LoanPays pay it off, then wait for RedemptionDate. `--only A,B` re-stages a subset and keeps the rest of `prestage.json` (a rehearsal consumes A's M1/M2 and B's expired escrow; C stays valid). (Jalil's agent, XRPL-11)
 - [10-25] `.data/prestage.json` shape = `PrestageFile` in `packages/xrpl/src/prestage-types.ts` (exported, with `parsePrestageFile`); preimages only in `.data/prestage-preimages.json` / `.data/demo-preimages.json` (mode 600, never printed, old entries kept); the writer validates that the file has no preimage/fulfillment/seed field. (Jalil's agent, XRPL-11)

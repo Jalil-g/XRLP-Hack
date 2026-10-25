@@ -11,7 +11,9 @@ import type {
   SubmitAuditResult,
   TaskNeeds,
 } from "../types.ts";
-import { evidenceBundleHash } from "../audit.ts";
+import { ATTEST_AMOUNT_DROPS, auditHash, parseAttestationTx, verifySignedBlob } from "@xrlp/attest-signer";
+import { decode, hashes, type Transaction } from "xrpl";
+import { evidenceBundleHash, sha256Hex } from "../audit.ts";
 import * as fx from "./fixtures.ts";
 
 export class MockError extends Error {
@@ -149,7 +151,10 @@ export async function submitAudit({ projectId, milestoneId, report, photos, sign
     throw new MockError("validation", "evidenceBundleHash does not match the builder evidence on file; reload and re-review", 400);
   }
 
-  const txHash = fx.fakeHash(signedTxBlob ? `blob:${signedTxBlob}` : `audit:${milestoneId}:${report.inspector}:${report.at}`);
+  if (signedTxBlob) await verifyAttestation(signedTxBlob, report, photos, milestone);
+
+  // App-signed: the attestation's hash is the signed tx's hash, as on devnet. Unsigned: core would sign with the demo key.
+  const txHash = signedTxBlob ? hashes.hashSignedTx(signedTxBlob) : fx.fakeHash(`audit:${milestoneId}:${report.inspector}:${report.at}`);
   const audit: InspectorAudit = {
     ...report,
     // Core stores the uploads and serves them at /api/files/:id; mock keeps the browser's object URLs instead.
@@ -171,4 +176,32 @@ export async function submitAudit({ projectId, milestoneId, report, photos, sign
   const event = fx.chainEvent({ projectId, milestoneId, kind: "audit_attested", actor: report.inspector, at: report.at, txHash });
   state.events.push(event);
   return settle({ milestone, audit, events: [event] });
+}
+
+/**
+ * What core does with `signedTxBlob` (packages/xrpl verifyAttestBlob + the audit binding): a valid single signature by the
+ * assigned inspector on a 1-drop Payment to this milestone's SPV, whose memo commits to exactly this audit. Photo hashes
+ * come from the uploaded bytes, as core derives them, not from the report.
+ */
+async function verifyAttestation(blob: string, report: InspectorAudit, photos: Blob[], milestone: Milestone) {
+  const bad = (why: string): never => {
+    throw new MockError("validation", `signedTxBlob rejected: ${why}`, 400);
+  };
+  let tx: Transaction & { TxnSignature?: string; Signers?: unknown };
+  try {
+    tx = decode(blob) as unknown as typeof tx;
+    verifySignedBlob(blob);
+  } catch (err) {
+    return bad((err as Error).message);
+  }
+  if (tx.TransactionType !== "Payment" || tx.Amount !== ATTEST_AMOUNT_DROPS || tx.Flags) bad("not a 1-drop attestation Payment");
+  if (tx.Signers || !tx.TxnSignature) bad("must be single-signed");
+  if ((tx.Memos ?? []).length !== 1) bad("exactly one memo expected");
+  const att = parseAttestationTx(tx);
+  if (!att) return bad("no valid xrlp/attest/v1 memo");
+  if (att.signer !== report.inspector) bad(`signed by ${att.signer}, report is from ${report.inspector}`);
+  if (milestone.escrow && att.destination !== milestone.escrow.owner) bad(`sent to ${att.destination}, not the project account ${milestone.escrow.owner}`);
+  if (att.kind !== "audit" || att.milestoneId !== milestone.id) bad(`memo is ${att.kind} for ${att.milestoneId}`);
+  const photoHashes = await Promise.all(photos.map(async (p) => ({ sha256: await sha256Hex(await p.arrayBuffer()) })));
+  if (att.hash !== (await auditHash({ ...report, photos: photoHashes }))) bad("memo hash does not match this audit");
 }
