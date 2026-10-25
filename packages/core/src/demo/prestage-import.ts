@@ -26,9 +26,11 @@ import {
   type PrestageProject,
 } from "@xrlp/xrpl";
 import { explorerTxUrl, type Builder, type ChainEvent, type ChainEventKind, type Inspector, type LedgerPort, type Milestone, type Project, type XrplAddress } from "@xrlp/shared";
+import { FakeClock } from "../clock.ts";
 import { DomainError } from "../errors.ts";
+import { FakeVerifier } from "../fakes/fake-verifier.ts";
 import { resolveDataDir } from "../file-store.ts";
-import { sha256Hex } from "../ids.ts";
+import { canonicalJson, sha256Hex } from "../ids.ts";
 import { fromMicro, sumMicro, toMicro } from "../money.ts";
 import type { PreimageEntry, PreimageVault } from "../release-service.ts";
 import type { CoreService, EvidenceFile } from "../service.ts";
@@ -206,6 +208,7 @@ export async function planPrestageImport(opts: ImportPrestageOptions): Promise<{
     ids[p.key] = p.projectId;
     addProject(db, p, builder);
   }
+  await addVerifications(db, builder);
 
   // Donor photos for the cross-project duplicate check: released milestones' evidence (C framing, else B's first).
   let reusedPhoto: EvidenceFile | undefined;
@@ -349,6 +352,23 @@ function addProject(db: DbState, p: PrestageProject, builder: Builder): void {
   for (const inv of p.investments) db.investments.push({ projectId: p.projectId, investor: inv.investor, amount: inv.amount, tx: inv.txHash, at: fileAt });
   db.repayments.push(...repayments(p, loanSetAt));
   db.chainEvents.push(...chainEvents(p, project, loanSetAt));
+}
+
+/**
+ * Route 5's report for every imported project (beat 1: identity / feasibility / capability). The XRPL prestage verifies
+ * off-core and attests no project verification, so the report comes from core's deterministic mock verifier (the one fake
+ * mode's maple-st seed goes through) over the imported documents, SoV and builder, dated at the import's onboarding time.
+ * No txHash: nothing was attested for it. A non-pass report would contradict the imported `escrowed`/`completed` status.
+ */
+async function addVerifications(db: DbState, builder: Builder): Promise<void> {
+  for (const project of db.projects) {
+    const meta = db.projectMeta.find((m) => m.projectId === project.id)!;
+    const verifier = new FakeVerifier(new FakeClock(meta.verifiedAt ?? meta.createdAt));
+    const verification = await verifier.verifyProject({ project, builder, sov: project.sov ?? [], documents: meta.documents });
+    if (verification.decision !== "pass") throw new Error(`prestage import: mock verification of ${project.id} is ${verification.decision} (${verification.summary})`);
+    db.verifications.push({ ...verification, projectId: project.id, verificationHash: sha256Hex(canonicalJson(verification)) });
+    builder.riskTier = verification.riskTier; // as route 5 does on a pass
+  }
 }
 
 const loanPayAmount = (step: string) => /^LoanPay\s+(\d+(?:\.\d+)?)/.exec(step)?.[1];

@@ -291,6 +291,24 @@ describe("CORE-07 importPrestage (offline)", () => {
     const bFinish = db.chainEvents.find((e) => e.projectId === B.id && e.kind === "escrow_finished");
     assert.equal(bFinish?.milestoneId, B.milestones[0]!.id);
     assert.equal(db.chainEvents.find((e) => e.projectId === B.id && e.kind === "verdict_attested")?.milestoneId, B.milestones[0]!.id);
+
+    // route 5's report for each project (beat 1): identity / feasibility / capability, all pass
+    assert.deepEqual(db.verifications.map((v) => [v.projectId, v.decision]), [[A.id, "pass"], [B.id, "pass"], [C.id, "pass"]]);
+    const va = db.verifications[0]!;
+    assert.deepEqual(va.identity.map((c) => c.check), ["license_valid", "insurance_active", "entity_registered"]);
+    assert.ok(va.feasibility.some((c) => c.check === "sov_sums_to_principal" && c.result === "pass"));
+    assert.ok(va.capability.length > 0 && va.verificationHash.length === 64 && va.txHash === undefined);
+    assert.equal(db.builders[0]!.riskTier, va.riskTier);
+  });
+
+  it("beat 1: Project A's detail (route 2) carries the verification report", async () => {
+    const f = fixture();
+    const { svc } = devnetCore(f);
+    await svc.resetDemo({});
+    const a = await svc.getProject(f.file.projects.A!.projectId);
+    assert.equal(a.verification?.decision, "pass");
+    for (const part of ["identity", "feasibility", "capability"] as const) assert.ok(a.verification![part].length > 0 && a.verification![part].every((c) => c.result !== "fail"), part);
+    assert.match(a.verification!.summary, /Hudson Valley Builders verified for Maple St Duplex/);
   });
 
   it("imports each preimage keyed {projectId, milestoneId} like conditionsForClose, released ones marked", async () => {
