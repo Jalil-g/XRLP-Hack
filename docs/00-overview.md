@@ -1,5 +1,7 @@
 # 00 — Drawproof: technical architecture summary (one page, read first)
 
+> **Adopted pitch (2026-10-25):** [six-slide storyline](08-pitch-storyline.md), [100-second recorded demo](04-demo-script.md), [deck style guide](ideas/pitch-3min-style-guide.md), and [Claude PowerPoint prompts](ideas/pitch-3min-claude-prompts.md). These supersede older presentation timing and slide numbers below.
+
 > v2, 2026-10-24. Details: `02-product.md` (flow), `03-architecture.md` (ledger design), `05-api.md` (contract), `06-tickets.md` (work),
 > `decisions.md` (why). Metaphor: **a GitHub release pipeline for construction draws.**
 

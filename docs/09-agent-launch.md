@@ -1,5 +1,7 @@
 # 09 — Launching everyone's agents (direct steps)
 
+> **Adopted pitch (2026-10-25):** [six-slide storyline](08-pitch-storyline.md), [100-second recorded demo](04-demo-script.md), [deck style guide](ideas/pitch-3min-style-guide.md), and [Claude PowerPoint prompts](ideas/pitch-3min-claude-prompts.md). These supersede older presentation timing and slide numbers below.
+
 > Do this in order. 20 minutes for the whole team. Each person runs their own AI (Claude Code, Codex, Cursor…) in their own git worktree.
 
 ## 0. Status at T+0 (done 2026-10-24, nothing to wait for)
@@ -54,11 +56,11 @@ Ticket: <paste the GitHub issue body>
 | **Roro** | `apps/inspector`, `attest-signer` (rename of `ledger-signer`) | **PITCH-01** #64 (ask rubric, demo length, AWS/Quicknode at booths), **INS-01** #43 scaffold | INS-02 #44 queue, INS-03 #45 audit form | INS-04 #78 signed submission, INS-05 #79 audit history; then take S tickets from others (lightest lane) |
 
 Pitch tickets run alongside (light AI use): PITCH-06 deck (Bri), PITCH-05/07 fact-check + FAQ (Elmir), PITCH-04 submission (Jalil),
-PITCH-08 backup video (Roro), PITCH-02/03 script + rehearsals (Sean). DEMO-01 #73 "Ledger says no" = Sean (route 23) + Bri (button).
+PITCH-08 primary 100-second recording (Roro), PITCH-02/03 script + rehearsals (Sean). DEMO-01 #73 "Ledger says no" = Sean (route 23) + Bri (button); engineering/Q&A only, outside the timed pitch.
 
 ## 5. Checkpoints (Sean posts a report on a pinned "Checkpoints" issue)
 T+1h spikes answered · **T+6h both apps click the whole flow on fakes** · **T+14h same flow on devnet from the UIs** · T+24h feature complete + rehearsal 1 ·
-T+28h hardening + backup video · T+32h code freeze (`demo-v1`) · submit ≥ 30 min early.
+T+28h hardening + primary recording · T+32h code freeze (`demo-v1`) · submit ≥ 30 min early.
 
 ## 6. If something slips
 Cut in this order (never the money shot or the fraud beat): WEB-02 marketplace, WEB-06 invest UI (pre-stage deposits), WEB-07 portfolio,
@@ -131,7 +133,7 @@ VERIFIER_MODE=mock must work with no API key. Branch elmir132/<ID>-<slug>, PR in
 You are my coding agent on Drawproof, a 36-hour XRPL hackathon project (repo cloned; start from main in a fresh worktree).
 Lane: apps/web only (I am @bri-yin, owner of area:web). No business logic in the app; contract changes → comment on issue #53.
 First read, in order: AGENTS.md, docs/00-overview.md, docs/decisions.md ("Direction v2"), docs/02-product.md, docs/05-api.md §2 (routes 1–23
-and the types), docs/04-demo-script.md, docs/08-pitch-storyline.md §2–3 (slides, demo beats, the GitHub-checks metaphor), the area:web
+and the types), docs/04-demo-script.md, docs/08-pitch-storyline.md (canonical six slides), docs/ideas/pitch-3min-style-guide.md, docs/ideas/pitch-3min-claude-prompts.md, docs/ideas/shared-frontend-style.md, the area:web
 section of docs/06-tickets.md, apps/web/lib/api.ts, lib/mock-data.ts, app/projects/[id]/page.tsx, components/project/*.
 Context: the scaffold UI is good-looking but encodes the OLD model: approvals-panel/escrow-guarantee talk about signer weights and "the AI
 as second signer"; mock-data.ts (1,100 lines) holds business logic (platform auto-approves, share price rises on repay, "1,284 indexed photos");
@@ -153,7 +155,7 @@ Lane: apps/inspector (new Next.js app, port 3001) and packages/attest-signer (re
 apps/web (copy the UI kit if needed). Contract changes → comment on issue #53.
 First read, in order: AGENTS.md, docs/00-overview.md, docs/decisions.md ("Direction v2"), docs/02-product.md (flow step 7), docs/03-architecture.md
 (§Release = the milestone test suite, §Inspector assignment), docs/05-api.md §2 routes 2, 10, 18 and the InspectorAudit / InspectorTask types,
-docs/04-demo-script.md beat 3, the area:inspector section of docs/06-tickets.md, packages/attest-signer/src/ (SoftwareSigner, buildAttestationTx).
+docs/04-demo-script.md inspector recording segment and docs/ideas/shared-frontend-style.md, the area:inspector section of docs/06-tickets.md, packages/attest-signer/src/ (SoftwareSigner, buildAttestationTx).
 Context: Direction v2 means the inspector does NOT hold a release key and there is NO hardware-wallet work (INS v1 tickets #46–#52 are closed).
 The inspector is the eyes on site: the app shows assigned audits, a checklist per Schedule-of-Values line (done / partial / not_done + note),
 photo upload with EXIF preview, the builder's evidence side by side, and submits a signed InspectorAudit (memo {kind:"audit", milestoneId,
