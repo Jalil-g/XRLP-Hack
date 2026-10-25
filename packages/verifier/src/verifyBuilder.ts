@@ -2,7 +2,7 @@
 // (MOCK) license/insurance registry. Output feeds the VERIFIED_BUILDER credential decision.
 // TODO(live): in VERIFIER_MODE=live, extract fields from PDF/photo docs with Claude (same pattern as llm/live.ts).
 //             Today only text/JSON documents are parsed (deterministically) in both modes.
-import type { Builder, CheckResult, Evidence, RiskTier } from "@xrlp/shared";
+import type { Builder, BuilderDocument as SharedBuilderDocument, CheckResult, Evidence, RiskTier } from "@xrlp/shared";
 import { isTextLike, loadEvidence, loadEvidenceBytes } from "./meta.ts";
 import { normalizeName, round2, toCents } from "./util.ts";
 
@@ -61,14 +61,7 @@ export interface VerifyBuilderInput {
 }
 
 /** Mirrors core's VerifierPort BuilderDocument. */
-export interface BuilderDocument {
-  kind: "license" | "insurance" | "track_record" | "identity" | "other";
-  filename: string;
-  /** Path relative to DATA_DIR, absolute path, or data: URL. */
-  uri?: string;
-  /** Structured fields from (mock) data sources, e.g. { licenseNumber, holder, expires }. */
-  fields?: Record<string, string>;
-}
+export type BuilderDocument = SharedBuilderDocument;
 
 export interface BuilderVerdict {
   /** core VerifierPort shape: ok = decision === "pass". */
@@ -157,14 +150,15 @@ export async function verifyBuilder(input: VerifyBuilderInput): Promise<BuilderV
   // 1. registry: license
   const lic = await registry.lookupLicense(builder.licenseNumber);
   if (!lic) add("license_registry_lookup", "fail", `${tag} License ${builder.licenseNumber} not found.`);
-  else if (lic.status !== "active") add("license_registry_lookup", "fail", `${tag} License ${lic.licenseNumber} is ${lic.status} (expires ${lic.expiresOn}).`);
+  else if (lic.status !== "active" || !Number.isFinite(Date.parse(lic.expiresOn)) || Date.parse(lic.expiresOn) < now) add("license_registry_lookup", "fail", `${tag} License ${lic.licenseNumber} is inactive or expired (expires ${lic.expiresOn}).`);
   else if (!sameName(lic.holderName, builder.name)) add("license_registry_lookup", "fail", `${tag} License holder "${lic.holderName}" ≠ builder "${builder.name}".`);
   else add("license_registry_lookup", "pass", `${tag} License ${lic.licenseNumber} active for ${lic.holderName} until ${lic.expiresOn}.`);
 
   // 2. registry: insurance
   const ins = await registry.lookupInsurance(builder.insurancePolicy);
   if (!ins) add("insurance_registry_lookup", "fail", `${tag} Policy ${builder.insurancePolicy} not found.`);
-  else if (Date.parse(ins.expiresOn) < now) add("insurance_registry_lookup", "fail", `${tag} Policy ${ins.policyNumber} expired ${ins.expiresOn}.`);
+  else if (!Number.isFinite(Date.parse(ins.expiresOn)) || Date.parse(ins.expiresOn) < now) add("insurance_registry_lookup", "fail", `${tag} Policy ${ins.policyNumber} expired or invalid (${ins.expiresOn}).`);
+  else if (!sameName(ins.insuredName, builder.name)) add("insurance_registry_lookup", "fail", `${tag} Insurance is for another entity.`);
   else if (ins.generalLiabilityUsd < minLiab) add("insurance_registry_lookup", "fail", `${tag} GL coverage $${ins.generalLiabilityUsd.toLocaleString("en-US")} < required $${minLiab.toLocaleString("en-US")}.`);
   else add("insurance_registry_lookup", "pass", `${tag} Policy ${ins.policyNumber}: $${ins.generalLiabilityUsd.toLocaleString("en-US")} GL, valid until ${ins.expiresOn}.`);
 
@@ -189,10 +183,12 @@ export async function verifyBuilder(input: VerifyBuilderInput): Promise<BuilderV
     const pol = field(insDoc.text, /policy\s*(?:no\.?|number|#)\s*[:#]?\s*([A-Z0-9-]+)/i);
     const insured = field(insDoc.text, /insured\s*:\s*(.+)/i);
     const limit = field(insDoc.text, /(?:general\s+liability|each\s+occurrence|limit)[^\d$]*\$?\s*([\d,]+)/i);
+    const exp = field(insDoc.text, /expir\w*\s*:?\s*(\d{4}-\d{2}-\d{2})/i);
     const issues = [
       pol?.toUpperCase() !== builder.insurancePolicy.toUpperCase() && `policy "${pol ?? "?"}" ≠ record ${builder.insurancePolicy}`,
       insured && !sameName(insured, builder.name) && `insured "${insured}" ≠ ${builder.name}`,
       limit && toCents(limit) < BigInt(minLiab) * 100n && `limit $${limit} below required`,
+      exp && Date.parse(exp) < now && `document expired ${exp}`,
     ].filter(Boolean) as string[];
     add("insurance_document_consistent", issues.length ? "fail" : "pass",
       issues.length ? `Insurance certificate: ${issues.join("; ")}.` : `Insurance certificate matches record (${builder.insurancePolicy}).`, [insDoc.id]);
