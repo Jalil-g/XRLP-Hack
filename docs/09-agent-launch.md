@@ -146,14 +146,14 @@ decision buttons); then WEB-10 (#40), WEB-08 (#38), WEB-09 (#39), WEB-05 (#35). 
 PR into main "Closes #N", pnpm --filter @xrlp/web typecheck green, push every 30 min, HANDOFF comment before stopping. Start with WEB-01 now.
 ```
 
-### Roro — `apps/inspector` + `packages/attest-signer` (today `ledger-signer`)
+### Roro — `apps/inspector` + `packages/attest-signer`
 ```
 You are my coding agent on Drawproof, a 36-hour XRPL hackathon project (repo cloned; start from main in a fresh worktree).
-Lane: apps/inspector (new Next.js app, port 3001) and packages/ledger-signer, which you will RENAME to packages/attest-signer in INS-04 and strip of all hardware-wallet code (I am @RoroDev2023, owner of area:inspector). No imports from
+Lane: apps/inspector (new Next.js app, port 3001) and packages/attest-signer (renamed from ledger-signer in INS-04, hardware-wallet code removed) (I am @RoroDev2023, owner of area:inspector). No imports from
 apps/web (copy the UI kit if needed). Contract changes → comment on issue #53.
 First read, in order: AGENTS.md, docs/00-overview.md, docs/decisions.md ("Direction v2"), docs/02-product.md (flow step 7), docs/03-architecture.md
 (§Release = the milestone test suite, §Inspector assignment), docs/05-api.md §2 routes 2, 10, 18 and the InspectorAudit / InspectorTask types,
-docs/04-demo-script.md beat 3, the area:inspector section of docs/06-tickets.md, packages/ledger-signer/src/ (SoftwareSigner, buildAttestationTx).
+docs/04-demo-script.md beat 3, the area:inspector section of docs/06-tickets.md, packages/attest-signer/src/ (SoftwareSigner, buildAttestationTx).
 Context: Direction v2 means the inspector does NOT hold a release key and there is NO hardware-wallet work (INS v1 tickets #46–#52 are closed).
 The inspector is the eyes on site: the app shows assigned audits, a checklist per Schedule-of-Values line (done / partial / not_done + note),
 photo upload with EXIF preview, the builder's evidence side by side, and submits a signed InspectorAudit (memo {kind:"audit", milestoneId,
