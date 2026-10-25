@@ -34,6 +34,12 @@ before(async () => {
 after(() => server.close());
 
 describe("http client", () => {
+  it("loads the upload URI even when the evidence ID differs from the file UUID", () => {
+    const uri = "/api/files/12345678-1234-1234-1234-123456789abc";
+    assert.equal(api.fileUrl({ id: "evidence-42", uri }), process.env.CORE_URL!.replace(/\/$/, "") + uri);
+    assert.equal(api.fileUrl({ id: "fixture", uri: "data:image/png;base64,AA" }), "data:image/png;base64,AA");
+  });
+
   it("is in http mode and hits the 05-api paths", async () => {
     assert.equal(api.mode, "http");
     reply = () => ({ status: 200, body: fx.INSPECTORS });

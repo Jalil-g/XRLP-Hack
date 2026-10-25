@@ -316,3 +316,34 @@ test("pre-signed blob that expires → throws retriable tefMAX_LEDGER (caller mu
   });
   assert.equal(io.submits.length, 1);
 });
+
+for (const code of ["telINSUF_FEE_P", "tefPAST_SEQ", "tefMAX_LEDGER", "terQUEUED"]) {
+  test(`EscrowFinish ${code}: never internally re-sign beyond the preflight window`, async () => {
+    const io = new FakeLedger([code, code]);
+    const r = resigner();
+    await assert.rejects(submitReliably({ ...blob("A", 102), txType: "EscrowFinish" }, io,
+      { resign: r.resign, pollMs: 0, backoffMs: 0, maxAttempts: 2 }),
+      (e: unknown) => e instanceof XrplTxError && e.retriable);
+    assert.deepEqual(r.calls, []);
+    assert.ok(io.submits.every((b) => b === "A"));
+  });
+}
+
+for (const code of ["tefMAX_LEDGER", "telINSUF_FEE_P", "temMALFORMED"]) {
+  test(`lost response then ${code}: reconcile original hash before replacement`, async () => {
+    const io = new FakeLedger([new DisconnectedError("websocket closed"), code]);
+    io.applyQuietly("A");
+    const r = resigner();
+    const result = await submitReliably(blob("A"), io, { resign: r.resign, pollMs: 0, backoffMs: 0 });
+    assert.equal(result.hash, "A");
+    assert.deepEqual(r.calls, []);
+  });
+}
+
+test("last-attempt disconnect with incomplete history cannot permit a fresh finish", async () => {
+  const io = new FakeLedger([new DisconnectedError("websocket closed")]);
+  io.lookup = async () => ({ status: "missing", searchedAll: false });
+  await assert.rejects(submitReliably({ ...blob("A", 102), txType: "EscrowFinish" }, io,
+    { maxAttempts: 1, pollMs: 0 }),
+    (e: unknown) => e instanceof XrplTxError && !e.retriable && e.hash === "A" && e.engineResult === "unknown_outcome");
+});

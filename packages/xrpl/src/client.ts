@@ -177,7 +177,7 @@ export async function submitWithSigner<T extends SubmittableTransaction>(
       return describeBlob(sign(prepared), tx.TransactionType);
     };
     const first = await prepare("first");
-    return toResult(await submitReliably(first, realLedgerIo, { ...withLog(opts), resign: prepare }));
+    return toResult(await submitReliably(first, realLedgerIo, { ...withLog(opts), ...(tx.TransactionType === "EscrowFinish" ? {} : { resign: prepare }) }));
   });
 }
 

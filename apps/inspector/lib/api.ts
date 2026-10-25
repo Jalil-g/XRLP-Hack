@@ -124,6 +124,8 @@ export const api = {
 
   /** Where to load an evidence / audit file: core's `/api/files/:fileId`, or the fixture's data: URL in mock mode. */
   fileUrl(evidence: Pick<Evidence, "id" | "uri">): string {
-    return API_MODE === "mock" ? evidence.uri : `${baseUrl()}/api/files/${enc(evidence.id)}`;
+    if (API_MODE === "mock") return evidence.uri;
+    // Evidence IDs identify reports; the upload store assigns a different file UUID.
+    return evidence.uri.startsWith("/api/files/") ? baseUrl() + evidence.uri : evidence.uri;
   },
 };

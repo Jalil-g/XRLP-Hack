@@ -160,6 +160,9 @@ function finalResult(r: Record<string, unknown>): string {
  * Without `resign` (pre-signed blobs) only same-blob resubmits are possible; anything needing a new blob throws retriable.
  */
 export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: RetryPolicy & { resign?: Resign } = {}): Promise<ValidatedTx> {
+  // A replacement EscrowFinish needs a new escrow preflight, not just autofill.
+  // Return control to finishEscrow, which owns that preflight, before re-signing.
+  const resign = first.txType === "EscrowFinish" ? undefined : opts.resign;
   const maxAttempts = opts.maxAttempts ?? 5;
   const pollMs = opts.pollMs ?? 1000;
   const backoff0 = opts.backoffMs ?? 500;
@@ -231,9 +234,7 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
     const cls: PreliminaryClass | "conn" | "busy" =
       prelim === "connection_lost" ? "conn" : isTransientRpcError({ data: { error: prelim } }) ? "busy" : classifyPreliminary(prelim);
 
-    if (cls === "fatal") throw fail(prelim, false, detail ? { detail } : {});
-
-    if (cls === "pending" || (cls === "past_seq" && maybeSent.has(cur.hash))) {
+    if (cls === "pending" || (maybeSent.has(cur.hash) && (cls !== "conn" || attempt >= maxAttempts))) {
       // Possibly applied: only the ledger can tell. Never build a new blob until this one is provably dead.
       if (cls === "pending") maybeSent.add(cur.hash);
       const out = await waitFinal(cur, Math.min(firstLedger.get(cur.hash) ?? 1, cur.lastLedgerSequence ?? Infinity));
@@ -245,6 +246,8 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
       maybeSent.delete(cur.hash);
       prelim = "tefMAX_LEDGER";
       next = "same_seq";
+    } else if (cls === "fatal") {
+      throw fail(prelim, false, detail ? { detail } : {});
     } else if (cls === "past_seq") {
       next = "new_seq"; // never reached a ledger and its Sequence is gone → cannot apply
     } else if (cls === "expired") {
@@ -252,14 +255,14 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
     } else if (cls === "conn") {
       next = "resubmit_same_blob"; // same hash: idempotent, and lets tefALREADY/tefPAST_SEQ reveal an earlier apply
     } else {
-      next = opts.resign ? "same_seq" : "resubmit_same_blob"; // resubmit/busy: fresh Fee if we can re-sign
+      next = resign ? "same_seq" : "resubmit_same_blob"; // resubmit/busy: fresh Fee if we can re-sign
     }
 
     if (attempt >= maxAttempts) throw fail(prelim, true, { detail: `gave up after ${attempt} attempts` });
-    if (next !== "resubmit_same_blob" && !opts.resign) throw fail(prelim, true, { detail: "pre-signed blob must be re-prepared" });
+    if (next !== "resubmit_same_blob" && !resign) throw fail(prelim, true, { detail: "pre-signed blob must be re-prepared" });
 
     opts.onRetry?.({ attempt, reason: prelim, hash: cur.hash, action: next });
     await io.sleep(Math.min(backoff0 * 2 ** (attempt - 1), 4000));
-    if (next !== "resubmit_same_blob") cur = await opts.resign!(next);
+    if (next !== "resubmit_same_blob") cur = await resign!(next);
   }
 }

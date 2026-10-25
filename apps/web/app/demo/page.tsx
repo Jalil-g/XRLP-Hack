@@ -16,10 +16,20 @@ const INSPECTOR_APP_URL = process.env.NEXT_PUBLIC_INSPECTOR_APP_URL ?? "http://l
 const get = (id: string) => api.getProject(id).catch(() => undefined);
 
 export default async function DemoPage() {
-  const [session, maple, birch, cedar] = await Promise.all([getSession(), get("maple-st"), get("birch-rd"), get("cedar-ln")]);
+  const [session, projects] = await Promise.all([getSession(), api.listProjects()]);
+  const scene = (...ids: string[]) => {
+    const found = ids.find((id) => projects.some((p) => p.id === id));
+    return found ? get(found) : Promise.resolve(undefined);
+  };
+  const [maple, birch, cedar] = await Promise.all([
+    scene("maple-st-duplex", "maple-st"),
+    scene("oak-ave-renovation", "birch-rd"),
+    scene("cedar-ln"),
+  ]);
   const platform = session.platform?.address;
   const [m1, m2, m3] = maple?.project.milestones ?? [];
-  const expired = birch?.project.milestones.find((m) => m.status === "expired");
+  const expired = birch?.project.milestones.find((m) => m.status === "expired" ||
+    (!!m.escrow && !m.escrow.finishTx && !m.escrow.cancelTx && !!m.cancelAfter && Date.parse(m.cancelAfter) < Date.now()));
 
   return (
     <div className="space-y-10">
@@ -46,7 +56,7 @@ export default async function DemoPage() {
           title="Locked state"
           body="Investors funded the vault, the loan went to the project account, and each milestone sits in its own escrow."
           state={maple && <Tag tone={PROJECT_STATUS[maple.project.status].tone}>{PROJECT_STATUS[maple.project.status].label}</Tag>}
-          screen={maple && <ScreenLink href="/projects/maple-st" label="Maple St" />}
+          screen={maple && <ScreenLink href={`/projects/${encodeURIComponent(maple.project.id)}`} label="Maple St" />}
         />
         <Scene
           n={3}
@@ -54,7 +64,7 @@ export default async function DemoPage() {
           body="The inspector's signed audit plus the AI's checks run on Foundation. All green, so the release service finishes the escrow."
           state={m1 && <MilestoneTag d={maple!} id={m1.id} />}
           action={maple && m1 && <ActionButton disabled={!["evidence_submitted", "audited", "failed"].includes(m1.status)} action={{ kind: "runChecks", projectId: maple.project.id, milestoneId: m1.id }}>Run checks</ActionButton>}
-          screen={m1 && <ScreenLink href={`/projects/maple-st?m=${m1.id}`} label="Foundation" />}
+          screen={m1 && <ScreenLink href={`/projects/${encodeURIComponent(maple!.project.id)}?m=${m1.id}`} label="Foundation" />}
         />
         <Scene
           n={4}
@@ -62,22 +72,22 @@ export default async function DemoPage() {
           body="Framing includes a photo reused from Oak Ave. No duplicate photo fails, so the money stays locked."
           state={m2 && <MilestoneTag d={maple!} id={m2.id} />}
           action={maple && m2 && <ActionButton disabled={!["evidence_submitted", "audited", "failed"].includes(m2.status)} action={{ kind: "runChecks", projectId: maple.project.id, milestoneId: m2.id }}>Run checks</ActionButton>}
-          screen={m2 && <ScreenLink href={`/projects/maple-st?m=${m2.id}`} label="Framing" />}
+          screen={m2 && <ScreenLink href={`/projects/${encodeURIComponent(maple!.project.id)}?m=${m2.id}`} label="Framing" />}
         />
         <Scene
           n={5}
           title="Ledger says no"
           body="The platform submits a finish for Framing with a wrong fulfillment. The ledger refuses it: tecCRYPTOCONDITION_ERROR."
           action={maple && m2 && <ActionButton variant="danger" disabled={!m2.escrow || !!m2.escrow.finishTx} action={{ kind: "tryStealDemo", projectId: maple.project.id, milestoneId: m2.id }}>Platform tries to release</ActionButton>}
-          screen={m2 && <ScreenLink href={`/projects/maple-st?m=${m2.id}`} label="Framing" />}
+          screen={m2 && <ScreenLink href={`/projects/${encodeURIComponent(maple!.project.id)}?m=${m2.id}`} label="Framing" />}
         />
         <Scene
           n={6}
           title="Stall: escrow expires, money goes back"
-          body="Birch Rd's Finishes escrow passed its CancelAfter. The keeper cancels it and the project account repays the vault."
+          body={`${birch?.project.name ?? "Project B"} has an escrow past its CancelAfter. The keeper cancels it and the project account repays the vault.`}
           state={birch && (expired ? <Tag tone="review">1 expired escrow</Tag> : <Tag>Nothing expired</Tag>)}
           action={<ActionButton disabled={!expired} action={{ kind: "keeperTick" }}>Keeper tick</ActionButton>}
-          screen={birch && <ScreenLink href="/projects/birch-rd" label="Birch Rd" />}
+          screen={birch && <ScreenLink href={`/projects/${encodeURIComponent(birch.project.id)}`} label={birch.project.name} />}
         />
       </ol>
 
@@ -103,9 +113,9 @@ export default async function DemoPage() {
                 </div>
               ) : undefined
             }
-            screen={m3 && <ScreenLink href={`/projects/maple-st?m=${m3.id}`} label="Roof & dry-in" />}
+            screen={m3 && <ScreenLink href={`/projects/${encodeURIComponent(maple!.project.id)}?m=${m3.id}`} label="Roof & dry-in" />}
           />
-          <Scene
+          {cedar && <Scene
             title="Onboard a new builder"
             body="Cedar Ln ADU: pay the fee, run verification, then lock terms to open funding."
             state={cedar && <Tag tone={PROJECT_STATUS[cedar.project.status].tone}>{PROJECT_STATUS[cedar.project.status].label}</Tag>}
@@ -125,7 +135,7 @@ export default async function DemoPage() {
               ) : undefined
             }
             screen={cedar && <ScreenLink href={`/projects/${cedar.project.id}`} label="Cedar Ln" />}
-          />
+          />}
         </ol>
       </div>
     </div>
