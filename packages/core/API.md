@@ -7,6 +7,8 @@ pnpm --filter @xrlp/core serve      # HTTP on :4000 (PORT, DATA_DIR, CORS_ORIGIN
 pnpm --filter @xrlp/core seed       # = POST /api/admin/demo/reset {"seed":"maple-st"}: wipes DATA_DIR, writes the pre-staged demo
 pnpm --filter @xrlp/core simulate   # docs/04-demo-script.md end to end in memory, prints the timeline
 pnpm --filter @xrlp/core test
+pnpm --filter @xrlp/core rehearse --self   # docs/04 beats 1–6 over HTTP, timed per scene, exit 1 on drift (CORE-11)
+pnpm --filter @xrlp/core rehearse          # same against CORE_URL (fake: seed maple-st; devnet: seed prestage). --no-reset, --strict
 ```
 
 ## Wiring (`createCore()`)
