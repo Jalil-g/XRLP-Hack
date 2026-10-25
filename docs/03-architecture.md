@@ -24,7 +24,7 @@ Library: `xrpl` (xrpl.js) **5.3.0**: typed `VaultCreate/Deposit/Withdraw` (incl.
    is the release key.** **[Verified]**
 4. **[Direction]** We *choose* the platform's **release service** as the preimage holder, gated by the milestone test suite.
    The ledger guarantees **where** money can go (builder or back to the SPV); the test suite plus on-chain attestations make
-   **when** it moves auditable. We say this out loud (slide 6).
+   **when** it moves auditable. We say this out loud on slide 3; see `docs/08-pitch-storyline.md` and `docs/pitch-qa.md`.
 
 ## Accounts
 

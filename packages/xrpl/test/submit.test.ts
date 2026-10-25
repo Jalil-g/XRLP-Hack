@@ -1,13 +1,16 @@
 // Offline tests for submission hardening (XRPL-12): lock, classification, retry engine, error mapping.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DisconnectedError } from "xrpl";
-import { XrplTxError, toErrorCode } from "../src/errors.ts";
+import { inspect } from "node:util";
+import { DisconnectedError, TimeoutError } from "xrpl";
+import { XrplTxError, redactedCause, redactSecrets, toErrorCode, toLedgerError } from "../src/errors.ts";
 import {
+  assertLlsMargin,
   classifyPreliminary,
   isConnectionError,
   isTransientRpcError,
   lockedAccounts,
+  MAX_LLS_MARGIN,
   submitReliably,
   withAccountLock,
   type LedgerIo,
@@ -315,4 +318,207 @@ test("pre-signed blob that expires → throws retriable tefMAX_LEDGER (caller mu
     return true;
   });
   assert.equal(io.submits.length, 1);
+});
+
+// ── security review 2026-10-25: H1 / H2 / M3 / L1 ─────────────────────────────────────────
+
+/**
+ * Sequence-aware fake (one account): a relayed blob applies at a given ledger only if its Sequence is the account's
+ * current one and its LastLedgerSequence hasn't passed; a blob whose Sequence is gone gets tefPAST_SEQ.
+ * `script` overrides the next submit(s). Lookups answer from what applied.
+ */
+class SeqLedger implements LedgerIo {
+  validated = 100;
+  accountSeq = 1;
+  readonly applied = new Map<string, number>();
+  readonly relayed: { b: SignedBlob; at: number }[] = [];
+  readonly script: ((b: SignedBlob) => Promise<{ engineResult: string }>)[] = [];
+  readonly submits: string[] = [];
+  readonly blobs = new Map<string, SignedBlob>();
+
+  mk(hash: string, sequence: number, lastLedgerSequence: number): SignedBlob {
+    const b: SignedBlob = { blob: hash, hash, account: "rA", txType: "Payment", sequence, lastLedgerSequence };
+    this.blobs.set(hash, b);
+    return b;
+  }
+  relay(b: SignedBlob, inLedgers = 1) {
+    this.relayed.push({ b, at: this.validated + inLedgers });
+  }
+  async submit(blob: string) {
+    const b = this.blobs.get(blob)!;
+    this.submits.push(b.hash);
+    const step = this.script.shift();
+    if (step) return step(b);
+    if (this.applied.has(b.hash) || b.sequence! < this.accountSeq) return { engineResult: "tefPAST_SEQ" };
+    this.relay(b);
+    return { engineResult: "tesSUCCESS" };
+  }
+  async lookup(hash: string): Promise<Lookup> {
+    const l = this.applied.get(hash);
+    if (l !== undefined && l <= this.validated) return { status: "validated", result: { hash, validated: true, meta: { TransactionResult: "tesSUCCESS" } } };
+    return { status: "missing", searchedAll: true };
+  }
+  async validatedLedgerIndex() {
+    return this.validated;
+  }
+  async reconnect() {}
+  async sleep() {
+    this.validated++;
+    for (const r of [...this.relayed]) {
+      if (r.at > this.validated) continue;
+      this.relayed.splice(this.relayed.indexOf(r), 1);
+      if (r.b.sequence === this.accountSeq && this.validated <= r.b.lastLedgerSequence!) {
+        this.applied.set(r.b.hash, this.validated);
+        this.accountSeq++;
+      }
+    }
+  }
+}
+
+test("H1: a maybe-sent blob superseded by a same-Sequence re-sign is still tracked; when it applies, no fresh Sequence is ever signed", async () => {
+  const io = new SeqLedger();
+  // A reaches server X, the socket dies before the reply; X relays A, which validates 3 ledgers later.
+  io.script.push(async (b) => {
+    io.relay(b, 3);
+    throw new DisconnectedError("websocket closed");
+  });
+  // After the reconnect another backend hasn't seen A: telINSUF_FEE_P → same-Sequence re-sign.
+  io.script.push(async () => ({ engineResult: "telINSUF_FEE_P" }));
+  const calls: ResignMode[] = [];
+  let n = 0;
+  const resign = async (mode: ResignMode) => {
+    calls.push(mode);
+    return io.mk(`R${++n}`, mode === "same_seq" ? 1 : io.accountSeq, io.validated + 3);
+  };
+  const out = await submitReliably(io.mk("A", 1, 104), io, { pollMs: 0, backoffMs: 0, resign });
+  assert.equal(out.hash, "A", "the blob that applied is the result");
+  assert.deepEqual([...io.applied.keys()], ["A"], "exactly one blob of the intent applied");
+  assert.ok(!calls.includes("new_seq"), `never re-signed with a fresh Sequence (calls: ${calls.join(", ")})`);
+});
+
+test("H1: tefPAST_SEQ with no earlier blob of this intent alive still takes a fresh Sequence (another tx used it)", async () => {
+  const io = new SeqLedger();
+  io.accountSeq = 2; // Sequence 1 was taken by someone else
+  const calls: ResignMode[] = [];
+  const out = await submitReliably(io.mk("A", 1, 110), io, {
+    pollMs: 0,
+    backoffMs: 0,
+    resign: async (mode) => {
+      calls.push(mode);
+      return io.mk("B", io.accountSeq, io.validated + 5);
+    },
+  });
+  assert.equal(out.hash, "B");
+  assert.deepEqual(calls, ["new_seq"]);
+});
+
+test("H2: connection lost on every submit → never retriable while the blob may apply; retriable only after its LastLedgerSequence provably passed", async () => {
+  for (const lookupsDead of [true, false]) {
+    let v = 100;
+    const io: LedgerIo = {
+      submit: async () => Promise.reject(new DisconnectedError("websocket closed")),
+      lookup: async (): Promise<Lookup> => (lookupsDead ? Promise.reject(new DisconnectedError("websocket closed")) : { status: "missing", searchedAll: true }),
+      validatedLedgerIndex: async () => v,
+      reconnect: async () => {},
+      sleep: async () => void v++,
+    };
+    await assert.rejects(submitReliably(blob("A", 160), io, { pollMs: 0, backoffMs: 0 }), (e: unknown) => {
+      assert.ok(e instanceof XrplTxError);
+      if (lookupsDead) {
+        assert.equal(e.engineResult, "connection_lost");
+        assert.equal(e.retriable, false, "outcome unknown: must not invite a rebuild");
+        assert.equal(e.hash, "A");
+      } else {
+        assert.equal(e.engineResult, "not_applied");
+        assert.equal(e.retriable, true);
+        assert.ok(v >= 160, `waited out LastLedgerSequence 160 before saying retriable (at ${v})`);
+      }
+      return true;
+    });
+  }
+});
+
+test("H2: transient failures at the attempt limit after a maybe-sent attempt → the earlier blob is waited for and returned", async () => {
+  const io = new FakeLedger([new DisconnectedError("websocket closed"), "telINSUF_FEE_P", "telINSUF_FEE_P", "telINSUF_FEE_P", "telINSUF_FEE_P"]);
+  io.applyQuietly("A");
+  const r = resigner();
+  const out = await submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0, maxAttempts: 5, resign: r.resign });
+  assert.equal(out.hash, "A");
+  assert.ok(r.calls.every((c) => c === "same_seq"));
+});
+
+test("H2: a lookup error while waiting is unknown_outcome (non-retriable); tooBusy lookups are polled through", async () => {
+  const io = new FakeLedger(["tesSUCCESS"]);
+  io.lookup = async () => Promise.reject(Object.assign(new Error("lgrIdxsInvalid"), { data: { error: "lgrIdxsInvalid" } }));
+  await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0 }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError);
+    assert.equal(e.engineResult, "unknown_outcome");
+    assert.equal(e.retriable, false);
+    assert.equal(e.hash, "A");
+    return true;
+  });
+  const busyFirst = new FakeLedger(["tesSUCCESS"]);
+  const realLookup = busyFirst.lookup.bind(busyFirst);
+  let calls = 0;
+  busyFirst.lookup = async (h) => (++calls <= 3 ? Promise.reject(Object.assign(new Error("tooBusy"), { data: { error: "tooBusy" } })) : realLookup(h));
+  assert.equal((await submitReliably(blob("A"), busyFirst, { pollMs: 0 })).hash, "A");
+});
+
+test("H2: a re-sign that throws while an earlier blob may apply → unknown_outcome with that hash", async () => {
+  const io = new FakeLedger([new DisconnectedError("websocket closed"), "telINSUF_FEE_P"]);
+  await assert.rejects(
+    submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0, resign: async () => Promise.reject(new Error("account_info failed")) }),
+    (e: unknown) => e instanceof XrplTxError && e.engineResult === "unknown_outcome" && e.hash === "A" && !e.retriable,
+  );
+});
+
+// A signed EscrowFinish blob: its Fulfillment (A0228020 + 64 hex) sits inside a long hex run.
+const PREIMAGE = "AB".repeat(32);
+const SIGNED_BLOB = `120002228000000024000000016140000000000000${"A0228020" + PREIMAGE}${"7C".repeat(60)}`;
+
+test("M3: error causes never carry the signed blob (xrpl.js echoes the request in TimeoutError / RippledError)", async () => {
+  // RPC refusal: rippled echoes `request.tx_blob` in the error response.
+  const rpc = Object.assign(new Error("invalidTransaction"), { data: { error: "invalidTransaction", request: { command: "submit", tx_blob: SIGNED_BLOB } } });
+  const io = new FakeLedger([rpc]);
+  await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0 }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "invalidTransaction");
+    const dump = inspect(toLedgerError(e), { depth: 12 });
+    assert.ok(!dump.includes(PREIMAGE), "no preimage anywhere in the error chain");
+    assert.match(dump, /\[redacted\]/);
+    return true;
+  });
+  // Timeout: the MESSAGE holds the request JSON; after 6 timeouts the engine gives up with connection_lost + cause.
+  const timeout = new TimeoutError(`Timeout for request: ${JSON.stringify({ command: "submit", tx_blob: SIGNED_BLOB })} with id 7`, { command: "submit", tx_blob: SIGNED_BLOB });
+  let v = 100;
+  const dead: LedgerIo = {
+    submit: async () => Promise.reject(timeout),
+    lookup: async () => Promise.reject(timeout),
+    validatedLedgerIndex: async () => v,
+    reconnect: async () => {},
+    sleep: async () => void v++,
+  };
+  await assert.rejects(submitReliably(blob("A", 160), dead, { pollMs: 0, backoffMs: 0 }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "connection_lost");
+    const dump = inspect(e, { depth: 12 });
+    assert.ok(!dump.includes(PREIMAGE) && !dump.includes(SIGNED_BLOB.slice(0, 80)), "no blob in message, cause or stack");
+    assert.ok(e.cause instanceof Error && /redacted \d+ hex/.test((e.cause as Error).message));
+    return true;
+  });
+  // The helpers keep tx hashes (64 hex) readable.
+  const hash = "C".repeat(64);
+  assert.equal(redactSecrets(`tx ${hash}`), `tx ${hash}`);
+  assert.equal(redactSecrets(`F=A0228020${PREIMAGE}`), "F=[redacted 72 hex]");
+  assert.equal((redactedCause(rpc) as { data?: { request?: { tx_blob?: string } } }).data?.request?.tx_blob, "[redacted]");
+});
+
+test("L1: LastLedgerSequence margins are bounded; a lookup that can't cover the whole window is never proof of expiry", async () => {
+  assert.equal(assertLlsMargin(20), 20);
+  assert.equal(assertLlsMargin(MAX_LLS_MARGIN), MAX_LLS_MARGIN);
+  for (const bad of [0, -1, MAX_LLS_MARGIN + 1, 2.5, Number.NaN, "20"]) assert.throws(() => assertLlsMargin(bad, "XRPL_LLS_MARGIN"), /XRPL_LLS_MARGIN must be an integer in 1\.\.500/);
+  // A blob whose LastLedgerSequence is 1500 ledgers out: "not found in the last 1000" proves nothing.
+  const io = new FakeLedger(["tesSUCCESS"]);
+  io.lookup = async () => ({ status: "missing", searchedAll: true });
+  const r = resigner();
+  await assert.rejects(submitReliably(blob("A", 1_600), io, { pollMs: 0, resign: r.resign }), (e: unknown) => e instanceof XrplTxError && e.engineResult === "unknown_outcome");
+  assert.deepEqual(r.calls, [], "never re-signed on a non-proof");
 });

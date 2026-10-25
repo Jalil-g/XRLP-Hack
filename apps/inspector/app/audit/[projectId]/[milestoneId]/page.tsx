@@ -4,8 +4,10 @@
 // attestation (XRPL-08 Payment to the SPV) in this browser and route 10 carries it as signedTxBlob.
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, PenLine, RotateCcw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, PenLine } from "lucide-react";
+import { ReAuditContext } from "@/components/audit/re-audit-context";
+import { latestOwnAudit } from "@/lib/re-audit";
 import { Checklist } from "@/components/audit/checklist";
 import { EvidenceGallery } from "@/components/audit/evidence-gallery";
 import { PhotoPicker } from "@/components/audit/photo-picker";
@@ -14,14 +16,16 @@ import { SiteMap, type MapPin } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
 import { NEEDS } from "@/components/task-row";
 import { Badge } from "@/components/ui/badge";
+import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, SectionLabel } from "@/components/ui/card";
-import { ApiError, api } from "@/lib/api";
-import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, type AuditDraft } from "@/lib/audit";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ApiError, api, API_MODE } from "@/lib/api";
+import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, withBrowserExif, type AuditDraft } from "@/lib/audit";
 import { evidenceStatus } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
-import type { InspectorTask, SubmitAuditResult } from "@/lib/types";
-import { cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
+import type { ChecksStatus, Inspector, InspectorTask, SubmitAuditResult } from "@/lib/types";
+import { BRAND, cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
+import { isAuditSubmitShortcut } from "@/lib/shortcuts";
 
 type AuditTask = InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> };
 
@@ -39,22 +43,39 @@ export default function AuditPage() {
   const projectId = param(params.projectId);
   const milestoneId = param(params.milestoneId);
   const { inspector } = useIdentity();
+  if (!inspector) return <p className="text-small text-muted">Loading inspector…</p>;
+  return <AuditLoader key={`${inspector.address}:${projectId}:${milestoneId}`} inspector={inspector} projectId={projectId} milestoneId={milestoneId} />;
+}
+
+function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspector; projectId: string; milestoneId: string }) {
+  const [checks, setChecks] = useState<ChecksStatus>();
   const [task, setTask] = useState<AuditTask | null>();
   const [loadError, setLoadError] = useState<string>();
   const [reloads, setReloads] = useState(0);
+  const [browserExif, setBrowserExif] = useState<ReadonlySet<string>>(new Set());
 
   // One-shot load, not polled: the evidence must not change under the inspector while they review it.
   useEffect(() => {
     if (!inspector) return;
     let live = true;
     setTask(undefined);
+    setChecks(undefined);
+    setBrowserExif(new Set());
     setLoadError(undefined);
     api
-      .getQueue(inspector.address)
-      .then((tasks) => {
+      .getAuditReview(inspector.address, projectId, milestoneId)
+      .then((review) => {
         if (!live) return;
-        const t = tasks.find((x) => x.projectId === projectId && x.milestone?.id === milestoneId);
-        setTask(t?.milestone ? (t as AuditTask) : null);
+        setTask(review?.task.milestone ? (review.task as AuditTask) : null);
+        setChecks(review?.checks);
+        // Fill in EXIF core's record lacks without holding up the form (sha256s, so the bundle hash, are unchanged).
+        if (review?.task.milestone) {
+          void withBrowserExif(review.task.evidence, (e) => api.fileBytes(e)).then(({ evidence, browserRead }) => {
+            if (!live || browserRead.size === 0) return;
+            setTask((t) => (t ? { ...t, evidence } : t));
+            setBrowserExif(browserRead);
+          });
+        }
       })
       .catch((err: Error) => live && setLoadError(err.message));
     return () => {
@@ -63,22 +84,23 @@ export default function AuditPage() {
   }, [inspector, projectId, milestoneId, reloads]);
 
   const back = (
-    <Link href="/" className="inline-flex items-center gap-1 text-sm text-muted hover:text-ink">
+    <Link href="/" className="inline-flex items-center gap-1 text-small text-muted hover:text-ink">
       <ArrowLeft className="size-4" /> Queue
     </Link>
   );
 
-  if (loadError) return <Shell back={back}><p className="text-sm text-bad">{loadError}</p></Shell>;
-  if (!inspector || task === undefined) return <Shell back={back}><p className="text-sm text-muted">Loading…</p></Shell>;
+  if (loadError) return <Shell back={back}><p role="alert" className="text-small text-bad">Could not load the review: {loadError}</p><Button onClick={() => setReloads((n) => n + 1)}>Retry review</Button></Shell>;
+  if (!inspector || task === undefined) return <Shell back={back}><p className="text-small text-muted">Loading…</p></Shell>;
   if (task === null) {
     return (
       <Shell back={back}>
-        <p className="text-sm text-muted">This milestone is not in {inspector.name}&apos;s queue. Switch inspector, or go back to the queue.</p>
+        <p className="text-small text-muted">This milestone is not in {inspector.name}&apos;s queue. Switch inspector, or go back to the queue.</p>
       </Shell>
     );
   }
+  if (task.needs !== "audit" && task.needs !== "re_audit") return <Shell back={back}><p className="text-small text-muted">No audit is due from you for this milestone. Return to the queue for your current assignments.</p></Shell>;
   // Keyed so a reload (after the builder changed evidence) starts a clean draft bound to the new bundle.
-  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} inspector={inspector.address} back={back} onReload={() => setReloads((n) => n + 1)} />;
+  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} checks={checks} browserExif={browserExif} inspector={inspector.address} inspectorName={inspector.name} back={back} onReload={() => setReloads((n) => n + 1)} />;
 }
 
 function Shell({ back, children }: { back: React.ReactNode; children: React.ReactNode }) {
@@ -90,10 +112,27 @@ function Shell({ back, children }: { back: React.ReactNode; children: React.Reac
   );
 }
 
-function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspector: string; back: React.ReactNode; onReload(): void }) {
+function AuditForm({
+  task,
+  checks,
+  browserExif,
+  inspector,
+  inspectorName,
+  back,
+  onReload,
+}: {
+  task: AuditTask;
+  checks?: ChecksStatus;
+  browserExif: ReadonlySet<string>;
+  inspector: string;
+  inspectorName: string;
+  back: React.ReactNode;
+  onReload(): void;
+}) {
   const m = task.milestone;
   const [draft, setDraft] = useState<AuditDraft>(() => emptyDraft(task));
   const [showErrors, setShowErrors] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [phase, setPhase] = useState<"idle" | "signing" | "filing">("idle");
   const [submitError, setSubmitError] = useState<{ message: string; stale: boolean }>();
   const [result, setResult] = useState<{ res: SubmitAuditResult; signed?: SignedAttestation }>();
@@ -101,6 +140,19 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
   const [key, setKey] = useState<InspectorKey | null>();
   const [keyVersion, setKeyVersion] = useState(0);
   const spv = m.escrow?.owner;
+  const submitButton = useRef<HTMLButtonElement>(null);
+  const submitting = useRef(false);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const button = submitButton.current;
+      if (!isAuditSubmitShortcut(event) || !button || button.disabled || submitting.current) return;
+      event.preventDefault();
+      button.click();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -119,7 +171,7 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
   }, [task.evidence]);
 
   const problems = useMemo(() => draftProblems(task, draft), [task, draft]);
-  const myPrior = task.priorAudits.filter((a) => a.inspector === inspector);
+  const isReAudit = task.needs === "re_audit" || !!latestOwnAudit(task, inspector);
   const ev = evidenceStatus(task);
 
   const pins = useMemo<MapPin[]>(
@@ -137,14 +189,16 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
     [],
   );
 
-  /** `sign`: attestation signed here with the inspector's key. Otherwise core signs it with the inspector's demo key. */
+  /** `sign`: attestation signed here with the inspector's key. Otherwise core attests it on the inspector's behalf (05-api: their demo key; CORE-03 today: the platform key). */
   async function submit(sign: boolean) {
+    if (submitting.current || !reviewing) return;
     setShowErrors(true);
     setSubmitError(undefined);
     if (problems.length) {
       document.getElementById(problems[0]!.field)?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    submitting.current = true;
     try {
       const report = await buildAudit(task, inspector, draft, new Date().toISOString());
       let signed: SignedAttestation | undefined;
@@ -160,11 +214,14 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
         photos: draft.photos.map((p) => p.file),
         ...(signed ? { signedTxBlob: signed.blob } : {}),
       });
+      setReviewing(false);
       setResult({ res, signed });
     } catch (err) {
+      setReviewing(false);
       const message = (err as Error).message;
       setSubmitError({ message, stale: err instanceof ApiError && err.code === "validation" && message.includes("evidenceBundleHash") });
     } finally {
+      submitting.current = false;
       setPhase("idle");
     }
   }
@@ -179,15 +236,15 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
         {back}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <SectionLabel>{task.projectName}</SectionLabel>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              M{m.index + 1} · {m.title}
+            <p className="mb-2 text-small text-muted">{task.projectName}</p>
+            <h1 className="text-title">
+              {isReAudit && "Re-audit: "}M{m.index + 1} · {m.title}
             </h1>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-3 text-small">
             <span className="tabular font-medium">{formatRlusd(m.amount)}</span>
             {m.cancelAfter && (
-              <span className="flex items-center gap-1 text-xs text-muted">
+              <span className="flex items-center gap-1 text-caption text-muted">
                 <CalendarClock className="size-3.5" /> escrow expires {formatDateTime(m.cancelAfter)}
               </span>
             )}
@@ -196,22 +253,39 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
             </Badge>
           </div>
         </div>
+        <p className="max-w-3xl text-small text-muted">{BRAND.tagline}</p>
       </div>
+
+      <ReviewDialog open={reviewing} title="Review and submit audit" busy={busy}
+        confirmLabel={phase === "signing" ? "Signing…" : phase === "filing" ? "Submitting…" : canSign ? "Sign and submit audit" : "Submit audit (core signs)"}
+        onBack={() => setReviewing(false)} onConfirm={() => void submit(canSign)}>
+        <p className="font-medium">{task.projectName} · M{m.index + 1} {m.title}</p>
+        <p>{formatRlusd(m.amount)} · {inspectorName} ({shortAddress(inspector, 8, 6)})</p>
+        <ul className="divide-y divide-line border-y border-line">
+          {task.sov.map((line) => <li key={line.code} className="py-3">
+            <div className="flex flex-wrap justify-between gap-2"><span>{line.title}</span><span className="font-medium">{draft.checklist[line.code]?.status?.replaceAll("_", " ")}</span></div>
+            {draft.checklist[line.code]?.note && <p className="mt-1 text-muted">{draft.checklist[line.code]?.note}</p>}
+          </li>)}
+        </ul>
+        <p>{draft.photos.length} site photo{draft.photos.length === 1 ? "" : "s"} · {task.evidence.length} builder files reviewed</p>
+        {draft.notes && <p className="whitespace-pre-wrap">{draft.notes}</p>}
+        <p className="text-caption text-muted">Evidence version: {bundle ? shortHash(bundle) : "Preparing…"}. {canSign ? "Signed with your loaded browser key." : "Browser signing is unavailable for this report. Core will sign on your behalf."}</p>
+      </ReviewDialog>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         {/* Left: what the builder claims. */}
-        <div className="space-y-6 lg:sticky lg:top-6 lg:self-start">
+        <div className="min-w-0 space-y-6 lg:sticky lg:top-24 lg:self-start">
           <Card>
             <CardHeader>
               <div>
-                <CardTitle>Builder evidence</CardTitle>
+                <CardTitle>Current builder evidence</CardTitle>
                 <CardDescription>
                   {ev.uploaded} file{ev.uploaded === 1 ? "" : "s"} · the suite checks these against your audit
                 </CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <EvidenceGallery evidence={task.evidence} site={task.siteGeo} />
+              <EvidenceGallery evidence={task.evidence} site={task.siteGeo} browserExif={browserExif} />
             </CardContent>
           </Card>
           <Card>
@@ -225,33 +299,14 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
         </div>
 
         {/* Right: the inspector's audit. */}
-        <div className="space-y-6">
-          {myPrior.length > 0 && (
-            <Card className="border-warn-line">
-              <CardHeader>
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <RotateCcw className="size-4 text-warn" /> Your previous audit
-                  </CardTitle>
-                  <CardDescription>Filed {formatDateTime(myPrior.at(-1)!.at)}. The audit you file now supersedes it.</CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                {myPrior.at(-1)!.checklist.map((c) => (
-                  <p key={c.sovCode}>
-                    <span className="font-mono text-faint">{c.sovCode}</span> <Badge tone={c.status === "done" ? "ok" : c.status === "partial" ? "warn" : "bad"}>{c.status}</Badge>{" "}
-                    <span className="text-muted">{c.note}</span>
-                  </p>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+        <div className="min-w-0 space-y-6">
+          {isReAudit && <ReAuditContext task={task} checks={checks} inspector={inspector} bundle={bundle} onReload={onReload} busy={busy} />}
 
           <Card id="checklist">
             <CardHeader>
               <div>
                 <CardTitle>Checklist</CardTitle>
-                <CardDescription>One line per Schedule of Values item this milestone pays for.</CardDescription>
+                <CardDescription>{isReAudit ? "Record fresh observations for every SoV line; previous answers are not copied." : "One line per Schedule of Values item this milestone pays for."}</CardDescription>
               </div>
             </CardHeader>
             <Checklist sov={task.sov} value={draft.checklist} onChange={setLine} showErrors={showErrors} />
@@ -275,18 +330,19 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
             </CardHeader>
             <CardContent>
               <textarea
+                aria-label="Audit notes"
                 value={draft.notes}
                 onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
                 rows={4}
                 placeholder="Anything the builder's evidence does not show: workmanship, deviations from plans, safety."
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm placeholder:text-faint focus:ring-2 focus:ring-brand-100 focus:outline-none"
+                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-small placeholder:text-faint focus:ring-2 focus:border-brand"
               />
             </CardContent>
           </Card>
 
           <Card>
             <CardContent className="space-y-3">
-              <p className="flex items-start gap-2 text-xs text-muted">
+              <p className="flex items-start gap-2 text-caption text-muted">
                 <Fingerprint className="mt-0.5 size-4 shrink-0 text-faint" />
                 <span>
                   Your audit is bound to the {task.evidence.length} builder files you reviewed (bundle{" "}
@@ -295,14 +351,14 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
                 </span>
               </p>
               {showErrors && problems.length > 0 && (
-                <ul className="list-disc space-y-0.5 pl-5 text-xs text-bad">
+                <ul className="list-disc space-y-0.5 pl-5 text-caption text-bad">
                   {problems.map((p) => (
                     <li key={p.field + p.message}>{p.message}</li>
                   ))}
                 </ul>
               )}
               {submitError && (
-                <div className="rounded-md bg-bad-bg px-3 py-2 text-sm text-bad">
+                <div role="alert" className="rounded-md bg-bad-bg px-3 py-2 text-small text-bad">
                   {submitError.stale ? "The builder's evidence changed since you opened this audit. Reload and review it again." : submitError.message}
                   {submitError.stale && (
                     <Button size="sm" variant="danger" className="ml-3" onClick={onReload}>
@@ -312,10 +368,18 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
                 </div>
               )}
               {key !== undefined && spv && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
-              <Button variant="brand" size="lg" className="w-full" onClick={() => void submit(canSign)} disabled={busy || !bundle || key === undefined}>
+              <Button ref={submitButton} variant="brand" size="lg" className="w-full" aria-keyshortcuts="Control+Enter Meta+Enter" onClick={() => {
+                setShowErrors(true);
+                if (problems.length) {
+                  document.getElementById(problems[0]!.field)?.scrollIntoView({ block: "center" });
+                  return;
+                }
+                setReviewing(true);
+              }} disabled={busy || !bundle || key === undefined}>
                 {canSign && <PenLine />}
-                {phase === "signing" ? "Signing attestation…" : phase === "filing" ? "Filing audit…" : canSign ? "Sign & file audit" : "File audit (core signs)"}
+                {phase === "signing" ? "Signing attestation…" : phase === "filing" ? "Filing audit…" : "Review audit"}
               </Button>
+              <p className="text-center text-caption text-muted">Step 1 of 2 · Complete your report, then review before signing. Ctrl+Enter or ⌘+Enter opens review.</p>
             </CardContent>
           </Card>
         </div>
@@ -335,17 +399,18 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
           <CheckCircle2 className="mx-auto size-10 text-ok" />
           <div>
             <h1 className="text-xl font-semibold">Audit filed</h1>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 text-small text-muted">
               {task.projectName} · M{task.milestone.index + 1} {task.milestone.title} is now <span className="font-medium text-ink">{result.milestone.status}</span>.
               The AI runs the test suite over your audit and the builder&apos;s evidence.
             </p>
           </div>
-          {attested && (
-            <a href={attested.explorerUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-mono text-sm text-brand hover:underline">
+          {(task.needs === "re_audit" || latestOwnAudit(task, result.audit.inspector)) && <p className="text-small text-muted">Re-audit filed. This report supersedes your earlier report for the next suite. Filing it does not release the escrow; fresh checks must run.</p>}
+          {attested && API_MODE !== "mock" && (
+            <a href={attested.explorerUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-mono text-small text-brand hover:underline">
               Attestation {shortHash(attested.txHash)} <ExternalLink className="size-3.5" />
             </a>
           )}
-          <dl className="mx-auto max-w-sm space-y-1 rounded-md bg-subtle px-4 py-3 text-left text-xs">
+          <dl className="mx-auto max-w-sm space-y-1 rounded-md bg-subtle px-4 py-3 text-left text-caption">
             {signed ? (
               <>
                 <Row label="Signed by">
@@ -357,15 +422,18 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
                 <Row label="Memo">
                   <span className="font-mono">audit · {shortHash(signed.memo.hash)}</span>
                 </Row>
-                <Row label="On ledger">
-                  {sameTx ? <span className="text-ok">same tx you signed ✓</span> : <span className="text-bad">tx hash differs from the one signed</span>}
+                <Row label={API_MODE === "mock" ? "Mock receipt" : "On ledger"}>
+                  {sameTx ? <span className="text-ok">{API_MODE === "mock" ? "Signature checked locally; no ledger transaction" : "Transaction matches your signature"}</span> : <span className="text-bad">tx hash differs from the one signed</span>}
                 </Row>
               </>
             ) : (
-              <Row label="Signed by">core, with your demo key (no key loaded in this browser)</Row>
+              <Row label="Signed by">core, on your behalf (no key loaded in this browser)</Row>
             )}
           </dl>
-          <div>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Link href="/history" className={buttonClass("primary")}>
+              View audit history
+            </Link>
             <Link href="/" className={buttonClass("secondary")}>
               Back to queue
             </Link>

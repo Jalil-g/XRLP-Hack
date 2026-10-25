@@ -44,6 +44,21 @@ export interface EvidenceUpload extends StoredFile {
 /** Route 10 report body (the JSON part of the multipart). Photos come as StoredFile[]. */
 export type AuditReportInput = Pick<InspectorAudit, "inspector" | "evidenceBundleHash" | "checklist" | "notes">;
 
+/** One step the keeper tried and could not finish this tick; it retries the same step on the next tick. */
+export interface KeeperIssue {
+  projectId: string;
+  milestoneId: string;
+  step: "cancel" | "refund" | "release";
+  code: string;
+  message: string;
+}
+
+/** Route 22. `issues` is empty when every due step went through. */
+export interface KeeperTickResult {
+  events: ChainEvent[];
+  issues: KeeperIssue[];
+}
+
 export interface CoreApi {
   listProjects(q?: { status?: ProjectStatus }): Promise<ProjectSummary[]>; // 1
   getProject(id: string): Promise<ProjectDetail>; // 2
@@ -82,7 +97,7 @@ export interface CoreApi {
   kycInvestor(address: XrplAddress): Promise<{ events: ChainEvent[] }>; // 19
   portfolio(investor: XrplAddress): Promise<PortfolioPosition[]>; // 20
   resetDemo(body: { seed?: "maple-st" }): Promise<{ ok: true }>; // 21
-  keeperTick(): Promise<{ events: ChainEvent[] }>; // 22
+  keeperTick(): Promise<KeeperTickResult>; // 22
   tryStealDemo(id: string, mid: string): Promise<TryStealResult>; // 23
 }
 
@@ -95,7 +110,9 @@ export interface ReleaseServicePort {
   conditionsForClose(project: Project): Promise<string[]>;
   /** Caller has already decided evaluateRelease(...).outcome === "pass".
    *  preflightFinish (throws DomainError UNSAFE_RELEASE, nothing submitted) -> "release" attestation -> finishEscrow.
-   *  Returns [attestation tx, finish tx]. */
+   *  Returns [attestation tx, finish tx]. If an ambiguous submit consumed the escrow, the second result uses
+   *  `result: "reconciled_escrow_consumed"` with the submitted hash; this is an inference from ledger state,
+   *  not a validated engine result. */
   release(p: { project: Project; milestone: Milestone }): Promise<TxResult[]>;
   /** Route 23: platform-signed finish with RANDOM bytes. Never reads the preimage store. */
   tryStealDemo(p: { project: Project; milestone: Milestone }): Promise<TxResult>;

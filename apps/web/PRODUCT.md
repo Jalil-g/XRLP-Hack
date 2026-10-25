@@ -11,7 +11,7 @@ web (Next.js, desktop first; the demo runs on a projector at 1280×720)
 
 ## Users
 
-- **Investor** (KYC'd, accredited): picks a verified project, deposits RLUSD into its vault, then watches where the money is.
+- **Investor** (KYC'd, accredited): picks a verified project, reviews and deposits RLUSD into its vault, then watches where the money is.
 - **Builder**: pays the verification fee, gets a verification report, uploads evidence per milestone, runs the checks, gets paid.
 - **Platform operator**: locks terms, closes loans, resolves `needs_human` milestones with a signed reason, runs the demo.
 - **Judges / audience** (the demo): must understand in one glance which checks passed, which failed and why, and whether money moved.
@@ -29,7 +29,7 @@ Needs review. The ledger fixes *where* money can go; the suite makes *when* publ
 
 ## User stories (the UI must make each one obvious)
 
-1. As an investor, I see verified projects with how much is raised and the rate, and I can invest in one step.
+1. As an investor, I see verified projects with how much is raised and the rate, and I can choose an amount, review the deposit, and see its receipt.
 2. As an investor, I see exactly where my money is now (vault, locked in escrow, released, back) and when I can withdraw.
 3. As a builder, I pay the verification fee and read my verification report (identity, feasibility, capability; MOCK labelled).
 4. As a builder, I upload evidence for the current milestone, run the checks, and see which check failed and what to fix.
@@ -48,7 +48,7 @@ Needs review. The ledger fixes *where* money can go; the suite makes *when* publ
 - Visual bar (user decision, 2026-10-24): **simple, like Apple's and Notion's web design**. Familiar, quiet, exact. No theme
   costume, no decoration. See `DESIGN.md`.
 - Say: the ledger fixes where money goes; the suite decides when. Don't say: "trustless AI", "ledger-enforced release",
-  "mainnet-ready", "automatic refunds to investors". Share value is booked at LoanSet; refunds are withdrawable from RedemptionDate.
+  "mainnet-ready", "automatic refunds to investors". Share value rises as interest is repaid (not at LoanSet: devnet is cash basis, decisions.md 10-24); refunds are withdrawable from RedemptionDate.
 
 ## Evidence on Hand
 

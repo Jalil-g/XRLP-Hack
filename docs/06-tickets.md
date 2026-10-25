@@ -1,5 +1,7 @@
 # 06 — Team plan, timeline & tickets (36h) — v2, test-suite release model
 
+> **Adopted pitch (2026-10-25):** [six-slide storyline](08-pitch-storyline.md), [100-second recorded demo](04-demo-script.md), [deck style guide](ideas/pitch-3min-style-guide.md), and [Claude PowerPoint prompts](ideas/pitch-3min-claude-prompts.md). These supersede older presentation timing and slide numbers below.
+
 Read first: `docs/02-product.md`, `docs/03-architecture.md`, `docs/xrpl-protocol-notes.md`, `docs/05-api.md`.
 **v2 (2026-10-24, Jalil):** rewritten for the direction change: release = milestone test suite run by the platform AI; inspectors
 audit and sign (no release key); AI-first project verification paid per project; AI-assigned inspectors; Schedule of Values.
@@ -26,8 +28,8 @@ Contracts between lanes: `packages/shared` (types + `ports.ts`) and `docs/05-api
 | **T+1h** | De-risk | XRPL-01/02 on devnet. CORE-01 contract PR open. PITCH-01 rubric asked. |
 | **T+6h** | **Integration 0: fake mode** | typecheck + tests green on `main`. Both apps click the full flow against core on fakes: fee → verify → lock → fund → close → evidence → audit → run checks → release / fail. Mock verifier deterministic. |
 | **T+14h** | **Integration 1: devnet** | `LEDGER_MODE=devnet`: the same flow from the UIs with explorer links, incl. AI + audit attestations before the finish. |
-| **T+24h** | Feature complete | Full demo (verified project, money shot, fraud held, ledger-says-no, stall) runs twice after `demo/reset`. Deck v1. Rehearsal 1. |
-| **T+28h** | Hardening | Punch list fixed. Backup video. Rehearsal 2. |
+| **T+24h** | Feature complete | Recordable flow (project, signed audit, successful release, failed hold) runs twice after `demo/reset`. Six-slide deck v1. Extended ledger/stall tests remain engineering checks. Rehearsal 1. |
+| **T+28h** | Hardening | Punch list fixed. Primary 100-second recording. Rehearsal 2. |
 | **T+32h** | Code freeze | Tag `demo-v1`. |
 | **T+33–35h** | Rehearsals 3–4, submit ≥30 min early | |
 
@@ -239,7 +241,7 @@ handoff comments on the issue with the `HANDOFF` template; PRs ≤ ~400 lines, t
 `size:M` `demo-critical` `checkpoint:T+6h`. Unchanged. First job: merge `scaffold/architecture-docs` + PR #75 docs, then CORE-01.
 
 ### CORE-11 · E2E rehearsal harness over HTTP
-`size:M` `demo-critical` `checkpoint:T+24h`. Unchanged; scenes = `docs/04-demo-script.md` v2.
+`size:M` `demo-critical` `checkpoint:T+24h`. Unchanged; scenes = `docs/04-demo-script.md` (recording plus extended engineering reference).
 
 ### CORE-12 · Release service: preimages, conditions, finish, try-steal
 `size:M` `demo-critical` `checkpoint:T+14h`. Generates one CSPRNG 32-byte preimage per escrow at close, stores encrypted, hands only conditions to `closeLoanAndCreateEscrows`, rejects duplicates. `release(milestone)`: `evaluateRelease()==pass` → `preflightFinish` (XRPL-14) → `release` attestation → `finishEscrow`. `tryStealDemo()` (route 23) submits a finish with **random** bytes from the platform key, never reads the store. Delete the old `FileInspectorKeyring`. Unit tests + devnet test.
@@ -251,7 +253,7 @@ handoff comments on the issue with the `HANDOFF` template; PRs ≤ ~400 lines, t
 ### PITCH-01 · Rubric, deadlines, demo format (@RoroDev2023, T+1h)
 Ask organizers: rubric (past events: Innovation · Execution · Impact · Pitch), demo length, submission format. Ask AWS booth whether "verifier runs on Bedrock" qualifies for the Lending slice; ask Quicknode whether a devnet endpoint exists. Log in `docs/decisions.md`.
 
-### PITCH-02 · Demo script v2 (@seanpatrickmay, T+6h) — **done in PR #75**, keep in sync with rehearsals.
+### PITCH-02 · Recording script (@seanpatrickmay, T+6h) — earlier v2 landed in PR #75; current authority is `docs/04-demo-script.md` and the six-slide storyline. Keep in sync with rehearsals.
 
 ### PITCH-03 · Rehearsals + punch list (@seanpatrickmay, T+24h). Unchanged.
 
@@ -259,15 +261,15 @@ Ask organizers: rubric (past events: Innovation · Execution · Impact · Pitch)
 
 ### PITCH-05 · Fact-check the problem page (@elmir132, T+14h). Unchanged. Add one source on Schedule of Values / AIA G702-G703 as the draw standard.
 
-### PITCH-06 · Pitch deck + name/copy (@bri-yin, T+24h). From `docs/08-pitch-storyline.md` §2 (8 slides incl. "Who can move the money?" and the GitHub-checks metaphor). Name decided by T+6h.
+### PITCH-06 · Pitch deck + name/copy (@bri-yin, T+24h). Exactly six slides per `docs/08-pitch-storyline.md` §2; use the linked style guide and Claude prompts. Name: Drawproof.
 
-### PITCH-07 · Judge FAQ (@elmir132, T+24h). From `docs/08-pitch-storyline.md` §5 + `docs/ideas/design-review-2026-10-24.md` §B. Must include: "the AI is your oracle?", "platform holds the release key?", "why not a hardware wallet?", "how do inspectors get hired?", "what about skyscrapers?" (SoV answer).
+### PITCH-07 · Judge FAQ (@elmir132, T+24h). From `docs/pitch-qa.md` + `docs/ideas/design-review-2026-10-24.md` §B. Must include: "the AI is your oracle?", "platform holds the release key?", "why not a hardware wallet?", "how do inspectors get hired?", "what about skyscrapers?" (SoV answer).
 
-### PITCH-08 · Backup video (@RoroDev2023, T+28h). ≤3-min recording of the v2 beats; no Ledger clip.
+### PITCH-08 · Primary recorded demo (@RoroDev2023, T+28h). 100 seconds for slide 5, per `docs/04-demo-script.md`; successful release plus failed hold; disclose actual modes.
 
 ### PITCH-09 · Review `docs/07-pitch.md` v2 + rehearse Q&A (@bri-yin + @Jalil-g, T+14h). 07 was rewritten in PR #75; this ticket is the read-through, timing, and assigning who answers which question.
 
-### DEMO-01 · "Ledger says no" button (@seanpatrickmay route 23 + @bri-yin button, T+24h). See CORE-12 / WEB-11.
+### DEMO-01 · "Ledger says no" button (@seanpatrickmay route 23 + @bri-yin button, T+24h). See CORE-12 / WEB-11. Engineering/Q&A only; excluded from the timed pitch.
 
 ---
 
@@ -288,5 +290,7 @@ XRPL-14 v1 / CORE-12 v1 as filed in #74 (superseded by XRPL-14 v2 + CORE-12 v2 a
 | @seanpatrickmay | CORE-01..12 + PITCH-02/03 + DEMO-01 route | 32 | 11 |
 
 ## Demo-day prep checklist
-`demo/reset` ≤30 min before the slot; Project B's escrow already expired; wallets ≥ 20 XRP; verifier cache warm; builder RLUSD trust line
-verified; explorer tabs open; both apps + core running; projector 1280×720; backup video open.
+
+Timed pitch: six-slide deck, local 100-second MP4, verified mode disclosures, offline playback, and a 2:50 rehearsal. The service/reset checks below apply before recording or an extended engineering walkthrough.
+`demo/reset` before recording; Project B's escrow already expired; wallets ≥ 20 XRP; verifier cache warm; builder RLUSD trust line
+verified; explorer tabs open; both apps + core running; projector 1280×720; primary local MP4 open and offline playback verified.

@@ -1,5 +1,7 @@
 # 07 — Pitch (v2, test-suite release model)
 
+> **Adopted pitch (2026-10-25):** [six-slide storyline](08-pitch-storyline.md), [100-second recorded demo](04-demo-script.md), [deck style guide](ideas/pitch-3min-style-guide.md), and [Claude PowerPoint prompts](ideas/pitch-3min-claude-prompts.md). These supersede older presentation timing and slide numbers below.
+
 > Script, slides and demo beats live in `docs/08-pitch-storyline.md` and `docs/04-demo-script.md`. This file keeps the hook, the
 > "why XRPL" table, the business model, regulation, and the judge Q&A. Numbers must be sourced in `docs/01-problem.md`.
 > Name: **Drawproof** (decided 10-24, `docs/decisions.md`). Rehearsal sheet with owners and sources: `docs/pitch-qa.md`.
@@ -8,8 +10,7 @@
 
 > **"Construction money should move only when the building does."**
 
-Story hook (use if the room is investors): *"In 2023, $63 million that ~800 investors put into two real-estate deals was wired to
-the sponsor's own account, and most of it was gone before a single deal closed. We built the lender where that's impossible."*
+Story hook (use if the room is investors): *"More than 800 investors put approximately $62.8 million into the Nightingale/CrowdStreet deals. The sponsor diverted funds. Construction lenders need a clearer link between evidence of progress and the next payment."*
 
 Metaphor (use if the room is engineers): *"It's a GitHub release pipeline for construction draws. Every milestone has a test suite.
 A licensed inspector's signed audit is one of the tests. All green, the escrow releases. One red, the money stays locked, and
@@ -52,6 +53,8 @@ funding-portal status, which is exactly what CrowdStreet was sued over."* Also: 
 (counsel), BSA/AML, and a deed of trust held by the SPV off-chain.
 
 ## Judge Q&A (the hardest 16; ~20 s each; concede fast, then the mechanism)
+
+For the five mandatory stage questions, use the shorter, implementation-checked answers in `docs/judge-faq.md`.
 
 **1. "The AI releases the money. Isn't the AI your oracle?"**
 The AI runs a *published* test suite, most of which is deterministic: GPS vs site, timestamps vs escrow, duplicate-photo hashes, invoice

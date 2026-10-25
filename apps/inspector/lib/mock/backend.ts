@@ -3,6 +3,7 @@
 // State lives in whichever runtime imports it (the browser, for this client-rendered app) and resets on reload.
 import type {
   ErrorCode,
+  Evidence,
   Inspector,
   InspectorAudit,
   InspectorTask,
@@ -14,6 +15,7 @@ import type {
 import { ATTEST_AMOUNT_DROPS, auditHash, parseAttestationTx, verifySignedBlob } from "@xrlp/attest-signer";
 import { decode, hashes, type Transaction } from "xrpl";
 import { evidenceBundleHash, sha256Hex } from "../audit.ts";
+import { InspectorSiteVisit, SITE_VISIT_QUESTIONS, parseSiteVisitTx, siteVisitHash, type SubmitSiteVisitResult } from "../site-visit.ts";
 import * as fx from "./fixtures.ts";
 
 export class MockError extends Error {
@@ -36,6 +38,7 @@ function seed() {
     attestations: fx.ATTESTATIONS,
     events: fx.EVENTS,
     reAudit: fx.RE_AUDIT,
+    siteVisits: {} as Record<string, InspectorSiteVisit[]>,
   });
 }
 
@@ -49,6 +52,14 @@ export const mockControl = {
   },
   setLatency(ms: number) {
     latencyMs = ms;
+  },
+  /** Simulate a builder resubmission without adding a public API outside this app's contract. */
+  replaceEvidence(projectId: string, milestoneId: string, evidence: Evidence[]) {
+    const milestone = findProject(projectId).milestones.find((m) => m.id === milestoneId);
+    if (!milestone) throw new MockError("not_found", "Milestone not found", 404);
+    state.evidence[milestoneId] = structuredClone(evidence);
+    milestone.status = "evidence_submitted";
+    if (!state.reAudit.includes(milestoneId)) state.reAudit.push(milestoneId);
   },
 };
 
@@ -83,7 +94,8 @@ export async function inspectorQueue(address: string): Promise<InspectorTask[]> 
     if (!(state.assignments[p.id] ?? []).includes(address)) continue;
     const base = { projectId: p.id, projectName: p.name, siteGeo: p.siteGeo };
     if (p.status === "verifying") {
-      tasks.push({ ...base, sov: p.sov ?? [], evidence: [], needs: "pre_visit", priorAudits: [] });
+      const visited = (state.siteVisits[p.id] ?? []).some((v) => v.inspector === address);
+      tasks.push({ ...base, sov: p.sov ?? [], evidence: [], needs: visited ? "none" : "pre_visit", priorAudits: [] });
       continue;
     }
     for (const m of p.milestones) {
@@ -172,6 +184,13 @@ export async function submitAudit({ projectId, milestoneId, report, photos, sign
     : [...(state.audits[milestoneId] ?? []), audit];
   state.reAudit = state.reAudit.filter((id) => id !== milestoneId);
   if (reAudit || state.audits[milestoneId].length >= milestone.requiredInspectors) milestone.status = "audited";
+  // A prior suite evaluated a different report; it cannot certify (or reject) this replacement.
+  state.checks[milestoneId] = { required: [], optional: [], outcome: "pending" };
+  state.attestations[milestoneId] = [...(state.attestations[milestoneId] ?? []), {
+    milestoneId, role: "inspector", signer: report.inspector,
+    decision: report.checklist.every((line) => line.status === "done") ? "approve" : "reject",
+    notes: report.notes, txHash, at: report.at,
+  }];
 
   const event = fx.chainEvent({ projectId, milestoneId, kind: "audit_attested", actor: report.inspector, at: report.at, txHash });
   state.events.push(event);
@@ -204,4 +223,54 @@ async function verifyAttestation(blob: string, report: InspectorAudit, photos: B
   if (att.kind !== "audit" || att.milestoneId !== milestone.id) bad(`memo is ${att.kind} for ${att.milestoneId}`);
   const photoHashes = await Promise.all(photos.map(async (p) => ({ sha256: await sha256Hex(await p.arrayBuffer()) })));
   if (att.hash !== (await auditHash({ ...report, photos: photoHashes }))) bad("memo hash does not match this audit");
+}
+
+// ---------------------------------------------------------------- INS-06 site visit (TODO(#53): proposed contract)
+
+export type MockSiteVisitInput = { projectId: string; report: InspectorSiteVisit; photos: Blob[]; signedTxBlob?: string };
+
+/** The proposed route: assigned inspector, project still in verification, complete answers, and (if sent) a valid signature. */
+export async function submitSiteVisit({ projectId, report, photos, signedTxBlob }: MockSiteVisitInput): Promise<SubmitSiteVisitResult> {
+  const project = findProject(projectId);
+  const parsed = InspectorSiteVisit.safeParse(report);
+  if (!parsed.success) throw new MockError("validation", `report: ${parsed.error.issues[0]?.message ?? "invalid"}`, 400);
+  if (report.projectId !== projectId) throw new MockError("validation", "report.projectId does not match the route", 400);
+  if (!(state.assignments[projectId] ?? []).includes(report.inspector)) {
+    throw new MockError("validation", `${report.inspector} is not the assigned inspector for ${project.name}`, 403);
+  }
+  if (project.status !== "verifying") throw new MockError("invalid_state", `${project.name} is ${project.status}; no pre-construction visit is due`, 409);
+  if ((state.siteVisits[projectId] ?? []).some((v) => v.inspector === report.inspector)) {
+    throw new MockError("invalid_state", "This inspector already filed the site visit for this project", 409);
+  }
+  for (const q of SITE_VISIT_QUESTIONS) {
+    const a = report.answers[q.key];
+    if (a.answer !== "yes" && !a.note?.trim()) throw new MockError("validation", `answers.${q.key}: a note is required for ${a.answer}`, 400);
+  }
+  if (photos.length === 0) throw new MockError("validation", "photos: at least one site photo is required", 400);
+
+  let txHash = fx.fakeHash(`site-visit:${projectId}:${report.inspector}:${report.at}`);
+  if (signedTxBlob) {
+    const bad = (why: string): never => {
+      throw new MockError("validation", `signedTxBlob rejected: ${why}`, 400);
+    };
+    let tx: Transaction & { TxnSignature?: string; Signers?: unknown };
+    try {
+      tx = decode(signedTxBlob) as unknown as typeof tx;
+      verifySignedBlob(signedTxBlob);
+    } catch (err) {
+      return bad((err as Error).message);
+    }
+    if (tx.TransactionType !== "Payment" || tx.Amount !== ATTEST_AMOUNT_DROPS || tx.Flags || tx.Signers) bad("not a single-signed 1-drop Payment");
+    const att = parseSiteVisitTx(tx);
+    if (!att) return bad("no valid site_visit memo");
+    if (att.signer !== report.inspector) bad(`signed by ${att.signer}, report is from ${report.inspector}`);
+    if (att.destination !== fx.ADDR.platform) bad(`sent to ${att.destination}, not the platform account`);
+    if (att.projectId !== projectId) bad(`memo is for ${att.projectId}`);
+    const photoHashes = await Promise.all(photos.map(async (p) => ({ sha256: await sha256Hex(await p.arrayBuffer()) })));
+    if (att.hash !== (await siteVisitHash({ ...report, photos: photoHashes }))) bad("memo hash does not match this site visit");
+    txHash = hashes.hashSignedTx(signedTxBlob);
+  }
+  const visit: InspectorSiteVisit = { ...report, txHash };
+  state.siteVisits[projectId] = [...(state.siteVisits[projectId] ?? []), visit];
+  return settle({ visit });
 }

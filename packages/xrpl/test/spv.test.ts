@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decode, Wallet, type SubmittableTransaction } from "xrpl";
 import { XrplTxError } from "../src/errors.ts";
-import { checkSignerQuorum, SPV_QUORUM, spvSignerEntries, submitMultisigned, type MultisigDeps } from "../src/spv.ts";
+import { checkSignerQuorum, SPV_QUORUM, spvCountersignProblems, spvSignerEntries, spvSignerProblems, submitMultisigned, type MultisigDeps } from "../src/spv.ts";
 import { withAccountLock } from "../src/submit.ts";
 
 const S = { platform: "rPlatform", builder: "rBuilder", inspector: "rInspector", trustee: "rTrustee" };
@@ -92,4 +92,23 @@ test("submitMultisigned: 2 signers / AI signer fail fast locally, nothing submit
   // checkQuorum: false skips the read and goes straight to submit
   await submitMultisigned(pay(), [W.platform, W.builder], { checkQuorum: false, deps: { ...f, getSpvInfo: async () => assert.fail("no read") } });
   assert.equal(f.calls.length, 1);
+});
+
+test("M6: spvSignerProblems refuses the AI / releaseService / issuer key and non-addresses in any slot", () => {
+  const forbidden = { aiAgent: W.ai.classicAddress, releaseService: Wallet.generate().classicAddress, issuer: Wallet.generate().classicAddress };
+  const s = { platform: W.platform.classicAddress, builder: W.builder.classicAddress, inspector: W.inspector.classicAddress, trustee: W.trustee.classicAddress };
+  assert.deepEqual(spvSignerProblems(s, forbidden), []);
+  assert.match(spvSignerProblems({ ...s, inspector: W.ai.classicAddress }, forbidden).join(), /SPV signer inspector .* is the aiAgent key, which must never be an SPV signer/);
+  assert.match(spvSignerProblems({ ...s, builder: forbidden.releaseService }, forbidden).join(), /builder .* is the releaseService key/);
+  assert.match(spvSignerProblems({ ...s, trustee: "not-an-address" }, forbidden).join(), /SPV signer trustee is not a classic XRPL address/);
+});
+
+test("L3: spvCountersignProblems: quorum from the on-ledger list AND the master key disabled", () => {
+  const list = { signerQuorum: 3, signers: [W.platform, W.builder, W.inspector, W.trustee].map((w) => ({ account: w.classicAddress, weight: 1 })) };
+  const three = [W.platform, W.builder, W.trustee].map((w) => w.classicAddress);
+  assert.deepEqual(spvCountersignProblems({ ...list, masterDisabled: true }, three), []);
+  assert.deepEqual(spvCountersignProblems({ ...list, masterDisabled: false }, three), ["SPV master key is still enabled (lock the SPV first, or use the single-key fallback explicitly)"]);
+  assert.match(spvCountersignProblems({ ...list, masterDisabled: true }, three.slice(0, 2)).join(), /weight 2 < quorum 3/);
+  assert.match(spvCountersignProblems({ ...list, masterDisabled: true }, [...three.slice(0, 2), W.ai.classicAddress]).join(), /not on the SPV list/);
+  assert.deepEqual(spvCountersignProblems({ signers: [], masterDisabled: false }, three), ["SPV has no SignerList"]);
 });
