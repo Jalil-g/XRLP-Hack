@@ -137,3 +137,16 @@ export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErr
 export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
 export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
 export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
+// XRPL-11: .data/prestage.json contract (read by core, CORE-07). Preimages live in a separate file, never here.
+export { PRESTAGE_VERSION, PRESTAGE_FILE, PRESTAGE_PREIMAGES_FILE, PRESTAGE_KEYS, parsePrestageFile, prestageVaultDates } from "./prestage-types.ts";
+export type {
+  PrestageFile,
+  PrestageProject,
+  PrestageEscrow,
+  PrestageEscrowState,
+  PrestageMilestone,
+  PrestageTx,
+  PrestageKey,
+  PrestageScenario,
+  PrestagePreimagesFile,
+} from "./prestage-types.ts";

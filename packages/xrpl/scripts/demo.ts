@@ -1,287 +1,245 @@
-// pnpm --filter @xrlp/xrpl demo
-// Full money path on XRPL devnet with real transactions. Reuses .data/wallets.json; creates a fresh
-// project (SPV + closed-ended vault + broker + loan) each run.
+// pnpm --filter @xrlp/xrpl demo              CLI backup of the live demo (docs/04-demo-script.md beats 1-6), ~6 min
+// pnpm --filter @xrlp/xrpl demo --prestage   = pnpm --filter @xrlp/xrpl prestage (Projects A/B/C -> .data/prestage.json)
 //
-// Env knobs:
-//   DEMO_SPV_MODE=multisig|single   multisig (default): SPV locked before LoanSet; single: fallback,
-//                                   SPV master key countersigns LoanSet + EscrowCreates, locked afterwards.
-//   DEMO_WITHDRAW=1                 wait for vault Redemption (~10 min) and do an investor VaultWithdraw.
-//   DEMO_SUBSCRIPTION_S=60          seconds of Subscription (deposit window) after VaultCreate.
-//   DEMO_PAYMENT_INTERVAL_S=300     loan payment interval (4 payments -> periodic ~7.5k < the 9k refund).
-//   DEMO_M3_CANCEL_S=150            milestone 3 CancelAfter, seconds after escrow creation.
-import { mkdirSync, writeFileSync } from "node:fs";
+// Whole v2 story on devnet with real txs, one fresh project per run (wallets reused from WALLETS_FILE):
+//   builder pays the 250 RLUSD verification fee -> VERIFIED_BUILDER -> lock terms (SPV 4 signers q3, private closed-ended
+//   vault, broker + cover) -> KYC'd investors deposit, investor3 (no KYC) -> tecNO_AUTH -> close (LoanSet + 3 escrows,
+//   conditions from the release-service stand-in) -> M1: inspector audit + AI verdict attestations -> preflight ->
+//   release attestation -> EscrowFinish to the builder -> M2: verdict FAIL, escrow stays locked -> "ledger says no":
+//   random fulfillment -> tecCRYPTOCONDITION_ERROR -> M3 stalls: CancelAfter passes -> EscrowCancel -> refund LoanPay
+//   (overpayment) -> vault/loan snapshots.
+//
+// Env knobs (seconds):
+//   DEMO_SUBSCRIPTION_S=60       deposit window after VaultCreate (then the close waits for SubscriptionDate).
+//   DEMO_PAYMENT_INTERVAL_S=300  loan PaymentInterval. The refund LoanPay must land before the first due date
+//                                (LoanSet + interval), so keep it > DEMO_M3_CANCEL_S + ~60.
+//   DEMO_PAYMENT_TOTAL=4         payments. The 9000 refund must cover one periodic payment (~principal/total): keep >= 4.
+//   DEMO_M3_CANCEL_S=150         milestone 3 CancelAfter, seconds after the close.
+//   DEMO_WITHDRAW=1              after the story, wait for the vault's RedemptionDate and VaultWithdraw (investor1).
+//                                RedemptionDate = SubscriptionDate + 120 (close window) + interval x total + 60 s:
+//                                ~25 min after start with the defaults, ~18 min with DEMO_PAYMENT_INTERVAL_S=200
+//                                DEMO_M3_CANCEL_S=100. (The old "~10 min" was wrong.) For a withdrawal on stage use
+//                                prestage Project C, which is already past RedemptionDate.
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ChainEvent, Project } from "@xrlp/shared";
-import { rippleTimeToISOTime } from "xrpl";
+import { isoTimeToRippleTime } from "xrpl";
+import { bootstrapWallets, cancelExpiredMilestone, disconnect, getShareBalance, getSpvInfo, ledgerTime, rlusdBalance, waitForLedgerTimeAfter, withdrawFromVault } from "../src/index.ts";
+import { config, REPO_ROOT } from "../src/config.ts";
+import { prestageVaultDates } from "../src/prestage-types.ts";
 import {
-  attestApproval,
-  bootstrapWallets,
-  cancelExpiredMilestone,
-  closeLoanAndCreateEscrows,
-  config,
-  credentialStatus,
-  depositToVault,
-  disconnect,
-  generateMilestoneCondition,
-  getLoan,
-  getShareBalance,
-  getSpvInfo,
-  getVaultStatus,
-  issueCredential,
-  ledgerTime,
-  lockSpvAccount,
-  releaseMilestone,
-  repayLoan,
-  rlusdBalance,
-  setupProjectOnChain,
-  sha256Hex,
-  waitForLedgerTimeAfter,
-  withdrawFromVault,
-  type MilestoneCondition,
-  type TxResult,
-} from "../src/index.ts";
-import { topUpRlusd } from "../src/rlusd.ts";
+  attestAudit,
+  attestVerdict,
+  closeProject,
+  dataPath,
+  DAY_S,
+  deposit,
+  ensureParticipants,
+  envNum,
+  escrowStillOpen,
+  iso,
+  makeProject,
+  printSnapshot,
+  ReleaseServiceStandIn,
+  releaseWithSuite,
+  repoRel,
+  setupPrivateProject,
+  snapshot,
+  spvLoanPay,
+  tick,
+  tryWrongFulfillment,
+  TxLog,
+  verifyBuilder,
+  writeJsonAtomic,
+} from "./demo-lib.ts";
 
-const env = (k: string, d: number) => Number(process.env[k] ?? d);
-const SPV_MODE = (process.env.DEMO_SPV_MODE ?? "multisig") as "multisig" | "single";
-const SUBSCRIPTION_S = env("DEMO_SUBSCRIPTION_S", 60);
-const PAYMENT_INTERVAL_S = env("DEMO_PAYMENT_INTERVAL_S", 300);
-const PAYMENT_TOTAL = 4;
-const M3_CANCEL_S = env("DEMO_M3_CANCEL_S", 150);
-const DO_WITHDRAW = process.env.DEMO_WITHDRAW === "1";
-
-// ------------------------------------------------------------------ tx log
-interface Row {
-  step: string;
-  type: string;
-  result: string;
-  url: string;
+if (process.argv.includes("--prestage")) {
+  await import("./prestage.ts");
+} else {
+  await runDemo();
 }
-const rows: Row[] = [];
-const notes: string[] = [];
-function rec(step: string, tx: TxResult | undefined) {
-  if (!tx) return;
-  rows.push({ step, type: String(tx.tx.TransactionType ?? "?"), result: tx.result, url: tx.explorerUrl });
-  console.log(`  ✓ ${step.padEnd(40)} ${tx.explorerUrl}`);
-}
-const events: ChainEvent[] = [];
-const say = (s: string) => console.log(`\n== ${s}`);
-const tick = (label: string) => (s: number) => process.stdout.write(`\r  … waiting ${label}: ~${s}s   `);
 
-async function main() {
+async function runDemo() {
+  const SUBSCRIPTION_S = envNum("DEMO_SUBSCRIPTION_S", 60);
+  const PAYMENT_INTERVAL_S = envNum("DEMO_PAYMENT_INTERVAL_S", 300);
+  const PAYMENT_TOTAL = envNum("DEMO_PAYMENT_TOTAL", 4);
+  const M3_CANCEL_S = envNum("DEMO_M3_CANCEL_S", 150);
+  const CLOSE_WINDOW_S = 120;
+  const DO_WITHDRAW = process.env.DEMO_WITHDRAW === "1";
+  if (M3_CANCEL_S + 45 >= PAYMENT_INTERVAL_S) {
+    console.warn(`WARN DEMO_M3_CANCEL_S=${M3_CANCEL_S} is too close to DEMO_PAYMENT_INTERVAL_S=${PAYMENT_INTERVAL_S}: the refund LoanPay may be late.`);
+  }
+
+  const log = new TxLog();
   const startedAt = new Date().toISOString();
-
-  say("1. bootstrap wallets + RLUSD");
-  const { wallets: w, txs } = await bootstrapWallets({ log: (s) => console.log("  " + s) });
-  txs.forEach((t, i) => rec(`bootstrap #${i + 1}`, t));
-  const issuer = w.issuer.classicAddress;
-
-  say("2. credentials (VERIFIED_BUILDER, KYC_INVESTOR)");
-  if ((await credentialStatus(w.builder.classicAddress, w.platform.classicAddress, "VERIFIED_BUILDER")) === "none") {
-    const c = await issueCredential({ subject: "builder", type: "VERIFIED_BUILDER" });
-    rec("CredentialCreate VERIFIED_BUILDER", c.createTx);
-    rec("CredentialAccept VERIFIED_BUILDER", c.acceptTx);
-    events.push(c.event);
-  } else console.log("  builder already VERIFIED_BUILDER");
-  for (const inv of ["investor1", "investor2", "investor3"] as const) {
-    if ((await credentialStatus(w[inv].classicAddress, w.platform.classicAddress, "KYC_INVESTOR")) === "none") {
-      const c = await issueCredential({ subject: inv, type: "KYC_INVESTOR" });
-      rec(`CredentialCreate KYC_INVESTOR ${inv}`, c.createTx);
-      rec(`CredentialAccept KYC_INVESTOR ${inv}`, c.acceptTx);
-    } else console.log(`  ${inv} already KYC_INVESTOR`);
-  }
-
-  // ---- demo project (shape = @xrlp/shared Project)
   const projectId = `demo-${Date.now().toString(36)}`;
-  const project: Project = {
-    id: projectId,
-    name: "Maple St duplex",
-    type: "residential_new",
-    builderId: "builder-1",
-    siteAddress: "12 Maple St, Brooklyn NY",
-    siteGeo: { lat: 40.6782, lng: -73.9442, radiusM: 150 },
-    description: "Demo project",
-    terms: {
-      principal: "30000",
-      interestRateBps: 1000, // 10% APR
-      termDays: 30,
-      paymentIntervalDays: 15,
-      fundingDeadline: new Date(Date.now() + 86_400_000).toISOString(), // overridden by demo timing
-    },
-    status: "funding",
-    milestones: [
-      { id: `${projectId}-m1`, index: 0, templateKey: "foundation", title: "Foundation", amount: "9000", requiredInspectors: 1, status: "pending" },
-      { id: `${projectId}-m2`, index: 1, templateKey: "framing", title: "Framing", amount: "12000", requiredInspectors: 1, status: "pending" },
-      { id: `${projectId}-m3`, index: 2, templateKey: "dry_in", title: "Roof & Dry-in", amount: "9000", requiredInspectors: 1, status: "pending" },
-    ],
-    chain: {},
-  };
-
-  say(`3. setupProjectOnChain (${projectId}, SPV mode: ${SPV_MODE})`);
-  const now0 = await ledgerTime();
-  // SPV creation (faucet) happens before VaultCreate inside setup, so give it slack.
-  const subEnd = now0 + SUBSCRIPTION_S + 45;
-  const redemption = subEnd + PAYMENT_INTERVAL_S * PAYMENT_TOTAL + 60 + 90;
-  // Cover deposit defaults to the protocol minimum (10% of principal + interest) + 10% headroom.
-  const setup = await setupProjectOnChain(project, {
-    subscriptionEndsAt: new Date(rippleTimeToISOTime(subEnd)),
-    redemptionAt: new Date(rippleTimeToISOTime(redemption)),
-    paymentTotal: PAYMENT_TOTAL,
-    paymentIntervalS: PAYMENT_INTERVAL_S,
-    lockSpv: SPV_MODE === "multisig",
-  });
-  console.log(`  cover ${setup.cover.amount} RLUSD (min ${setup.cover.minimum}), rates ${setup.cover.coverRateMinimum}/${setup.cover.coverRateLiquidation}, mgmt fee ${setup.cover.managementFeeRate}`);
-  for (const [k, t] of Object.entries(setup.txs)) rec(k, t);
-  events.push(...setup.events);
-  project.chain = { spv: setup.spv, vaultId: setup.vaultId, loanBrokerId: setup.loanBrokerId, shareMptIssuanceId: setup.shareMptIssuanceId };
-  console.log(`  SPV ${setup.spv}\n  vault ${setup.vaultId}\n  broker ${setup.loanBrokerId}\n  shares MPT ${setup.shareMptIssuanceId}`);
-  console.log(`  subscription ends ${setup.subscriptionEndsAt}, redemption ${setup.redemptionAt}`);
-  if (SPV_MODE === "multisig") console.log(`  SPV: ${JSON.stringify(await getSpvInfo(setup.spv))}`);
-
-  say("4. investors deposit (VaultDeposit)");
-  for (const [inv, amt] of [["investor1", "10000"], ["investor2", "12000"], ["investor3", "8000"]] as const) {
-    const d = await depositToVault({ projectId, vaultId: setup.vaultId, investor: inv, amount: amt });
-    rec(`VaultDeposit ${inv} ${amt}`, d.tx);
-    events.push(d.event);
-  }
-  for (const inv of ["investor1", "investor2", "investor3"] as const) {
-    console.log(`  ${inv} shares: ${await getShareBalance(w[inv].classicAddress, setup.shareMptIssuanceId)}`);
-  }
-  console.log(`  vault: ${JSON.stringify(await getVaultStatus(setup.vaultId))}`);
-
-  say("5. INSPECTOR generates one condition per milestone (fulfillments stay inspector-side)");
-  // Simulates the inspector's client. The platform only ever sees `condition`.
-  const inspectorSecrets: Record<string, MilestoneCondition> = {};
-  for (const m of project.milestones) inspectorSecrets[m.id] = generateMilestoneCondition();
-  const conditions = Object.fromEntries(Object.entries(inspectorSecrets).map(([id, c]) => [id, c.condition]));
-
-  say("6. wait for Investment phase, then LoanSet + escrows back-to-back");
-  const vs = await getVaultStatus(setup.vaultId);
-  await waitForLedgerTimeAfter(subEnd, tick("subscription end"));
-  console.log(`\n  phase now: ${(await getVaultStatus(setup.vaultId))?.phase} (was ${vs?.phase})`);
-  // Builder pays the LoanOriginationFee shortfall into the SPV at closing (escrows sum to the full principal).
-  rec("RLUSD -> builder (closing costs)", await topUpRlusd(w.issuer, w.builder.classicAddress, 1000));
-  const nowInv = await ledgerTime();
-  const m3 = project.milestones[2]!;
-  m3.cancelAfter = rippleTimeToISOTime(nowInv + M3_CANCEL_S);
-  const close = await closeLoanAndCreateEscrows(project, {
-    conditions,
-    paymentTotal: PAYMENT_TOTAL,
-    paymentIntervalS: PAYMENT_INTERVAL_S,
-    defaultCancelAfter: new Date(Date.now() + 30 * 86_400_000),
-    waitForInvestmentPhase: true,
-    allowOverpayment: true,
-    ...(SPV_MODE === "single" ? { spvSingleKey: setup.spvWallet } : {}),
-  });
-  rec(`builder -> SPV origination fee ${close.originationFee}`, close.originationFeeTopUpTx);
-  rec(`LoanSet (${SPV_MODE} countersign, origination fee ${close.originationFee})`, close.loanSetTx);
-  close.escrows.forEach((e, i) => {
-    const t = close.events.find((ev) => ev.kind === "escrow_created" && ev.milestoneId === e.milestoneId)!;
-    rows.push({ step: `EscrowCreate m${i + 1} ${e.amount} (cancel ${e.cancelAfter})`, type: "EscrowCreate", result: "tesSUCCESS", url: t.explorerUrl });
-    console.log(`  ✓ EscrowCreate m${i + 1} seq=${e.escrow.offerSequence} ${t.explorerUrl}`);
-  });
-  events.push(...close.events);
-  project.chain.loanId = close.loanId;
-  console.log(`  loan ${close.loanId}`);
-  console.log(`  SPV RLUSD after escrows: ${await rlusdBalance(setup.spv, issuer)}`);
-
-  if (SPV_MODE === "single") {
-    say("6b. fallback path: lock SPV AFTER loan + escrows");
-    const lock = await lockSpvAccount(setup.spvWallet);
-    rec("SignerListSet (post-loan)", lock.signerListSet);
-    rec("AccountSet disableMaster (post-loan)", lock.disableMaster);
-  }
-
-  say("7. milestone 1: AI + inspector + platform attest on-chain, inspector reveals fulfillment, release");
-  const m1 = project.milestones[0]!;
-  const e1 = close.escrows[0]!;
-  const fakeVerdict = { milestoneId: m1.id, decision: "pass", confidence: 0.93, model: "mock" };
-  const verdictHash = sha256Hex(JSON.stringify(fakeVerdict));
-  for (const [role, signer, notes] of [
-    ["ai_agent", "aiAgent", "evidence checks passed"],
-    ["inspector", "inspector1", "site visit OK"],
-    ["platform", "platform", "policy satisfied"],
-  ] as const) {
-    const a = await attestApproval({ projectId, spv: setup.spv, milestoneId: m1.id, role, signer, decision: "approve", notes, verdictHash, condition: e1.escrow.condition });
-    rec(`attest m1 ${role}`, a.tx);
-    events.push(a.event);
-  }
-  // Inspector hands over the fulfillment only now.
-  const rel = await releaseMilestone({ projectId, milestoneId: m1.id, escrow: e1.escrow, fulfillment: inspectorSecrets[m1.id]!.fulfillment, amount: m1.amount });
-  rec("EscrowFinish m1 -> builder", rel.tx);
-  events.push(rel.event);
-  console.log(`  builder RLUSD: ${await rlusdBalance(w.builder.classicAddress, issuer)}`);
-
-  say(`8. milestone 3 stalls: wait for CancelAfter (${m3.cancelAfter}), EscrowCancel -> SPV`);
-  const e3 = close.escrows[2]!;
-  const can = await cancelExpiredMilestone({ projectId, milestoneId: m3.id, escrow: e3.escrow, cancelAfter: e3.cancelAfter, wait: true, amount: m3.amount, onWait: tick("CancelAfter") });
-  console.log("");
-  rec("EscrowCancel m3 -> SPV", can.tx);
-  events.push(can.event);
-  console.log(`  SPV RLUSD after cancel: ${await rlusdBalance(setup.spv, issuer)}`);
-
-  say("9. SPV repays (multisig LoanPay): regular periodic payment, then overpayment test");
-  const loanBefore = await getLoan(close.loanId);
-  console.log(`  loan before: principalOutstanding=${loanBefore?.PrincipalOutstanding} periodic=${loanBefore?.PeriodicPayment} remaining=${loanBefore?.PaymentRemaining} nextDue=${loanBefore?.NextPaymentDueDate ? rippleTimeToISOTime(loanBefore.NextPaymentDueDate) : "-"}`);
-  // (a) Can the SPV pay back LESS than one periodic payment? (expected: no)
+  const rs = new ReleaseServiceStandIn(dataPath("demo-preimages.json"));
   try {
-    const small = await repayLoan({ projectId, spv: setup.spv, loanId: close.loanId, amount: "1000", mode: "overpayment" });
-    rec("LoanPay 1000 (sub-periodic, overpayment flag)", small.tx);
-    notes.push("Sub-periodic LoanPay (1000) was ACCEPTED.");
+    log.say("0. wallets + participants (idempotent)");
+    const { wallets: w, txs } = await bootstrapWallets({ log: (s) => log.info(s) });
+    txs.forEach((t, i) => log.rec(`bootstrap #${i + 1} ${String(t.tx.TransactionType)}`, t));
+    const { domainId } = await ensureParticipants(log);
+    const issuer = w.issuer.classicAddress;
+
+    const project = makeProject(
+      {
+        id: projectId,
+        name: "Maple St duplex",
+        siteAddress: "48 Maple St, Beacon, NY 12508",
+        siteGeo: { lat: 41.5048, lng: -73.9696, radiusM: 150 },
+        description: "Two-family new build (CLI demo, XRPL-11)",
+        principal: "30000",
+        interestRateBps: 1000,
+        milestones: [
+          ["foundation", "Foundation", "9000"],
+          ["framing", "Framing", "12000"],
+          ["dry_in", "Roof & Dry-in", "9000"],
+        ],
+        paymentTotal: PAYMENT_TOTAL,
+        paymentIntervalS: PAYMENT_INTERVAL_S,
+      },
+      new Date(Date.now() + SUBSCRIPTION_S * 1000).toISOString(),
+    );
+    const [m1, m2, m3] = project.milestones as [(typeof project.milestones)[0], (typeof project.milestones)[0], (typeof project.milestones)[0]];
+
+    log.say(
+      "1. Verified project",
+      "The builder pays to be checked. Our AI verifies identity, feasibility and capability, and the result is a credential on the ledger.",
+    );
+    await verifyBuilder(log, projectId);
+
+    log.say("2. Lock terms: SPV (4 signers, quorum 3) + private closed-ended vault + broker + first-loss cover", "Investors fund this project's vault. Only KYC'd investors can get in.");
+    const setup = await setupPrivateProject(log, project, {
+      domainId,
+      subscriptionInS: SUBSCRIPTION_S,
+      redemptionFor: (sub) => prestageVaultDates({ subscriptionDate: sub, paymentTotal: PAYMENT_TOTAL, paymentIntervalS: PAYMENT_INTERVAL_S, closeWindowS: CLOSE_WINDOW_S }).redemptionDate,
+      paymentTotal: PAYMENT_TOTAL,
+      paymentIntervalS: PAYMENT_INTERVAL_S,
+      inspector: w.inspector1.classicAddress,
+    });
+    const spvInfo = await getSpvInfo(setup.spv);
+    log.info(`SPV ${setup.spv}: masterDisabled=${spvInfo.masterDisabled} quorum=${spvInfo.signerQuorum} signers=${spvInfo.signers.map((s) => s.account).join(",")}`);
+    log.info(`vault ${setup.vaultId} (domain ${domainId})\n    broker ${setup.loanBrokerId}  cover ${setup.cover.amount}  subscription ends ${setup.subscriptionEndsAt}  redemption ${setup.redemptionAt}`);
+
+    log.say("2b. KYC'd investors deposit; investor3 has no KYC credential");
+    await deposit(log, project, "investor1", "18000");
+    await deposit(log, project, "investor2", "12000");
+    await deposit(log, project, "investor3", "8000", true);
+    for (const inv of ["investor1", "investor2"] as const) log.info(`${inv} shares: ${await getShareBalance(w[inv].classicAddress, setup.shareMptIssuanceId)}`);
+
+    log.say(
+      "2c. Close: LoanSet to the SPV + one escrow per milestone (conditions from the release service)",
+      "The Lending Protocol lent to a project account no single party controls. It locked every milestone into its own escrow. Two futures: this builder, or back.",
+    );
+    const conditions = rs.conditionsFor(project);
+    rs.save();
+    log.info(`release-service stand-in: 3 fresh preimages -> ${repoRel(rs.path)} (never printed); only conditions go on-ledger`);
+    const subRipple = isoTimeToRippleTime(setup.subscriptionEndsAt);
+    await waitForLedgerTimeAfter(subRipple, tick("SubscriptionDate"));
+    process.stdout.write("\n");
+    const now = await ledgerTime();
+    const close = await closeProject(log, project, {
+      conditions,
+      cancelAfters: [iso(now + 30 * DAY_S), iso(now + 60 * DAY_S), iso(now + M3_CANCEL_S)],
+      paymentTotal: PAYMENT_TOTAL,
+      paymentIntervalS: PAYMENT_INTERVAL_S,
+    });
+    const [e1, e2, e3] = close.escrows as [(typeof close.escrows)[0], (typeof close.escrows)[0], (typeof close.escrows)[0]];
+    printSnapshot(log, "after close", await snapshot(project));
+
+    log.say(
+      "3. Money shot: milestone 1 test suite passes -> release",
+      "Every milestone has a test suite. The inspector audited the site and signed her report. The AI runs the checks over her audit and the builder's evidence. All green, so the escrow releases.",
+    );
+    await attestAudit(log, project, m1.id, w.inspector1, auditFixture("foundation.json", m1.id, w.inspector1.classicAddress));
+    const checks = ["required_evidence_present", "gps_within_site", "photo_fresh", "no_duplicate_photo", "invoice_matches_budget", "inspector_audit_present", "audit_checklist_complete", "stage_visually_consistent"];
+    await attestVerdict(log, project, m1.id, { milestoneId: m1.id, decision: "pass", confidence: 0.93, model: "mock", checks });
+    const builderBefore = await rlusdBalance(w.builder.classicAddress, issuer);
+    await releaseWithSuite(log, project, e1, rs, { passed: checks });
+    log.info(`builder RLUSD ${builderBefore} -> ${await rlusdBalance(w.builder.classicAddress, issuer)}`);
+
+    log.say(
+      "4. Fraud held: milestone 2 reuses a photo from another project",
+      "Reused framing photo from another job. One red check, the suite fails, the money stays locked.",
+    );
+    await attestAudit(log, project, m2.id, w.inspector1, auditFixture("framing.json", m2.id, w.inspector1.classicAddress));
+    await attestVerdict(log, project, m2.id, {
+      milestoneId: m2.id,
+      decision: "fail",
+      confidence: 0.97,
+      model: "mock",
+      failing: ["no_duplicate_photo"],
+      reason: "no_duplicate_photo: matches Oak Ave project photo, distance 3/64",
+    });
+    log.info(`M2 escrow seq ${e2.offerSequence} still on-ledger: ${(await escrowStillOpen(e2)) ? "yes, locked" : "NO?!"}`);
+
+    log.say("5. Ledger says no: the platform tries to release M2 anyway", "Here's us trying to release it anyway. The ledger refuses.");
+    await tryWrongFulfillment(log, e2);
+    log.info(`M2 escrow still on-ledger: ${(await escrowStillOpen(e2)) ? "yes" : "NO?!"}`);
+
+    log.say(
+      `6. Stall: milestone 3 CancelAfter (${e3.cancelAfter}) passes -> EscrowCancel -> refund LoanPay`,
+      "If a project stalls, the escrow expires, the money can only go back to the project account, which repays the vault.",
+    );
+    // after XRPL-07 merge: cancelExpiredMilestone keeps this shape.
+    const can = await cancelExpiredMilestone({ projectId, milestoneId: m3.id, escrow: e3.escrow, cancelAfter: e3.cancelAfter, wait: true, amount: m3.amount, onWait: tick("CancelAfter") });
+    process.stdout.write("\n");
+    log.rec(`EscrowCancel m3 ${m3.amount} -> SPV`, can.tx);
+    const before = await snapshot(project);
+    printSnapshot(log, "before refund", before);
+    const periodic = Number(before.loan?.periodicPayment ?? "0");
+    if (Number(before.spvRlusd) + 1e-6 < periodic) {
+      log.note(`refund ${before.spvRlusd} < periodic payment ${periodic}: an overpayment LoanPay would fail tecINSUFFICIENT_PAYMENT; skipping (raise DEMO_PAYMENT_TOTAL)`);
+    } else {
+      await spvLoanPay(log, project, { amount: before.spvRlusd, mode: "overpayment", label: "escrow refund" });
+    }
+
+    log.say("7. Snapshots", "Share value rises as interest is repaid; repayments turn principal back into withdrawable liquidity.");
+    const after = await snapshot(project);
+    printSnapshot(log, "final", after);
+    log.note(`refund LoanPay: principalOutstanding ${before.loan?.principalOutstanding} -> ${after.loan?.principalOutstanding}, vault assetsAvailable ${before.vault?.assetsAvailable} -> ${after.vault?.assetsAvailable}`);
+
+    if (DO_WITHDRAW) {
+      log.say(`8. Wait for RedemptionDate (${setup.redemptionAt}), investor1 VaultWithdraw`);
+      await waitForLedgerTimeAfter(isoTimeToRippleTime(setup.redemptionAt) - 1, tick("RedemptionDate"));
+      process.stdout.write("\n");
+      const amt = Math.min(1000, Math.floor(Number(after.vault?.assetsAvailable ?? 0))).toString();
+      // after XRPL-07 merge: withdrawFromVault throws TooSoonError before RedemptionDate.
+      const wd = await withdrawFromVault({ projectId, vaultId: setup.vaultId, investor: "investor1", amount: amt });
+      log.rec(`VaultWithdraw investor1 ${amt}`, wd.tx);
+    } else {
+      log.note(`VaultWithdraw skipped: closed-ended vault reopens at RedemptionDate ${setup.redemptionAt}. DEMO_WITHDRAW=1 waits for it; prestage Project C is already withdrawable.`);
+    }
+
+    log.say("SUMMARY");
+    console.log(log.table(`pnpm demo — ${projectId} (${startedAt})`));
+    for (const n of log.notes) console.log(`NOTE: ${n}`);
+    const out = dataPath(`demo-run-${projectId}.json`);
+    writeJsonAtomic(out, {
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      project,
+      setup: { ...setup, spvWallet: undefined, txs: undefined },
+      loanId: close.loanId,
+      escrows: close.escrows,
+      rows: log.rows,
+      notes: log.notes,
+    });
+    console.log(`\nrun record: ${repoRel(out)}  (wallets: ${repoRel(config.walletsFile)})`);
   } catch (e) {
-    notes.push(`Sub-periodic LoanPay of 1000 rejected as expected: ${(e as Error).message}`);
-    console.log(`  ✗ (expected) sub-periodic LoanPay: ${(e as Error).message}`);
+    console.error("\nDEMO FAILED:", e);
+    if (log.rows.length) {
+      console.error("txs so far:");
+      log.rows.forEach((r) => console.error(`  ${r.step}: ${r.result} ${r.url}`));
+    }
+    process.exitCode = 1;
+  } finally {
+    await disconnect();
   }
-  // (b) Pay the whole refunded balance with tfLoanOverpayment: covers one periodic payment, rest pays principal early.
-  const spvBal = await rlusdBalance(setup.spv, issuer);
-  const pay = await repayLoan({ projectId, spv: setup.spv, loanId: close.loanId, amount: spvBal, mode: "overpayment" });
-  rec(`LoanPay ${pay.amount} (escrow refund, overpayment)`, pay.tx);
-  events.push(pay.event);
-  const loanAfter = await getLoan(close.loanId);
-  console.log(`  loan after: principalOutstanding=${loanAfter?.PrincipalOutstanding} periodic=${loanAfter?.PeriodicPayment} remaining=${loanAfter?.PaymentRemaining} totalValueOutstanding=${loanAfter?.TotalValueOutstanding}`);
-  notes.push(
-    `Overpayment LoanPay of ${pay.amount}: principalOutstanding ${loanBefore?.PrincipalOutstanding} -> ${loanAfter?.PrincipalOutstanding}, periodic ${loanBefore?.PeriodicPayment} -> ${loanAfter?.PeriodicPayment}, paymentsRemaining ${loanBefore?.PaymentRemaining} -> ${loanAfter?.PaymentRemaining}`,
-  );
-  console.log(`  SPV RLUSD after repay: ${await rlusdBalance(setup.spv, issuer)}`);
-  console.log(`  vault: ${JSON.stringify(await getVaultStatus(setup.vaultId))}`);
-
-  if (DO_WITHDRAW) {
-    say("10. wait for Redemption, investor1 VaultWithdraw");
-    await waitForLedgerTimeAfter(redemption - 1, tick("redemption"));
-    console.log("");
-    const vst = await getVaultStatus(setup.vaultId);
-    const amt = Math.min(1000, Math.floor(Number(vst?.assetsAvailable ?? 0))).toString();
-    const wd = await withdrawFromVault({ projectId, vaultId: setup.vaultId, investor: "investor1", amount: amt });
-    rec(`VaultWithdraw investor1 ${amt}`, wd.tx);
-    events.push(wd.event);
-    console.log(`  investor1 shares: ${await getShareBalance(w.investor1.classicAddress, setup.shareMptIssuanceId)}`);
-  } else {
-    notes.push(`VaultWithdraw skipped (closed-ended vault: withdrawals reopen at Redemption ${setup.redemptionAt}). Run with DEMO_WITHDRAW=1.`);
-  }
-
-  // ------------------------------------------------------------------ summary
-  say("SUMMARY");
-  const width = Math.max(...rows.map((r) => r.step.length));
-  console.log(`| # | step${" ".repeat(width - 4)} | result | explorer |`);
-  console.log(`|---|${"-".repeat(width + 2)}|--------|----------|`);
-  rows.forEach((r, i) => console.log(`| ${i + 1} | ${r.step.padEnd(width)} | ${r.result} | ${r.url} |`));
-  for (const n of notes) console.log(`NOTE: ${n}`);
-
-  mkdirSync(config.dataDir, { recursive: true });
-  const out = join(config.dataDir, `demo-run-${projectId}.json`);
-  writeFileSync(out, JSON.stringify({ startedAt, finishedAt: new Date().toISOString(), spvMode: SPV_MODE, project, setup: { ...setup, spvWallet: undefined, txs: undefined }, loanId: close.loanId, escrows: close.escrows, rows, notes, events }, null, 2));
-  console.log(`\nrun record: ${out}`);
 }
 
-try {
-  await main();
-} catch (e) {
-  console.error("\nDEMO FAILED:", e);
-  if (rows.length) {
-    console.error("txs so far:");
-    rows.forEach((r) => console.error(`  ${r.step}: ${r.url}`));
-  }
-  process.exitCode = 1;
-} finally {
-  await disconnect();
+/** The verifier's Maple St audit fixture (VER-01), re-pointed at this run's milestone + inspector. Inline fallback. */
+function auditFixture(file: string, milestoneId: string, inspector: string): unknown {
+  const p = join(REPO_ROOT, "packages/verifier/fixtures/evidence/maple-st/audits", file);
+  const base = existsSync(p) ? (JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>) : { checklist: [{ sovCode: "F-01", status: "done" }] };
+  return { ...base, milestoneId, inspector };
 }
