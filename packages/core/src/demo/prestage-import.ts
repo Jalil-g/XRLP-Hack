@@ -36,7 +36,7 @@ import { canonicalJson, sha256Hex } from "../ids.ts";
 import { fromMicro, sumMicro, toMicro } from "../money.ts";
 import type { PreimageEntry, PreimageVault } from "../release-service.ts";
 import type { CoreService, EvidenceFile } from "../service.ts";
-import { emptyDb, type DbState, type EvidenceRecord, type Repayment, type Store } from "../store.ts";
+import { emptyDb, recordChainEvents, type DbState, type EvidenceRecord, type Repayment, type Store } from "../store.ts";
 import { demoPhoto, nearby } from "./fixtures.ts";
 import { auditBody, DEMO, doc, invoice, mapleInput, photos, sovFromTemplate, type Log } from "./scenario.ts";
 
@@ -353,7 +353,7 @@ function addProject(db: DbState, p: PrestageProject, builder: Builder): void {
 
   for (const inv of p.investments) db.investments.push({ projectId: p.projectId, investor: inv.investor, amount: inv.amount, tx: inv.txHash, at: fileAt });
   db.repayments.push(...repayments(p, loanSetAt));
-  db.chainEvents.push(...chainEvents(p, project, loanSetAt));
+  recordChainEvents(db, chainEvents(p, project, loanSetAt));
 }
 
 /**
