@@ -4,13 +4,14 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Proof } from "@/components/checks/proof";
+import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button, type ButtonVariant } from "@/components/ui/button";
 import { API_MODE, api } from "@/lib/api";
 import { errorDescription, errorFeedback } from "@/lib/error-feedback";
 import { cancelFeedback, checksFeedback, decisionFeedback } from "@/lib/action-feedback";
 import type { ChainEvent, Rlusd, XrplAddress } from "@/lib/contract";
-import { shortHash } from "@/lib/utils";
+import { formatAmount, shortHash } from "@/lib/utils";
 
 /** Every write the UI can trigger, by route. Serializable so server components can pass it down. */
 export type Action =
@@ -97,6 +98,21 @@ async function perform(a: Action): Promise<Outcome> {
   }
 }
 
+/** The single line shown before a money move. */
+function confirmLine(a: Action, context?: string) {
+  const vault = context ? `${context} vault` : "the vault";
+  switch (a.kind) {
+    case "invest": return `Deposit ${formatAmount(a.amount)} RLUSD into ${vault}?`;
+    case "withdraw": return `Withdraw ${formatAmount(a.amount)} RLUSD from ${vault}?`;
+    case "repay": return `Repay ${formatAmount(a.amount)} RLUSD to ${vault}?`;
+    case "payFee": return context ? `Pay the verification fee for ${context}?` : "Pay the verification fee?";
+    default: return "Confirm this transaction?";
+  }
+}
+
+const partyLabel = (a: Action) => ("builder" in a ? "Builder" : "Investor");
+const partyAddress = (a: Action) => ("investor" in a ? a.investor : "builder" in a ? a.builder : undefined);
+
 export function ActionButton({
   action,
   children,
@@ -132,7 +148,7 @@ export function ActionButton({
     try {
       const out = await perform(action);
       const last = out.events[out.events.length - 1];
-      const description = last ? `${out.events.length} transaction${out.events.length === 1 ? "" : "s"} · last ${shortHash(last.txHash)}` : undefined;
+      const description = last ? `${out.events.length} transaction${out.events.length === 1 ? "" : "s"}, last ${shortHash(last.txHash)}` : undefined;
       const opts = {
         description,
         action: last && API_MODE === "http" ? { label: "Explorer", onClick: () => window.open(last.explorerUrl, "_blank", "noreferrer") } : undefined,
@@ -161,15 +177,12 @@ export function ActionButton({
         {busy && <Loader2 className="animate-spin" aria-hidden />}{children}
       </Button>
       <Dialog open={reviewing} onOpenChange={(open) => { if (!busy) setReviewing(open); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Review transaction</DialogTitle><DialogDescription>{context ?? "Check the transaction details before continuing."}</DialogDescription></DialogHeader>
-          <DialogBody className="space-y-3 text-small">
-            <p className="text-heading">{children}</p>
-            {"investor" in action && <p className="break-all text-ink-2">Investor: {action.investor}</p>}
-            {"builder" in action && <p className="break-all text-ink-2">Builder: {action.builder}</p>}
-            <p className="text-ink-2">{action.kind === "payFee" ? "This pays the project verification fee. Verification runs after payment." : action.kind === "withdraw" ? "This redeems vault shares for available funds. Confirm the amount before withdrawing." : action.kind === "repay" ? "This sends a loan repayment to the project vault." : "This deposits funds into the project vault in exchange for shares. Withdrawals depend on the redemption date and available funds."}</p>
-            {API_MODE === "mock" && <p className="text-review">Mock data · No real funds move.</p>}
+        <DialogContent aria-describedby={undefined}>
+          <DialogHeader><DialogTitle className="text-[22px] leading-7 font-semibold tracking-[-0.015em]">{confirmLine(action, context)}</DialogTitle></DialogHeader>
+          <DialogBody className="space-y-2 py-2 text-small">
+            {API_MODE === "mock" && <p className="text-ink-3">Mock data. No funds move.</p>}
             {error && <p role="alert" className="text-fail">{error}</p>}
+            <Proof items={[{ label: partyLabel(action), value: partyAddress(action) && <span className="break-all font-mono text-[12px]">{partyAddress(action)}</span> }]} />
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" disabled={busy} onClick={() => setReviewing(false)}>Back</Button>

@@ -1,114 +1,96 @@
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { CapitalBar } from "@/components/ui/capital-bar";
-import { Progress } from "@/components/ui/progress";
-import { Tag } from "@/components/ui/tag";
+import { ProjectHero } from "@/components/project/project-hero";
+import { buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/layout";
+import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
-import { PROJECT_STATUS, PROJECT_TYPE } from "@/lib/display";
-import { formatAmount, formatBps, formatDate, fromCents, toCents } from "@/lib/utils";
+import { PROJECT_STATUS } from "@/lib/display";
+import { cn, formatAmount, formatBps, formatDate, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+const GRID = "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-2 md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_72px_150px]";
+
 export default async function ProjectsPage() {
-  const projects = await api.listProjects({ status: "verified" });
-  const principal = projects.reduce((total, project) => total + toCents(project.principal), 0);
+  const listed = await api.listProjects({ status: "verified" });
+  // Open for funding first, then the rest in their given order.
+  const projects = [...listed].sort((a, b) => Number(b.status === "funding") - Number(a.status === "funding"));
+  const target = projects.reduce((total, project) => total + toCents(project.principal), 0);
   const raised = projects.reduce((total, project) => total + toCents(project.raised), 0);
-  const funding = projects.filter((project) => project.status === "funding");
+  const open = projects.filter((project) => project.status === "funding").length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-12">
       <AutoRefresh ms={5000} />
 
-      <header className="max-w-[760px]">
-        <h1 className="text-title">Construction, backed by proof.</h1>
-        <p className="mt-2 text-body text-ink-2">
-          Explore verified projects. Capital moves milestone by milestone, after a signed inspection and evidence checks.
-        </p>
-      </header>
-
-      <section className="capital-summary capital-compact" aria-label="Listed project capital">
-        <div>
-          <p className="text-small text-capital-muted">Capital across listed projects</p>
-          <p className="financial-amount mt-2">{formatAmount(fromCents(principal))} <span>RLUSD</span></p>
-          <CapitalBar
-            className="mt-4"
-            label="Listed project funding"
-            segments={[
-              { label: "Raised", cents: raised, tone: "accent" },
-              { label: "Still open", cents: Math.max(0, principal - raised), tone: "track" },
+      {projects.length === 0 ? (
+        <Empty title="No verified projects" action={<Link href="/demo" className={buttonClass("secondary")}>Open demo</Link>} />
+      ) : (
+        <>
+          <ProjectHero
+            money={{ mode: "funding", raisedCents: raised, targetCents: target }}
+            facts={[
+              { label: "Projects", value: String(projects.length) },
+              { label: "Open for funding", value: String(open) },
             ]}
           />
-        </div>
-        <div className="capital-detail">
-          <div><span>Verified projects</span><strong>{projects.length}</strong></div>
-          <div><span>Open for funding</span><strong>{funding.length}</strong></div>
-        </div>
-      </section>
 
-      <section className="finance-surface">
-        <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-heading">Explore projects</h2>
-          <span className="text-caption text-ink-2">{projects.length} verified · RLUSD</span>
-        </div>
-
-        {projects.length === 0 ? (
-          <Empty title="No verified projects yet" action={<Link href="/demo" className="text-small text-link hover:underline">See how project verification works</Link>}>
-            Projects appear here after they pass verification. This list refreshes automatically.
-          </Empty>
-        ) : (
-          <div>
-          <table className="responsive-finance-table w-full border-collapse text-left">
-            <thead>
-              <tr className="border-y border-line bg-band text-caption text-ink-2">
-                <th className="px-4 py-2.5 font-medium">Project</th>
-                <th className="px-4 py-2.5 font-medium">Builder</th>
-                <th className="w-[220px] px-4 py-2.5 font-medium">Raised</th>
-                <th className="px-4 py-2.5 text-right font-medium">Annual rate</th>
-                <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="px-4 py-2.5 font-medium"><span className="sr-only">Details</span></th>
-              </tr>
-            </thead>
-            <tbody>
+          <section aria-label="Projects">
+            <div aria-hidden className={cn(GRID, "hidden border-b border-line px-3 pb-2 text-caption text-ink-2 md:grid")}>
+              <span>Project</span>
+              <span>Raised</span>
+              <span className="text-right">Rate</span>
+              <span />
+            </div>
+            <ul>
               {projects.map((p) => {
-                const pct = (toCents(p.raised) / Math.max(1, toCents(p.principal))) * 100;
+                const pct = Math.min(100, (toCents(p.raised) / Math.max(1, toCents(p.principal))) * 100);
                 const status = PROJECT_STATUS[p.status];
+                const funding = p.status === "funding";
+                const place = p.siteAddress.split(",")[1]?.trim() || p.siteAddress;
                 return (
-                  <tr key={p.id} className="group border-b border-line transition-colors duration-150 hover:bg-band/40">
-                    <td data-label="Project" className="px-4 py-5">
-                      <Link href={`/projects/${p.id}`} className="text-body font-semibold text-ink group-hover:text-link hover:underline">
-                        {p.name}
-                      </Link>
-                      <div className="text-caption text-ink-2">
-                        {p.siteAddress.split(",").slice(1, 2).join("").trim() || p.siteAddress} · {PROJECT_TYPE[p.type]}
-                      </div>
-                    </td>
-                    <td data-label="Builder" className="px-4 py-5 text-small">
-                      {p.builderName}
-                      {p.builderVerified && <div className="text-caption text-pass">Verified builder</div>}
-                    </td>
-                    <td data-label="Raised" className="px-4 py-5">
-                      <div className="tabular text-small">
-                        {formatAmount(p.raised)} <span className="text-ink-2">of {formatAmount(p.principal)}</span>
-                      </div>
-                      <Progress value={pct} className="mt-2" label={`${Math.floor(pct)}% raised`} />
-                      {p.status === "funding" && <div className="mt-1.5 text-caption text-ink-2">Funding closes {formatDate(p.fundingDeadline)}</div>}
-                    </td>
-                    <td data-label="Annual rate" className="tabular px-4 py-5 text-right text-body font-semibold">{p.interestRateBps !== undefined ? formatBps(p.interestRateBps) : "Not available"}</td>
-                    <td data-label="Status" className="px-4 py-5">
-                      <Tag tone={status.tone}>{status.label}</Tag>
-                    </td>
-                    <td className="px-4 py-5"><Link href={`/projects/${p.id}`} aria-label={`View ${p.name}`} className="inline-flex min-h-11 items-center gap-2 text-small font-medium text-link">View<ArrowRight className="size-4" aria-hidden /></Link></td>
-                  </tr>
+                  <li key={p.id} className="border-b border-line">
+                    <Link
+                      href={`/projects/${p.id}`}
+                      className={cn(GRID, "group -mx-3 rounded-[12px] px-3 py-5 transition-colors duration-150 hover:bg-band")}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-body font-semibold">{p.name}</span>
+                        <span className="block text-small text-ink-2">{place}</span>
+                      </span>
+                      <span className="text-right md:order-4 md:text-left">
+                        {funding ? <Tag tone={status.tone}>{status.label}</Tag> : <span className="text-small text-ink-3">{status.label}</span>}
+                        {funding && <span className="mt-1 block text-caption text-ink-2 tabular-nums">Closes {formatDate(p.fundingDeadline)}</span>}
+                      </span>
+                      <span className="col-span-2 md:order-2 md:col-span-1">
+                        <span className="block text-small tabular-nums">
+                          <strong className="font-semibold">{formatAmount(p.raised)}</strong>
+                          <span className="text-ink-2">{pct < 100 ? ` of ${formatAmount(p.principal)}` : " raised"}</span>
+                        </span>
+                        {pct < 100 && <span
+                          role="progressbar"
+                          aria-label={`${Math.floor(pct)}% raised`}
+                          aria-valuenow={Math.round(pct)}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          className="mt-2 block h-1.5 overflow-hidden rounded-full bg-band-2"
+                        >
+                          <span className="block h-full rounded-full bg-accent shadow-[inset_0_0_0_1px_rgb(0_0_0/0.08)]" style={{ width: `${pct}%` }} />
+                        </span>}
+                      </span>
+                      <span className="col-span-2 text-small font-semibold tabular-nums md:order-3 md:col-span-1 md:text-right">
+                        <span className="font-normal text-ink-2 md:hidden">Rate </span>
+                        {p.interestRateBps !== undefined ? formatBps(p.interestRateBps) : "n/a"}
+                      </span>
+                    </Link>
+                  </li>
                 );
               })}
-            </tbody>
-          </table>
-          </div>
-        )}
-      </section>
-      <p className="max-w-[78ch] text-small text-ink-2">The ledger fixes where money can go. The platform release service decides when, using the inspector&apos;s signed audit and automated checks.</p>
+            </ul>
+          </section>
+        </>
+      )}
     </div>
   );
 }

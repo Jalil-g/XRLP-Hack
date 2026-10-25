@@ -11,7 +11,7 @@ export function DecisionForm({ projectId, milestoneId, actor, disabled }: { proj
   return (
     <div className="flex w-full max-w-[560px] flex-wrap items-center gap-2">
       <label className="w-full text-small font-medium" htmlFor={`reason-${milestoneId}`}>
-        Reason (attested on-chain)
+        Reason
       </label>
       <Input id={`reason-${milestoneId}`} value={reason} onChange={(e) => setReason(e.target.value)} disabled={disabled} className="min-h-11 text-small" placeholder="Reason, attested on-chain" />
       <ActionButton size="sm" disabled={disabled || empty} action={{ kind: "decide", projectId, milestoneId, actor, decision: "approve", reason }}>

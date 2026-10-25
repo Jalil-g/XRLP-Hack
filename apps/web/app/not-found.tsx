@@ -1,12 +1,12 @@
 import Link from "next/link";
+import { buttonClass } from "@/components/ui/button";
 
 export default function NotFound() {
   return (
-    <div className="finance-surface mx-auto max-w-[640px] py-12 text-center">
+    <div className="mx-auto max-w-[640px] py-24 text-center">
       <h1 className="text-title">Not found</h1>
-      <p className="mt-3 text-body text-ink-2">That project or page does not exist.</p>
-      <Link href="/" className="mt-8 inline-block text-body text-link hover:underline">
-        Back to projects
+      <Link href="/" className={buttonClass("primary", "md", "mt-8")}>
+        Browse projects
       </Link>
     </div>
   );
