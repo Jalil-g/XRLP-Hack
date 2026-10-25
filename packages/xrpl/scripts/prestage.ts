@@ -18,7 +18,9 @@
 //   PRESTAGE_B_STALL_CANCEL_S=90    B's M2 CancelAfter after B's close (>= 60 + a few s: planLoanClose floor; prestage
 //                                   waits until it has passed).
 //   PRESTAGE_C_INTERVAL_S=240       C's PaymentInterval (2 payments; escrow CancelAfter = 1.5 intervals after the close,
-//                                   so it is before maturity and > 120 s preflight margin when the finishes run).
+//                                   so it is before maturity). C's finishes use a 20-ledger LastLedgerSequence margin, so
+//                                   preflight needs 120 s left (not the default 60 ledgers = 300 s): 240 s of slack for
+//                                   LoanSet + Batch + 3 finishes. Below PRESTAGE_C_MIN_SLACK_S (180 s) prestage refuses to start.
 //   PRESTAGE_C_CLOSE_WINDOW_S=180   C's LoanSet must land within this after C's SubscriptionDate.
 import { existsSync, readFileSync } from "node:fs";
 import { isoTimeToRippleTime } from "xrpl";
@@ -30,7 +32,11 @@ import {
   parsePrestageFile,
   PRESTAGE_KEYS,
   PRESTAGE_PREIMAGES_FILE,
+  PRESTAGE_C_FINISH_LLS_MARGIN,
+  PRESTAGE_C_MIN_SLACK_S,
   PRESTAGE_VERSION,
+  prestageCCancelAfterS,
+  prestageCReleaseSlackS,
   prestageVaultDates,
   type PrestageEscrowState,
   type PrestageFile,
@@ -38,6 +44,7 @@ import {
   type PrestageProject,
   type PrestageScenario,
 } from "../src/prestage-types.ts";
+import { releaseMarginS } from "../src/preflight.ts";
 import { loadWallets, WALLET_ROLES } from "../src/wallets.ts";
 import type { Project } from "@xrlp/shared";
 import {
@@ -71,6 +78,8 @@ const SUBSCRIPTION_S = envNum("PRESTAGE_SUBSCRIPTION_S", 60);
 const B_STALL_CANCEL_S = envNum("PRESTAGE_B_STALL_CANCEL_S", 90);
 const C_INTERVAL_S = envNum("PRESTAGE_C_INTERVAL_S", 240);
 const C_CLOSE_WINDOW_S = envNum("PRESTAGE_C_CLOSE_WINDOW_S", 180);
+/** Time C may lose between planning its close and its last finish's preflight (CancelAfter − release margin). */
+const C_RELEASE_SLACK_S = prestageCReleaseSlackS({ intervalS: C_INTERVAL_S, releaseMarginS: releaseMarginS(PRESTAGE_C_FINISH_LLS_MARGIN) });
 const MONTH_S = 30 * DAY_S;
 const CHECKS = ["required_evidence_present", "gps_within_site", "photo_fresh", "no_duplicate_photo", "invoice_matches_budget", "inspector_audit_present", "audit_checklist_complete", "stage_visually_consistent"];
 
@@ -150,8 +159,8 @@ const PLANS: Record<PrestageKey, Plan> = {
     },
     closeWindowS: C_CLOSE_WINDOW_S,
     bufferS: 0,
-    // Before maturity (2 intervals) and far enough out for the 120 s preflight margin at finish time.
-    cancelAfterS: [1.5, 1.5, 1.5].map((f) => Math.round(f * C_INTERVAL_S)),
+    // Before maturity (2 intervals) and far enough out for the release margin of C's finishes (see C_RELEASE_SLACK_S).
+    cancelAfterS: [0, 1, 2].map(() => prestageCCancelAfterS(C_INTERVAL_S)),
   },
 };
 
@@ -235,13 +244,13 @@ async function stageClose(s: Staged) {
 }
 
 /** withSuite: audit + verdict + release attestations (B's M1, shown in the UI); C: finish only (history, saves ledgers). */
-async function releaseM(s: Staged, esc: MilestoneEscrowInfo, withSuite: boolean) {
+async function releaseM(s: Staged, esc: MilestoneEscrowInfo, withSuite: boolean, lastLedgerMargin?: number) {
   const w = loadWallets();
   if (withSuite) {
     await attestAudit(s.log, s.project, esc.milestoneId, w.inspector1, { milestoneId: esc.milestoneId, inspector: w.inspector1.classicAddress, checklist: [{ sovCode: "F-01", status: "done" }] });
     await attestVerdict(s.log, s.project, esc.milestoneId, { milestoneId: esc.milestoneId, decision: "pass", confidence: 0.93, model: "mock", checks: CHECKS });
   }
-  const r = await releaseWithSuite(s.log, s.project, esc, rs, { passed: CHECKS, attestRelease: withSuite });
+  const r = await releaseWithSuite(s.log, s.project, esc, rs, { passed: CHECKS, attestRelease: withSuite, ...(lastLedgerMargin !== undefined ? { lastLedgerMargin } : {}) });
   s.finished[esc.milestoneId] = r.finish.hash;
 }
 
@@ -253,7 +262,8 @@ async function stageB(s: Staged) {
 async function stageC(s: Staged) {
   const { log, project } = s;
   log.say("C: all milestones released, builder repays the SPV, SPV LoanPays pay the loan off");
-  for (const esc of s.close!.escrows) await releaseM(s, esc, false);
+  // Short CancelAfters (before C's maturity): finish with the 20-ledger margin, so preflight needs 120 s left, not 300 s.
+  for (const esc of s.close!.escrows) await releaseM(s, esc, false, PRESTAGE_C_FINISH_LLS_MARGIN);
   const w = loadWallets();
   const snap = await snapshot(project);
   const total = snap.loan?.paymentRemaining ?? 0;
@@ -355,6 +365,12 @@ async function main() {
   const startedAt = new Date().toISOString();
   console.log(`prestage ${runId}: projects ${only.join(",")}  (wallets ${repoRel(config.walletsFile)})`);
   console.log(`  expected duration: ${only.includes("C") ? "~13 min (C waits for its RedemptionDate)" : "~3-5 min"}`);
+  if (only.includes("C") && C_RELEASE_SLACK_S < PRESTAGE_C_MIN_SLACK_S) {
+    throw new Error(
+      `C: escrow CancelAfter ${prestageCCancelAfterS(C_INTERVAL_S)} s leaves ${C_RELEASE_SLACK_S} s before the ${releaseMarginS(PRESTAGE_C_FINISH_LLS_MARGIN)} s release margin ` +
+        `(< ${PRESTAGE_C_MIN_SLACK_S} s for LoanSet + Batch + 3 finishes); raise PRESTAGE_C_INTERVAL_S. Nothing submitted.`,
+    );
+  }
 
   common.say("common: wallets, credentials, domain (idempotent)");
   const { wallets: w, txs } = await bootstrapWallets({ log: (s) => common.info(s) });
