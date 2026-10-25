@@ -38,8 +38,8 @@ export function preimageFromFulfillment(fulfillmentHex: string): Buffer {
 
 /**
  * Fresh, unique condition/fulfillment pair (32 random bytes).
- * @deprecated — core's release service generates conditions (CORE-12). Kept only for scripts/tests that have not moved
- * to `test/support/conditions.ts` yet; never call it on the close path.
+ * @deprecated — core's release service generates conditions (CORE-12). Kept only because scripts/demo.ts (being
+ * rewritten in XRPL-11) still calls it; tests and spikes use `test/support/conditions.ts`. Never on the close path.
  */
 export function generateMilestoneCondition(): MilestoneCondition {
   const preimage = randomBytes(PREIMAGE_LEN);

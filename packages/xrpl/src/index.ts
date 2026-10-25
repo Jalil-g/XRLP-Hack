@@ -47,6 +47,26 @@ export type { MilestoneCondition } from "./condition.ts";
 // XRPL-06: close validation (pure) + typed close errors
 export { planLoanClose, CloseValidationError, CloseLoanPartialError, MIN_ESCROW_LIFETIME_S, MIN_PAYMENT_INTERVAL_S, MAX_INTEREST_RATE } from "./loan-close.ts";
 export type { ClosePlan, ClosePlanInput, PlannedEscrow, CloseConditions, CreatedEscrowRef } from "./loan-close.ts";
+// XRPL-13b: atomic escrows in the close path (escrowMode) + recovering a partial close (resumeEscrowCreation)
+export { resumeEscrowCreation } from "./api.ts";
+export type { CloseTxEvent, ResumeEscrowInput, ResumeEscrowOptions, ResumeEscrowResult, ResumeDeps } from "./api.ts";
+export {
+  defaultEscrowMode,
+  resolveEscrowMode,
+  validateEscrowSpecs,
+  planEscrowResume,
+  ledgerEscrowsFromNodes,
+  escrowCreatesFromHistory,
+  loanSetFromHistory,
+  mergeLedgerEscrows,
+  historyTxs,
+  loanMaturity,
+  BATCH_ESCROWS_MIN,
+  BATCH_ESCROWS_MAX,
+} from "./loan-close.ts";
+export type { EscrowMode, EscrowSpec, EscrowSpecChecks, ClosePartialContext, LedgerEscrow, HistoryTx, ResumeMilestone, ResumePlanInput, ResumePlan, ResumeEscrowRef } from "./loan-close.ts";
+export { BatchNotAppliedError, classifyInnerLookup, batchOutcome, innerTxResult, createdEscrowFromMeta, escrowsFromBatch, isUncertainSubmitFailure, closePartialError } from "./batch.ts";
+export type { BatchOutcome, InnerLookup, CreateEscrowsAtomicParams, CreateEscrowsAtomicDeps } from "./batch.ts";
 
 // Low-level building blocks
 export { getClient, disconnect, ledgerTime, waitForLedgerTimeAfter, signAndSubmit, submitBlob, XrplTxError } from "./client.ts";
@@ -252,3 +272,7 @@ export type {
   LoanBrokerManageEntry,
   VaultManageEntry,
 } from "./default.ts";
+// XRPL-10: shared LedgerPort adapter (core: LEDGER_MODE=devnet) + its pure mapping helpers
+export { XrplLedgerAdapter } from "./adapter.ts";
+export type { XrplLedgerAdapterOptions } from "./adapter.ts";
+export { XrplLedgerError, toAdapterError, apiCodeOf, toPortTx, pickQuorumSigners } from "./adapter-map.ts";

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { generateMilestoneCondition } from "../src/condition.ts";
 import {
   UNSAFE_RELEASE,
   UnsafeReleaseError,
@@ -11,13 +10,14 @@ import {
   unsafeReleaseError,
   type PreflightSnapshot,
 } from "../src/preflight.ts";
+import { testConditionPair } from "./support/conditions.ts";
 
 const ISSUER = "rIssuer";
 const SPV = "rSpv";
 const BUILDER = "rBuilder";
 const SUBMITTER = "rRelease";
 const NOW = { ledgerIndex: 1000, closeTime: 800_000_000 };
-const { condition, fulfillment } = generateMilestoneCondition();
+const { condition, fulfillment } = testConditionPair();
 
 function snap(over: Partial<PreflightSnapshot> = {}, req: Partial<PreflightSnapshot["request"]> = {}): PreflightSnapshot {
   return {
@@ -98,7 +98,7 @@ test("destination_not_found / deposit_auth (submitter preauthorized or is the de
 });
 
 test("condition_mismatch is judged against the ON-LEDGER condition, not the caller's", () => {
-  const other = generateMilestoneCondition();
+  const other = testConditionPair();
   // Caller passes a self-consistent pair that is NOT the escrow's -> refused.
   assert.deepEqual(reasons(snap({}, { condition: other.condition, fulfillment: other.fulfillment })), ["condition_mismatch", "condition_mismatch"]);
   // Caller omits the condition, fulfillment wrong -> refused.
