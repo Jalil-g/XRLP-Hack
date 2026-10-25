@@ -5,7 +5,8 @@ throws `XrplTxError` (with the engine result + explorer link) unless `tesSUCCESS
 `TxResult { hash, explorerUrl, result, tx, meta }` and/or a shared `ChainEvent`.
 
 ```bash
-pnpm --filter @xrlp/xrpl bootstrap      # fund + configure demo wallets -> $WALLETS_FILE (default .data/wallets.json, gitignored); idempotent
+pnpm --filter @xrlp/xrpl bootstrap      # fund + configure demo wallets + credentials -> $WALLETS_FILE (default .data/wallets.json, gitignored); idempotent
+                                        #   flags: --fresh  --no-credentials  --pre-verify-builder  --platform-rlusd=N (or BOOTSTRAP_PLATFORM_RLUSD)
 pnpm --filter @xrlp/xrpl demo           # full money path on devnet, prints a tx table with explorer links
 pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding, lending math, wallet-file migration)
 pnpm --filter @xrlp/xrpl spike:broker   # XRPL-04 devnet proof: rates, mandatory cover, origination fee
@@ -95,25 +96,39 @@ Wallet arguments (`WalletRef`) accept a role name (`"investor1"`), a demo addres
 
 ### Roles (Direction v2, `WALLET_ROLES`)
 
-| Role | RLUSD trust line | Bootstrap RLUSD | Used for |
-|---|---|---|---|
-| `issuer` | — (issuer) | — | mock RLUSD; `DefaultRipple` + `AllowTrustLineLocking` |
-| `platform` | ✔ | 25 000 (`platformRlusd`) | vault + broker owner, first-loss cover, credential issuer, receives verification fees, SPV signer |
-| `releaseService` | — | — | submits `EscrowFinish` / `EscrowCancel`, `release` attestations (XRP fees only) |
-| `builder` | ✔ | 1 000 (`builderRlusd`, ≥ 250 fee) | pays verification fee, receives milestone payouts, SPV signer |
-| `investor1..3` | ✔ | 50 000 each (`investorRlusd`) | vault depositors |
-| `inspector1..3` | — | — | panel; audit attestations (1-drop XRP); the project's assigned one is an SPV signer (default `inspector1`) |
-| `aiAgent` | — | — | verdict attestations; **not** an SPV signer |
-| `trustee` | — | — | 4th SPV signer (investor rep) |
+| Role | RLUSD trust line | Bootstrap RLUSD | Bootstrap credential | Used for |
+|---|---|---|---|---|
+| `issuer` | — (issuer) | — | — | mock RLUSD; `DefaultRipple` + `AllowTrustLineLocking` |
+| `platform` | ✔ | 25 000 (`platformRlusd`, `DEFAULT_PLATFORM_RLUSD`) | issuer of all credentials | vault + broker owner, first-loss cover, credential issuer, receives verification fees, SPV signer |
+| `releaseService` | — | — | — | submits `EscrowFinish` / `EscrowCancel`, `release` attestations (XRP fees only) |
+| `builder` | ✔ | 1 000 (`builderRlusd`, ≥ 250 fee) | — (`VERIFIED_BUILDER` is earned via project verification; `preVerifyBuilder` for prestage) | pays verification fee, receives milestone payouts, SPV signer |
+| `investor1..3` | ✔ | 50 000 each (`investorRlusd`) | `KYC_INVESTOR` for investor1 + investor2, accepted. **investor3: none** (bootstrap deletes a stray one) → `tecNO_AUTH` on the private vault | vault depositors |
+| `inspector1..3` | — | — | `VERIFIED_INSPECTOR`, accepted | panel; audit attestations (1-drop XRP); the project's assigned one is an SPV signer (default `inspector1`) |
+| `aiAgent` | — | — | — | verdict attestations; **not** an SPV signer |
+| `trustee` | — | — | — | 4th SPV signer (investor rep) |
 
 Trust lines only for `RLUSD_HOLDERS` (`platform, builder, investor1..3`); add a role there if it must ever hold RLUSD.
 Bootstrap is idempotent: it reuses `WALLETS_FILE`, generates only missing roles, renames v1 roles
 (`inspectorA → inspector1`, `inspectorB → inspector2`, same account), moves unknown roles to `retired` (seeds kept),
-tops up XRP below 30, skips existing issuer flags / trust lines, and mints only up to the targets. A second run submits 0 txs.
+tops up XRP below 30, skips existing issuer flags / trust lines, mints only up to the targets, and grants credentials via
+the idempotent `grantCredential` (`credentialPlan()`; `NO_KYC_ROLES = ["investor3"]`). A second run submits 0 txs.
+
+**Platform RLUSD budget.** The platform posts the mandatory first-loss cover for every project (≈ 11% of principal:
+`defaultCoverDeposit` = 10% of principal + interest, +10% headroom); fees are XRP. `DEFAULT_PLATFORM_RLUSD = 25 000` covers
+3 concurrent projects (prestage A/B/C) of up to ~68 000 principal each on demo terms (10% APR, 30 days), more than the
+150 000 the investors hold in total. For other sets use `platformRlusdFor(terms[])` (sum of covers +10% slack, rounded up
+to 1 000), e.g. `bootstrapWallets({ platformRlusd: platformRlusdFor([a.terms, b.terms, c.terms]) })`. Bootstrap tops
+the platform back **up** to the target, so after cover deposits a re-run mints the difference (not 0 txs).
+
+**Devnet proof** (2026-10-24, fresh `WALLETS_FILE`): run 1 = 22 txs: 2 issuer `AccountSet`, 5 `TrustSet`, 5 RLUSD `Payment`,
+5 × `CredentialCreate` + `CredentialAccept` (e.g. investor1 KYC
+https://devnet.xrpl.org/transactions/90AC90D381DF16E4FBA72F8F01EE2A8DC8CF89C79D4AD5707FE5BC500C4CE675). Run 2 = **0 txs**.
+A stray investor3 KYC is removed on the next run
+(https://devnet.xrpl.org/transactions/F3B4FBA6E7664DA06306D70F0175B6C7FFABC04087DC9588F0AE59A01F67A9D3), then 0 txs again.
 
 | Function | Txs | Returns |
 |---|---|---|
-| `bootstrapWallets({fresh?, investorRlusd?, platformRlusd?, builderRlusd?, log?})` | faucet, issuer `AccountSet` (DefaultRipple, AllowTrustLineLocking), `TrustSet`s (RLUSD holders), RLUSD `Payment`s | `{wallets, txs}` (idempotent, 2nd run `txs = []`) |
+| `bootstrapWallets({fresh?, investorRlusd?, platformRlusd=25000, builderRlusd?, credentials=true, preVerifyBuilder=false, log?})` | faucet, issuer `AccountSet` (DefaultRipple, AllowTrustLineLocking), `TrustSet`s (RLUSD holders), RLUSD `Payment`s, `CredentialCreate` + `CredentialAccept` (KYC_INVESTOR investor1/2, VERIFIED_INSPECTOR inspector1..3, VERIFIED_BUILDER builder if `preVerifyBuilder`), `CredentialDelete` of a stray investor3 KYC | `{wallets, txs, credentials: [{role, type, status}]}` (idempotent, 2nd run `txs = []`) |
 | `setupProjectOnChain(project, {subscriptionEndsAt?, redemptionAt?, paymentTotal?, paymentIntervalS?, coverDeposit?, coverRateMinimum?, coverRateLiquidation?, managementFeeRate?, lockSpv=true, spvSigners?: {builder?, inspector?, platform?, trustee?}})` | SPV faucet + `TrustSet`, `SignerListSet` {platform, builder, inspector, trustee} w1 quorum 3, `AccountSet asfDisableMaster`, `VaultCreate` (closed-ended, `AssetsMaximum = principal`), `LoanBrokerSet` (cover rates + management fee), **mandatory** `LoanBrokerCoverDeposit` | `{spv, vaultId, loanBrokerId, shareMptIssuanceId, vaultPseudoAccount, subscriptionEndsAt, redemptionAt, cover, coverEvent, events, txs, spvWallet}` |
 | `depositToVault({projectId, vaultId, investor, amount})` | `VaultDeposit` | `{tx, event: vault_deposit}` |
 | `closeLoanAndCreateEscrows(project, {conditions, builderAddress?, paymentTotal?, paymentIntervalS?, defaultCancelAfter?, waitForInvestmentPhase=true, spvSigners?, spvSingleKey?, allowOverpayment=true, originationFee?, originationFeePayer="builder"})` | (if needed) payer → SPV RLUSD `Payment` for the origination-fee shortfall, `LoanSet` with `LoanOriginationFee` (platform signs, SPV multisig countersigns), then one `EscrowCreate` per milestone, back to back | `{loanId, loanSetTx, originationFee, originationFeeTopUpTx?, escrows: [{milestoneId, owner, offerSequence, condition, createTx, cancelAfter, amount, escrow}], events}` |
@@ -122,7 +137,7 @@ tops up XRP below 30, skips existing issuer flags / trust lines, and mints only 
 | `cancelExpiredMilestone({projectId, milestoneId, escrow, cancelAfter?, wait?, amount?})` | `EscrowCancel` | `{tx, event: escrow_cancelled}` |
 | `repayLoan({projectId, spv, loanId, amount?, mode?, signers?})` | `LoanPay` (SPV multisig, default platform + builder + trustee) | `{tx, event: loan_payment, amount, mode}` |
 | `withdrawFromVault({projectId, vaultId, investor, amount})` | `VaultWithdraw` (Redemption phase only) | `{tx, event: vault_withdraw}` |
-| `issueCredential({subject, type, uri?, accept=true, projectId?})` | `CredentialCreate` (platform) + `CredentialAccept` (subject). **Not idempotent**; prefer `grantCredential` | `{createTx, acceptTx, event: credential_issued}` |
+| `issueCredential({subject, type, uri?, accept=true, projectId?})` **@deprecated** | delegates to `grantCredential` (idempotent): `CredentialCreate` if missing, `CredentialAccept` if pending | `{createTx, acceptTx?, event: credential_issued, status, txs, events}`. If the credential already existed, `createTx`/`event` describe the existing on-ledger `CredentialCreate` and `txs`/`events` (what this call submitted) are empty |
 | `getVaultStatus(vaultId)` / `getShareBalance(holder, mptId)` / `getLoan(loanId)` / `getSpvInfo(addr)` | reads | |
 
 ### Broker rates, first-loss cover, fees (XRPL-04)
@@ -167,8 +182,9 @@ Defaults: `repayLoan` pays `PeriodicPayment + LoanServiceFee` and picks `late` i
 |---|---|
 | `createSpv({issuer, signers: {platform, builder, inspector, trustee}, lock=true})` | fund, RLUSD `TrustSet`, `SignerListSet` w1 ×4 quorum 3, `asfDisableMaster` → `{address, wallet, txs}` |
 | `lockSpv(wallet, signers)` / `lockSpvAccount(wallet, partialSigners?)` | `SignerListSet` + `asfDisableMaster` (fallback path: lock after LoanSet). `lockSpvAccount` fills gaps from the demo roles via `spvSignersFor()` |
-| `submitMultisigned(tx, signerWallets, {checkQuorum=true})` | autofill with `signers.length`, multisign, submit. Checks the account's on-ledger SignerList first and throws `XrplTxError` `tefBAD_QUORUM` / `tefBAD_SIGNATURE` immediately (xrpl.js would otherwise wait ~1 min for a `tef`). `multisignAndSubmit` = compat alias |
-| `multisignBlob(tx, signerWallets)` | `{blob, hash}` without submitting |
+| `submitMultisigned(tx, signerWallets, {checkQuorum=true, ...SubmitOptions})` | Checks the account's on-ledger SignerList first and throws `XrplTxError` `tefBAD_QUORUM` / `tefBAD_SIGNATURE` / `tefNOT_MULTI_SIGNING` immediately (xrpl.js would otherwise wait ~1 min for a `tef`). Then `submitWithSigner(spv, {...tx, SigningPubKey: ""}, multisignWith(signers), {signersCount})`: autofill → multisign → submit → validation **under `withAccountLock(spv)`**, so parallel multisig txs for one SPV never race on `Sequence`, and transient failures re-sign with all signers. `multisignAndSubmit` = compat alias. Devnet: 4 parallel multisig Payments from one SPV → Seq 6391602..6391605 all `tesSUCCESS` (27.5s) |
+| `multisignWith(signerWallets)` / `assertSignerQuorum(txType, info, addresses)` | the `sign` callback for `submitWithSigner`; the local quorum check (throws the `tef*` rippled would return) |
+| `multisignBlob(tx, signerWallets)` | `{blob, hash}` without submitting (not locked; submit via `submitMultisigned`) |
 | `checkSignerQuorum(list, addresses)` | pure: `{ok, weight, quorum, unknown, duplicates}` |
 
 `tef*` (2 signatures, non-member signer, master key) never reaches the ledger, so there is no explorer link. See
@@ -183,6 +199,7 @@ Devnet proof and tx links: `docs/xrpl-protocol-notes.md` §3b.
 |---|---|---|
 | `payVerificationFee({builder, amount="250", projectId?, platform?, issuer?})` | RLUSD `Payment` builder → platform | `{tx, event: verification_fee_paid}` |
 | `grantCredential({subject, type, uri?, accept=true, projectId?, platform?})` | `CredentialCreate` (platform) if missing, `CredentialAccept` (subject) if pending. **Idempotent** | `{status, createTx?, acceptTx?, txs, events: credential_issued / credential_accepted}` |
+| `revokeCredential(issuerWallet, subject, type)` / `getCredential(subject, issuer, type)` (`credentials.ts`) | `CredentialDelete` by the issuer, only if the credential exists (idempotent) / read the `Credential` object | `TxResult \| undefined` / `CredentialEntry \| undefined` |
 | `createDomain({platform?, types=["KYC_INVESTOR"]})` | `PermissionedDomainSet`, AcceptedCredentials = [platform, KYC_INVESTOR]. Idempotent (reuses an identical owned domain) | `{domainId, tx?}` |
 | `createVault({..., domainId, nonTransferableShares: true})` (`vault.ts`) | `VaultCreate` + `tfVaultPrivate` + `DomainID` (+ `tfVaultShareNonTransferable`) | as before |
 | `attest({signer, spv, memo, projectId?})` | 1-drop XRP `Payment` signer → SPV, memo `xrlp/attest/v1` | `{tx, memo, event}` |

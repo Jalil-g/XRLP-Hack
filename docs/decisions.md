@@ -54,6 +54,8 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
 - [10-25] xrpl: `UnsafeReleaseError` now extends the shared `LedgerError` (code `unsafe_release`) and `toLedgerError(e)` maps XrplTxError tecTOO_SOON → `TooSoonError`, other tx failures → `LedgerError("ledger_error")` with txResult/txHash; release attest memos keep `approval_attested` (shared v2 has no release kind); `toChainEvent` sets `result` only for non-tesSUCCESS — so the LedgerPort adapter throws/emits exactly the shared contract (Jalil's agent, shared-v2 align)
 
+- [10-25] Bootstrap grants the demo credentials idempotently (KYC_INVESTOR investor1/2, VERIFIED_INSPECTOR inspector1..3; VERIFIED_BUILDER only with `preVerifyBuilder`) and **deletes** a stray KYC_INVESTOR from investor3 (`NO_KYC_ROLES`), since the tecNO_AUTH beat needs investor3 uncredentialed; `issueCredential` delegates to `grantCredential` (deprecated); platform RLUSD default stays 25 000 (= cover for 3 concurrent ~68k projects), sized with `platformRlusdFor`; `submitMultisigned` goes through `submitWithSigner` so SPV multisig txs hold the per-SPV lock (Jalil's agent, hardening)
+
 ## Open
 
 - Product name.
