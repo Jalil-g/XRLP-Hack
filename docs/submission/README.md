@@ -129,8 +129,9 @@ pnpm --filter @xrlp/xrpl spike:close-batch  # the close path's escrow Batch, a r
 pnpm --filter @xrlp/xrpl spike:default  # LoanManage impair / default: tecTOO_SOON, first-loss cover pays 10% of the debt, tecKILLED
 ```
 
-TODO(T+32h): re-run these on the `demo-v1` tag. On `main` @ 3edbe71, `demo` stops at the loan close (`scripts/demo.ts:174`, see #115)
-and `spike:escrow` needs the case-3 fix in #126.
+Last checked on devnet, 2026-10-25 ~03:35–03:50 UTC, on the code of `main` @ 53ffcf8: `demo` ran end to end with exit 0 (tx table in
+`packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`, M5 run: LoanSet, then one Batch of 3 escrows), and `spike:escrow` passed all 4 cases
+(finish to the builder, `tecCRYPTOCONDITION_ERROR`, `tecNO_LINE` leak, `tecNO_PERMISSION` after `CancelAfter`).
 
 **Full UI on devnet**: TODO(T+32h) confirm against the `demo-v1` tag: `LEDGER_MODE=devnet pnpm --filter @xrlp/core serve` (:4000), then
 both apps with `NEXT_PUBLIC_API_MODE=http`.
