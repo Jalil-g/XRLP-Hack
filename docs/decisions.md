@@ -182,6 +182,15 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
 
+## Core store hardening (CORE-08)
+
+- FileStore writers acquire an exclusive filesystem lock, shared across instances
+  and processes, before loading state. Lock waits are bounded at five seconds;
+  abandoned locks require stopping all writers before manual removal. No age-based
+  lock stealing, which could allow two live writers to overwrite each other.
+- Atomic writes flush a private temporary file before rename and clean it on
+  ordinary failures. Evidence IDs cannot traverse directories. This does not
+  change the workflow contracts, ledger-event deduplication, or release vault.
 
 ## Open
 
