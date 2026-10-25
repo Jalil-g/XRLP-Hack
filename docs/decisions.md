@@ -79,6 +79,19 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Inspector mock Maple St moved to the verifier's site (41 Maple St, Brooklyn, 40.6795/-73.962, r=120 m) — the demo photos are
   geotagged there. **Open:** core's demo scenario still puts Maple St in Beacon, NY (41.5048/-73.9696); with the verifier's photos that
   fails `gps_within_site`. Core + verifier should agree on one site.
+- [10-25] **Inspector audit attestation = the XRPL-08 Payment format** (Roro): 1-drop Payment inspector → project SPV, one memo
+  `xrlp/attest/v1` `{v:1, kind:"audit", milestoneId, hash}`, signed in the inspector app (`@xrlp/attest-signer`) and sent as route 10
+  `signedTxBlob`. The v1 `AccountSet` / `xrlp/attestation/v1` builder is gone. Test: an app-signed blob passes packages/xrpl
+  `verifyAttestBlob`; devnet smoke (`pnpm --filter @xrlp/attest-signer smoke:devnet`) tesSUCCESS.
+- [10-25] Audit memo `hash` = `auditHash(audit)`: sha256 of canonical JSON (keys sorted, no whitespace) of
+  `{v:1, milestoneId, inspector, evidenceBundleHash, checklist (sorted by sovCode; note trimmed, omitted if empty), notes (trimmed),
+  photos: sorted sha256 of the uploaded files}` — only what core receives and keeps from route 10, none of what core assigns
+  (`txHash`, `at`, photo ids). Proposed on #53 for core to recompute and compare.
+- [10-25] Inspector keys: mock mode signs with ed25519 keys from **public** entropy `sha256("drawproof/mock/inspector-<name>")[0..16]`
+  (worthless by design). http mode: the inspector pastes their devnet seed once; it stays in that browser's localStorage, only the signed
+  blob leaves. No key → the audit is filed unsigned and core signs with the demo key (05-api §1), labelled as such in the UI.
+  Seeds are never put in `NEXT_PUBLIC_*` env (they would ship in the JS bundle). Autofill uses `XRPL_WS_URL`, `LastLedgerSequence` +75.
+- [10-25] `@xrlp/attest-signer` tests run with `node --import tsx` (like core/verifier) because the parity test imports `@xrlp/xrpl`.
 
 ## Open
 

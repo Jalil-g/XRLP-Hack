@@ -10,7 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "smoke:devnet": "tsx scripts/devnet-smoke.ts"
   },
   "dependencies": {
     "ripple-keypairs": "3.1.0",
