@@ -25,7 +25,8 @@ const { signAuditAttestation } = await import("../lib/signing.ts");
 type InspectorTask = import("../lib/types.ts").InspectorTask;
 type Inspector = import("../lib/types.ts").Inspector;
 
-const PROJECT = "maple-st-duplex";
+/** Maple St's id: "maple-st-duplex" in fake mode; a prestage id ("ps-…-a") on devnet, where reset loads the XRPL prestage. */
+let PROJECT = "maple-st-duplex";
 const PHOTO = readFileSync(new URL("../test/fixtures/audit-foundation-02-site.jpg", import.meta.url));
 
 // ---------------------------------------------------------------- environment probes
@@ -66,6 +67,8 @@ const resetDemo = () => post("/api/admin/demo/reset", { seed: "maple-st" });
 /** Fresh seed + builder evidence on Maple M3 (route 9) -> Dana's audit task for it (route 18). */
 async function openAudit(): Promise<InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> }> {
   await resetDemo();
+  const projects = (await (await fetch(`${CORE}/api/projects`)).json()) as { id: string; name: string }[];
+  PROJECT = projects.find((p) => p.name === "Maple St Duplex")?.id ?? PROJECT;
   const detail = await api.getProject(PROJECT);
   const m3 = detail.project.milestones.find((m) => m.status === "escrowed");
   assert.ok(m3, "core's maple-st seed should leave a milestone escrowed (M3) for a live audit");
@@ -123,6 +126,11 @@ describe("inspector app -> core (http mode)", () => {
     if (!needCore(t)) return;
     const task = await openAudit();
     const { report, file } = await auditFor(task);
+    if (PROJECT !== "maple-st-duplex") {
+      // Devnet core (prestage ids): an unsigned audit is refused (#173); the signed path is tier 2.
+      await assert.rejects(api.submitAudit({ projectId: PROJECT, milestoneId: task.milestone.id, report, photos: [file] }), /signed inspector audit is required/);
+      return;
+    }
     const res = await api.submitAudit({ projectId: PROJECT, milestoneId: task.milestone.id, report, photos: [file] });
     assert.equal(res.milestone.status, "audited");
     assert.match(res.audit.txHash ?? "", /^[0-9A-F]{64}$/i, "core should record the audit attestation tx hash");
@@ -210,11 +218,11 @@ describe("inspector app -> core -> devnet (signed with Dana's seed)", () => {
       }
       assert.ok(tx?.validated, `devnet did not validate ${signed.txHash}`);
       const meta = tx.meta as { TransactionResult?: string };
-      const json = (tx.tx_json ?? tx) as { Account: string; Destination: string; Amount: string };
+      const json = (tx.tx_json ?? tx) as { Account: string; Destination: string; Amount?: string; DeliverMax?: string };
       assert.equal(meta.TransactionResult, "tesSUCCESS");
       assert.equal(json.Account, dana!.address);
       assert.equal(json.Destination, spv);
-      assert.equal(json.Amount, "1");
+      assert.equal(json.Amount ?? json.DeliverMax, "1"); // API v2 tx_json names a Payment's Amount "DeliverMax"
       const expected = await auditHash({ ...report, photos: [{ sha256: await sha256Hex(await file.arrayBuffer()) }] });
       assert.equal(signed.memo.hash, expected);
       console.log(`devnet audit attestation: https://devnet.xrpl.org/transactions/${signed.txHash}`);
