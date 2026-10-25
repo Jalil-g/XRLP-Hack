@@ -388,7 +388,10 @@ const routes: Route[] = [
       return uploadToEvidence(f, `${m.id}-u${db.seq}`, kind, at);
     });
     db.evidence[m.id] = m.status === "failed" ? added : [...(db.evidence[m.id] ?? []), ...added];
-    if (m.status === "failed") db.checks[m.id] = pendingChecks();
+    if (m.status === "failed") {
+      db.checks[m.id] = pendingChecks();
+      db.resubmitted[m.id] = true;
+    }
     m.status = (db.audits[m.id]?.length ?? 0) > 0 && m.status !== "failed" ? "audited" : "evidence_submitted";
     return { milestone: m, evidence: added };
   }],
@@ -429,7 +432,8 @@ const routes: Route[] = [
     requireStatus(m.status, ["evidence_submitted", "audited", "failed"], m.title);
     const at = now();
     const hasAudit = (db.audits[m.id]?.length ?? 0) > 0;
-    const result = hasAudit ? (s.verdicts[m.id]?.(at) ?? s.genericPass(p, m, at)) : s.missingAudit(p, m, at);
+    // Canned playback: missing audit → fail; a resubmission after a fail → pass; otherwise the milestone's fixture verdict.
+    const result = !hasAudit ? s.missingAudit(p, m, at) : db.resubmitted[m.id] ? s.genericPass(p, m, at) : (s.verdicts[m.id]?.(at) ?? s.genericPass(p, m, at));
     db.checks[m.id] = result;
     const verdict = result.verdict!;
     const v = emit(db, { projectId: p.id, milestoneId: m.id, kind: "verdict_attested", actor: AI_AGENT.address });

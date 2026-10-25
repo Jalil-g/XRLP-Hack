@@ -97,6 +97,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
               )}
             </div>
             <ChecksPanel
+              key={selected.id}
               milestone={selected}
               status={checks}
               audits={audits}

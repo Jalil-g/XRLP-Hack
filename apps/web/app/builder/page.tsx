@@ -7,8 +7,9 @@ import { ChecksPanel } from "@/components/checks/checks-panel";
 import { Empty, PageHeader, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
-import type { CheckResult, ProjectDetail } from "@/lib/contract";
+import type { CheckResult, Milestone, ProjectDetail } from "@/lib/contract";
 import { PROJECT_STATUS, checkLabel, sovLinesFor } from "@/lib/display";
+import { MAPLE_FIXTURE_SETS } from "@/lib/fixture-files";
 import { getSession } from "@/lib/session";
 import { formatAmount, toCents } from "@/lib/utils";
 
@@ -92,32 +93,103 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
 
       {d.verification && ["verifying", "verified", "rejected"].includes(p.status) && <VerificationReport v={d.verification} />}
 
-      {current && (
-        <div className="space-y-8">
-          <h3 className="text-body font-semibold">
-            Milestone {current.index + 1}: {current.title} · {formatAmount(current.amount)} RLUSD
-          </h3>
-          {["escrowed", "evidence_submitted", "failed"].includes(current.status) && (
-            <EvidenceUploader
-              projectId={p.id}
-              milestoneId={current.id}
-              milestoneTitle={current.title}
-              requirements={sovLinesFor(p, current).flatMap((l) => l.evidence)}
-            />
-          )}
-          <ChecksPanel
-            milestone={current}
-            status={d.checks[current.id] ?? { required: [], optional: [], outcome: "pending" }}
-            audits={d.audits[current.id] ?? []}
-            attestations={d.attestations[current.id] ?? []}
-            builderName={builder.name}
-            evidence={d.evidence?.[current.id]}
-            names={Object.fromEntries(d.inspectors.map((i) => [i.address, i.name]))}
-            run={{ projectId: p.id }}
-          />
-        </div>
-      )}
+      {current && <CurrentMilestone d={d} m={current} />}
+      <Payouts d={d} />
     </Section>
+  );
+}
+
+function Payouts({ d }: { d: ProjectDetail }) {
+  const paid = d.project.milestones.filter((m) => m.status === "released");
+  if (!paid.length) return null;
+  return (
+    <div className="mt-8">
+      <h4 className="mb-2 text-small font-semibold">Paid to you</h4>
+      <ul className="divide-y divide-line border-y border-line">
+        {paid.map((m) => (
+          <li key={m.id} className="flex items-center justify-between gap-4 py-2.5 text-small">
+            <span>
+              {m.index + 1}. {m.title}
+            </span>
+            <span className="flex items-center gap-4">
+              <span className="tabular font-medium text-pass">+{formatAmount(m.amount)} RLUSD</span>
+              {m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} label="EscrowFinish" />}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const STEP: Partial<Record<Milestone["status"], string>> = {
+  escrowed: "Upload the evidence below. Next, the assigned inspector audits the site, then the checks run.",
+  evidence_submitted: "Evidence received. The assigned inspector audits it and signs; then run the checks. Without a signed audit the inspector check fails.",
+  audited: "The inspector signed the audit. Run the checks: if every one passes, the escrow pays you in seconds.",
+  needs_human: "The checks passed below the confidence this milestone needs. The platform operator is reviewing.",
+  verified: "All checks passed. The release service is finishing the escrow.",
+  expired: "This escrow expired. The money goes back to the project account and is repaid to the vault.",
+};
+
+function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
+  const { project: p, builder } = d;
+  const checks = d.checks[m.id] ?? { required: [], optional: [], outcome: "pending" as const };
+  const failed = [...checks.required, ...checks.optional].filter((c) => c.result === "fail");
+  const flaggedNames = new Set((d.evidence?.[m.id] ?? []).filter((e) => failed.some((c) => c.evidenceIds.includes(e.id))).map((e) => e.filename));
+  const set = /maple/i.test(p.name) ? MAPLE_FIXTURE_SETS[m.index] : undefined;
+  const fixture = set && {
+    label: m.status === "failed" ? "Load Maple St fixture without the flagged photo" : "Load Maple St fixture",
+    files: set.filter((f) => !flaggedNames.has(f.path.split("/").pop()!)),
+  };
+  const uploader = ["escrowed", "evidence_submitted", "failed"].includes(m.status) && (
+    <EvidenceUploader
+      projectId={p.id}
+      milestoneId={m.id}
+      milestoneTitle={m.title}
+      requirements={sovLinesFor(p, m).flatMap((l) => l.evidence)}
+      submitLabel={m.status === "failed" ? "Resubmit" : "Upload"}
+      fixture={fixture}
+    />
+  );
+  const panel = (
+    <ChecksPanel
+      key={m.id}
+      milestone={m}
+      status={checks}
+      audits={d.audits[m.id] ?? []}
+      attestations={d.attestations[m.id] ?? []}
+      builderName={builder.name}
+      builderBalance={d.balances?.builder}
+      evidence={d.evidence?.[m.id]}
+      names={Object.fromEntries(d.inspectors.map((i) => [i.address, i.name]))}
+      run={{ projectId: p.id }}
+    />
+  );
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-body font-semibold">
+          Milestone {m.index + 1}: {m.title} · {formatAmount(m.amount)} RLUSD
+        </h3>
+        <p className="mt-1 max-w-[72ch] text-small text-ink-2">
+          {m.status === "failed"
+            ? `${failed.length === 1 ? "A check" : `${failed.length} checks`} failed, so the money stays locked. Fix what the red row says, then resubmit: the checks run again on the new evidence.`
+            : STEP[m.status]}
+        </p>
+      </div>
+      {m.status === "failed" ? (
+        <>
+          {panel}
+          <h4 className="pt-2 text-body font-semibold">Resubmit evidence</h4>
+          {uploader}
+        </>
+      ) : (
+        <>
+          {uploader}
+          {panel}
+        </>
+      )}
+    </div>
   );
 }
 
