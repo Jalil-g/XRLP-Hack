@@ -363,3 +363,123 @@ describe("demo role picker", () => {
     for (const party of parties) assert.ok(Object.keys(party).every((k) => ["address", "name", "role", "kyc"].includes(k)));
   });
 });
+
+describe("interest-bearing share redemption", () => {
+  it("partial and full withdrawals burn shares at asset value without diluting another investor", async () => {
+    const { svc, project, clock, ledger, core } = await mapleEscrowed();
+    const { toMicro, redemptionShares } = await import("../src/money.ts");
+    const before = await svc.getProject(project.id);
+    const owed = before.loan!.totalValueOutstanding;
+    await svc.repay(project.id, { amount: owed });
+    clock.set(new Date(project.chain.redemptionDate!));
+    const inv = DEMO.investors[0]!.address;
+    const other = DEMO.investors[1]!.address;
+    const a = (await svc.portfolio(inv))[0]!;
+    const b = (await svc.portfolio(other))[0]!;
+    assert.ok(toMicro(a.value) > toMicro("50000"));
+    const snapshot = (await svc.getProject(project.id)).vault!;
+    const burn = redemptionShares(toMicro("1000"), toMicro(snapshot.assetsTotal), BigInt(snapshot.sharesOutstanding));
+    await svc.withdraw(project.id, { investor: inv, amount: "1000" });
+    const partial = (await svc.portfolio(inv))[0]!;
+    assert.equal(BigInt(partial.shares), BigInt(a.shares) - burn);
+    assert.ok(toMicro((await svc.portfolio(other))[0]!.value) >= toMicro(b.value));
+    assert.deepEqual(await ledger.getVaultSnapshot({ vaultId: project.chain.vaultId! }), (await svc.getProject(project.id)).vault);
+    await svc.withdraw(project.id, { investor: inv, amount: partial.value });
+    assert.equal((await svc.portfolio(inv))[0]!.shares, "0");
+    await assert.rejects(svc.withdraw(project.id, { investor: inv, amount: "0.000001" }), isCode("CONFLICT"));
+    const remaining = (await svc.getProject(project.id)).vault!;
+    assert.ok(BigInt(remaining.sharesOutstanding) > 0n);
+    assert.ok(toMicro(remaining.assetsTotal) > 0n);
+    const state = await core.store.read((db) => structuredClone(db));
+    assert.equal(state.withdrawals[0]!.sharesBurned, burn.toString());
+    // Persisted core records replay without treating the cash returned as shares.
+    const { portfolio } = await import("../src/read-models.ts");
+    assert.equal(portfolio(JSON.parse(JSON.stringify(state)), inv, clock.now())[0]!.shares, "0");
+    delete state.withdrawals[0]!.sharesBurned;
+    assert.throws(() => portfolio(state, inv, clock.now()), /Legacy withdrawal/);
+  });
+
+  it("fake ledger rejects a non-holder before moving vault assets", async () => {
+    const { svc, project, clock, ledger } = await mapleEscrowed();
+    await svc.repay(project.id, { amount: "25000" });
+    clock.set(new Date(project.chain.redemptionDate!));
+    const before = await ledger.getVaultSnapshot({ vaultId: project.chain.vaultId! });
+    await assert.rejects(ledger.withdraw({ project, investor: DEMO.inspectors.lee.address, amount: "1" }), /insufficient shares/);
+    assert.deepEqual(await ledger.getVaultSnapshot({ vaultId: project.chain.vaultId! }), before);
+  });
+});
+
+describe("canonical signed audit submission", () => {
+  it("rejects tampering before submission or store mutation, and accepts the inspector app's hash", async () => {
+    const { SoftwareSigner, auditMemo, buildAttestationTx } = await import("@xrlp/attest-signer");
+    const { svc, core, ledger, clock, project } = await mapleEscrowed();
+    const inspector = SoftwareSigner.fromEntropy(new Uint8Array(16).fill(61));
+    const address = (await inspector.getAddress()).address;
+    const spv = (await SoftwareSigner.fromEntropy(new Uint8Array(16).fill(62)).getAddress()).address;
+    await core.store.write((db) => {
+      db.projects.find((p) => p.id === project.id)!.chain.spv = spv;
+      db.projectMeta.find((p) => p.projectId === project.id)!.assignment!.inspectors = [address];
+    });
+    const m = project.milestones[0]!;
+    const ev = goodEvidence(clock);
+    await svc.submitEvidence(project.id, m.id, ev);
+    const body = auditBody(project, m.id, address, ev);
+    const { sha256Hex } = await import("../src/ids.ts");
+    const unsigned = { ...body.report, milestoneId: m.id, photos: [{ sha256: sha256Hex("photo bytes") }] };
+    const blob = (await inspector.signAttestation({
+      ...buildAttestationTx({ account: address, spv, memo: await auditMemo(unsigned) }),
+      Sequence: 1, Fee: "12", LastLedgerSequence: 999999,
+    })).tx_blob;
+    const before = await core.store.read((db) => structuredClone(db));
+    const submitted = ledger.submitted.length;
+    for (const bad of [
+      { ...body, signedTxBlob: "garbage" },
+      { ...body, report: { ...body.report, notes: "tampered" }, signedTxBlob: blob },
+      { ...body, report: { ...body.report, evidenceBundleHash: "00".repeat(32) }, signedTxBlob: blob },
+      { ...body, photos: [{ fileId: "new", filename: "new.jpg", mimeType: "image/jpeg", uri: "/api/files/new", sha256: "00".repeat(32), bytes: 1 }], signedTxBlob: blob },
+    ]) await assert.rejects(svc.submitAudit(project.id, m.id, bad), isCode("VALIDATION"));
+    assert.equal(ledger.submitted.length, submitted);
+    assert.deepEqual(await core.store.read((db) => db), before);
+    Object.defineProperty(ledger, "mode", { value: "devnet", configurable: true });
+    await assert.rejects(svc.submitAudit(project.id, m.id, body), isCode("FORBIDDEN"));
+    Object.defineProperty(ledger, "mode", { value: "fake" });
+    const { createHttpServer } = await import("../src/http/app.ts");
+    const app = createHttpServer(svc, { dataDir: mkdtempSync(join(tmpdir(), "signed-audit-")) });
+    const send = async (photo: string) => {
+      const form = new FormData();
+      form.set("report", JSON.stringify(body.report));
+      form.set("signedTxBlob", blob);
+      form.set("photos", new Blob([photo], { type: "image/jpeg" }), "inspection.jpg");
+      return app.request(`/api/projects/${project.id}/milestones/${m.id}/audit`, { method: "POST", body: form });
+    };
+    assert.equal((await send("tampered photo bytes")).status, 400);
+    assert.equal(ledger.submitted.length, submitted);
+    const response = await send("photo bytes");
+    assert.equal(response.status, 200);
+    const result = await response.json() as { audit: { inspector: string }; milestone: { status: string } };
+    assert.equal(result.audit.inspector, address);
+    assert.equal(result.milestone.status, "audited");
+    assert.equal(ledger.submitted.length, submitted + 1);
+  });
+});
+
+
+describe("persisted redemption", () => {
+  it("retains share burns and fake-ledger balances across process instances", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "redemption-restart-"));
+    const clock = new FakeClock(T0);
+    const env = { LEDGER_MODE: "fake", CORE_VERIFIER: "fake" };
+    const a = createCore({ dataDir, clock, env });
+    await a.service.resetDemo({ seed: "maple-st" });
+    const detail = await a.service.getProject(MAPLE_ID);
+    await a.service.repay(MAPLE_ID, { amount: detail.loan!.totalValueOutstanding });
+    clock.set(new Date(detail.project.chain.redemptionDate!));
+    const investor = DEMO.investors[0]!.address;
+    await a.service.withdraw(MAPLE_ID, { investor, amount: "1000" });
+    const b = createCore({ dataDir, clock, env });
+    assert.deepEqual(await b.service.portfolio(investor), await a.service.portfolio(investor));
+    assert.deepEqual(await b.ledger.getVaultSnapshot({ vaultId: detail.project.chain.vaultId! }), (await b.service.getProject(MAPLE_ID)).vault);
+    await b.service.withdraw(MAPLE_ID, { investor, amount: "1000" });
+    assert.deepEqual(await a.ledger.getVaultSnapshot({ vaultId: detail.project.chain.vaultId! }), (await a.service.getProject(MAPLE_ID)).vault);
+  });
+});

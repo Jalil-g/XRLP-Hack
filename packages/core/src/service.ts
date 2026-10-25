@@ -3,6 +3,7 @@
 // (ledger / verifier / release service), 4. commit state + ChainEvents in one store write. If 3 throws, nothing is
 // committed. Multi-tx steps (verdict -> release, cancel -> LoanPay) commit after each tx so a later failure never
 // erases an on-chain fact; keeperTick() retries the remainder.
+import { auditHash as canonicalAuditHash, verifyAuditBlob } from "@xrlp/attest-signer";
 import {
   CreateProjectInput,
   LedgerError,
@@ -38,7 +39,7 @@ import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
 import { DomainError } from "./errors.ts";
 import { canonicalJson, fakeAddress, newId, sha256Hex, slugify } from "./ids.ts";
-import { fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
+import { redemptionShares, fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
 import { PLATFORM_SCOPE } from "./ports.ts";
 import {
   assignedInspectors,
@@ -674,15 +675,21 @@ export class CoreService implements CoreApi {
     body: { report: AuditReportInput; photos: StoredFile[]; signedTxBlob?: string },
   ): Promise<{ milestone: Milestone; audit: InspectorAudit; events: ChainEvent[] }> {
     return this.locks.run(id, async () => {
-      const { p, m, round, assigned } = await this.read((db) => {
+      const { p, m, round, assigned, bundleHash } = await this.read((db) => {
         const p = this.projectIn(db, id);
-        return { p, m: getMilestoneOrThrow(p, mid), round: currentRound(db, mid), assigned: assignedInspectors(db, id) };
+        const round = currentRound(db, mid);
+        return {
+          p, m: getMilestoneOrThrow(p, mid), round, assigned: assignedInspectors(db, id),
+          bundleHash: sha256Hex(roundEvidence(db, mid, round).map((e) => e.sha256).sort().join("\n")),
+        };
       });
       const inspector = body.report.inspector;
       if (!assigned.includes(inspector)) throw new DomainError("FORBIDDEN", `${inspector} is not an assigned inspector for ${id}`);
       assertProjectStatus(id, p.status, OPEN_PROJECT, "submit audit");
       if (round === 0) throw new DomainError("ILLEGAL_TRANSITION", `No builder evidence for ${mid} yet`);
       if (m.status !== "audited") assertMilestoneTransition(mid, m.status, "audited");
+      if (body.report.evidenceBundleHash.toLowerCase() !== bundleHash)
+        throw new DomainError("VALIDATION", "Audit must cover the current builder evidence bundle");
       const at = this.nowIso();
       const photos: Evidence[] = body.photos.map((f) => ({
         id: newId("ap"),
@@ -703,7 +710,18 @@ export class CoreService implements CoreApi {
         notes: body.report.notes,
         at,
       };
-      const auditHash = sha256Hex(canonicalJson(unsigned));
+      const auditHash = await canonicalAuditHash(unsigned);
+      if (body.signedTxBlob) {
+        try {
+          if (!p.chain.spv) throw new Error("project SPV missing");
+          await verifyAuditBlob(body.signedTxBlob, unsigned, p.chain.spv);
+        } catch {
+          // Never echo the blob, signatures or parser contents in an API error.
+          throw new DomainError("VALIDATION", "Signed audit does not match the assigned inspector, project, report and uploaded photos");
+        }
+      } else if (this.ledger.mode !== "fake") {
+        throw new DomainError("FORBIDDEN", "A signed inspector audit is required outside fake demo mode");
+      }
       // Inspector-app-signed attestation when provided; otherwise core submits it with the demo key (disclosed).
       const tx = body.signedTxBlob
         ? await this.onLedger("submit signed audit", () => this.ledger.submitSignedBlob(body.signedTxBlob!))
@@ -980,10 +998,12 @@ export class CoreService implements CoreApi {
       if (vaultPhase(p, this.now()) !== "redemption")
         throw new DomainError("TOO_SOON", `Withdrawals open at RedemptionDate ${p.chain.redemptionDate}`, undefined, { txResult: "tecTOO_SOON" });
       if (toMicro(amount) > pos.withdrawable) throw new DomainError("CONFLICT", `Withdrawable now: ${fromMicro(pos.withdrawable)} RLUSD`);
+      // Book-value model, exact for our fake ledger. Live wiring must use validated burn metadata (decisions.md).
+      const sharesBurned = redemptionShares(toMicro(amount), pos.assetsTotal, pos.sharesOutstanding).toString();
       const tx = await this.onLedger("vault withdraw", () => this.ledger.withdraw({ project: p, investor: body.investor, amount }));
       const events = this.evs([tx], { projectId: id, kind: "vault_withdraw", actor: body.investor, amount });
       return this.store.write((db) => {
-        db.withdrawals.push({ projectId: id, investor: body.investor, amount, tx: tx.hash, at: tx.at ?? this.nowIso() });
+        db.withdrawals.push({ projectId: id, investor: body.investor, amount, sharesBurned, tx: tx.hash, at: tx.at ?? this.nowIso() });
         db.chainEvents.push(...events);
         return { events };
       });
