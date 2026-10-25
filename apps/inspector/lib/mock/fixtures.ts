@@ -150,7 +150,8 @@ const ELM_SOV: SovLine[] = [
 
 // ---------------------------------------------------------------- projects
 
-const MAPLE_GEO = { lat: 41.9312, lng: -74.0004, radiusM: 60 };
+// Same site as packages/verifier/fixtures/scenarios.ts (GEO.mapleSite, radius 120): the demo photos are geotagged there.
+const MAPLE_GEO = { lat: 40.6795, lng: -73.962, radiusM: 120 };
 const RHINEBECK_GEO = { lat: 41.9268, lng: -73.9124, radiusM: 80 };
 
 const escrow = (owner: string, seq: number, seed: string) => ({
@@ -166,7 +167,7 @@ export const PROJECTS: Project[] = [
     name: "Maple St Duplex",
     type: "residential_new",
     builderId: "hudson-valley-builders",
-    siteAddress: "418 Maple St, Kingston, NY 12401",
+    siteAddress: "41 Maple St, Brooklyn, NY 11216",
     siteGeo: MAPLE_GEO,
     description: "Ground-up side-by-side duplex, 2 × 3BR/2.5BA on a 0.22-acre infill lot. Permits issued Sep 2026.",
     terms: { principal: "120000.00", interestRateBps: 1050, termDays: 365, paymentIntervalDays: 30, fundingDeadline: "2026-10-24T14:30:00Z" },
@@ -261,8 +262,8 @@ export const EVIDENCE: Record<string, Evidence[]> = {
     photoEv("maple-st-duplex:m1", "excavation", MAPLE_GEO, "2026-10-24T16:12:00Z", M1_UP, 0),
     photoEv("maple-st-duplex:m1", "foundation", MAPLE_GEO, "2026-10-24T16:20:00Z", M1_UP, 1),
     photoEv("maple-st-duplex:m1", "foundation", MAPLE_GEO, "2026-10-24T16:24:00Z", M1_UP, 2),
-    docEv("maple-st-duplex:m1", "invoice", "ulster-ready-mix-INV-4410.pdf", ["Ulster Ready-Mix", "Concrete 4000 psi, 62 yd³", "Rebar #4, 1.8 t", "Total: 17,640.00 RLUSD"], M1_UP, "17640.00"),
-    docEv("maple-st-duplex:m1", "document", "footing-signoff.pdf", ["City of Kingston — Building Dept.", "Footing inspection: APPROVED", "Permit BP-2026-0917"], M1_UP),
+    docEv("maple-st-duplex:m1", "invoice", "gowanus-ready-mix-INV-4410.pdf", ["Gowanus Ready-Mix", "Concrete 4000 psi, 62 yd³", "Rebar #4, 1.8 t", "Total: 17,640.00 RLUSD"], M1_UP, "17640.00"),
+    docEv("maple-st-duplex:m1", "document", "footing-signoff.pdf", ["NYC Dept. of Buildings", "Footing inspection: APPROVED", "Permit BP-2026-0917"], M1_UP),
   ],
   "maple-st-duplex:m2": [
     photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-10-24T16:41:00Z", M2_UP, 0),
@@ -270,7 +271,7 @@ export const EVIDENCE: Record<string, Evidence[]> = {
     photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-09-13T15:22:00Z", M2_UP, 1, { filename: "IMG_0412.jpg", perceptualHash: "phash:oak-ave-framing-0412" }),
     photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-10-24T16:47:00Z", M2_UP, 2),
     photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-10-24T16:52:00Z", M2_UP, 3),
-    docEv("maple-st-duplex:m2", "invoice", "kingston-lumber-INV-2291.pdf", ["Kingston Lumber Supply", "Framing package, duplex", "Trusses × 28", "Total: 44,210.00 RLUSD"], M2_UP, "44210.00"),
+    docEv("maple-st-duplex:m2", "invoice", "atlantic-lumber-INV-2291.pdf", ["Atlantic Lumber Supply", "Framing package, duplex", "Trusses × 28", "Total: 44,210.00 RLUSD"], M2_UP, "44210.00"),
   ],
   "rhinebeck-farmhouse:m1": [
     photoEv("rhinebeck-farmhouse:m1", "rough_in", RHINEBECK_GEO, "2026-10-22T12:30:00Z", RB_UP, 0),

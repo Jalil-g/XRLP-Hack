@@ -1,8 +1,10 @@
 // One route 18 task in the queue: project, milestone, SoV line(s), amount, builder evidence status, escrow expiry.
-import { CalendarClock, Camera, FileText, History, MapPin, Receipt } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, CalendarClock, Camera, FileText, History, MapPin, Receipt } from "lucide-react";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { SectionLabel } from "@/components/ui/card";
-import { evidenceStatus, taskAmount, type EvidenceKindStatus } from "@/lib/queue";
+import { buttonClass } from "@/components/ui/button";
+import { auditHref, evidenceStatus, taskAmount, type EvidenceKindStatus } from "@/lib/queue";
 import type { InspectorTask, TaskNeeds } from "@/lib/types";
 import { cn, formatDateTime, formatRlusd } from "@/lib/utils";
 
@@ -32,6 +34,8 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const m = task.milestone;
   const expiry = m?.cancelAfter ? expiryLabel(m.cancelAfter, now) : null;
   const mine = task.priorAudits.length;
+  const href = auditHref(task);
+  const title = m ? `M${m.index + 1} · ${m.title}` : "Site visit before verification";
 
   return (
     <li className={cn("px-5 py-4 transition-colors duration-1000", fresh && "bg-brand-50")}>
@@ -41,13 +45,26 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
             {task.projectName}
             {fresh && <Badge tone="brand">New</Badge>}
           </SectionLabel>
-          <p className="mt-0.5 text-[15px] font-semibold">{m ? `M${m.index + 1} · ${m.title}` : "Site visit before verification"}</p>
+          <p className="mt-0.5 text-[15px] font-semibold">
+            {href ? (
+              <Link href={href} className="hover:text-brand hover:underline">
+                {title}
+              </Link>
+            ) : (
+              title
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <span className="tabular text-sm font-medium text-ink-2">{formatRlusd(taskAmount(task))}</span>
           <Badge tone={NEEDS[task.needs].tone} dot>
             {NEEDS[task.needs].label}
           </Badge>
+          {href && (
+            <Link href={href} className={buttonClass("brand", "sm")}>
+              {task.needs === "re_audit" ? "Re-audit" : "Audit"} <ArrowRight className="size-3.5" />
+            </Link>
+          )}
         </div>
       </div>
 

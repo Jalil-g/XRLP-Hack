@@ -62,6 +62,15 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] Mock-mode parties use **real classic addresses** derived from public entropy `sha256("drawproof/mock/<label>")[0..16]`
   (never funded, not devnet wallets) so INS-04 can sign as a mock inspector without committing any seed.
 - [10-24] Route 10 multipart fields `report` / `photos` (repeated) / `signedTxBlob` — same as core's CORE-04 handler.
+- [10-25] INS-02 queue evidence status uses the verifier's `required_evidence_present` rule (per kind, bar = largest `minCount`, not the
+  sum), so the queue never shows red where the suite passes.
+- [10-25] INS-03 `evidenceBundleHash` = the verifier's (`sha256` of sorted per-file `sha256` joined by `"\n"`) over **all** the milestone's
+  builder evidence; golden-tested against the verifier's Maple St fixture. Mock route 10 rejects a mismatched bundle up front.
+- [10-25] Inspector app adds `exifr` (same parser + options as the verifier; the `lite` build, because the full one probes for Node `fs`/`zlib`
+  in the Next bundle), so the photo preview shows exactly the EXIF time/GPS the suite reads.
+- [10-25] Inspector mock Maple St moved to the verifier's site (41 Maple St, Brooklyn, 40.6795/-73.962, r=120 m) — the demo photos are
+  geotagged there. **Open:** core's demo scenario still puts Maple St in Beacon, NY (41.5048/-73.9696); with the verifier's photos that
+  fails `gps_within_site`. Core + verifier should agree on one site.
 
 ## Open
 
