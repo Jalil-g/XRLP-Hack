@@ -39,7 +39,7 @@ test("low-risk builder: soft signals ignored, invoice shortfall goes to a human"
 test("high value tightens invoice tolerance and raises AI confidence bar", () => {
   const big = policyFor(project, b({ riskTier: "low" }), ms("80000.00"));
   assert.equal(big.thresholds.invoiceUnderTolerancePct, 3);
-  assert.equal(big.thresholds.minLlmConfidence, 0.65);
+  assert.equal(big.thresholds.minLlmConfidence, 0.75);
   assert.equal(big.checks.invoice_matches_budget.onWarn, "needs_human");
 });
 
