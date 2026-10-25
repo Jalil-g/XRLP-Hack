@@ -2,7 +2,7 @@
 // Wallets come from .data/wallets.json (bootstrapWallets). Pass a Wallet to override a role.
 import { explorerTxUrl, TooSoonError, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
 import { isoTimeToRippleTime, isValidClassicAddress, rippleTimeToISOTime, type Wallet } from "xrpl";
-import { getClient, ledgerTime, waitForLedgerTimeAfter, XrplTxError, type TxResult } from "./client.ts";
+import { DEFAULT_LLS_MARGIN, getClient, ledgerTime, waitForLedgerTimeAfter, withAccountLock, XrplTxError, type TxResult } from "./client.ts";
 import { submitAttestation, type AttestationPayload } from "./attest.ts";
 import { grantCredential } from "./compliance.ts";
 import { getCredential, revokeCredential, type CredentialStatus, type CredentialType } from "./credentials.ts";
@@ -25,7 +25,29 @@ import {
 } from "./lending-math.ts";
 import { ceilMicro, createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet, planLoanPayment, type LoanPayMode, type LoanPayPlan } from "./loan.ts";
 import { configureIssuer, ensureTrustline, payRlusd, rlusdBalance, topUpRlusd } from "./rlusd.ts";
-import { CloseLoanPartialError, CloseValidationError, planLoanClose, type CloseConditions } from "./loan-close.ts";
+import {
+  CloseLoanPartialError,
+  CloseValidationError,
+  conditionsByIndex,
+  defaultEscrowMode,
+  escrowCreatesFromHistory,
+  historyTxs,
+  ledgerEscrowsFromNodes,
+  loanMaturity,
+  loanSetFromHistory,
+  mergeLedgerEscrows,
+  planEscrowResume,
+  planLoanClose,
+  resolveEscrowMode,
+  type CloseConditions,
+  type ClosePartialContext,
+  type CreatedEscrowRef,
+  type EscrowMode,
+  type HistoryTx,
+  type PlannedEscrow,
+  type ResumeEscrowRef,
+  type ResumeMilestone,
+} from "./loan-close.ts";
 import { checkSignerQuorum, createSpvAccount, getSpvInfo, lockSpv, type SpvSigners } from "./spv.ts";
 import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
 import {
@@ -40,6 +62,9 @@ import {
   type DemoWallets,
   type WalletRole,
 } from "./wallets.ts";
+import { closePartialError, createEscrowsAtomic, type AtomicEscrow } from "./batch.ts";
+import { fetchLedgerNow } from "./reads.ts";
+import type { LoanEntry } from "./loan.ts";
 
 /** Role name ("investor1"), a demo-wallet address (r...), or a Wallet. */
 type WalletRef = WalletRole | string | Wallet;
@@ -382,6 +407,27 @@ export interface CloseLoanOptions {
    */
   builderAddress?: string;
   onWait?: (secondsRemaining: number) => void;
+  /**
+   * XRPL-13b. How the milestone escrows are created after LoanSet:
+   *  - "batch": ONE all-or-nothing XLS-56 Batch holding every EscrowCreate (outer = SPV, multisigned by `spvSigners`).
+   *    Either every escrow exists or none does, and the SPV holds the principal for ~1-2 ledgers. 2..8 milestones.
+   *  - "sequential": one EscrowCreate per milestone, back to back (the XRPL-06 path).
+   * Default: "batch" for 2..8 milestones, else "sequential". "batch" for any other count → CloseValidationError.
+   */
+  escrowMode?: EscrowMode;
+  /**
+   * Awaited after each tx of the close is validated: origination-fee top-up, LoanSet, then the escrow Batch or each
+   * EscrowCreate (e.g. to stream explorer links). A throw after LoanSet surfaces as CloseLoanPartialError.
+   */
+  onTx?: (e: CloseTxEvent) => void | Promise<void>;
+}
+
+/** One validated tx of a close (`onTx` of closeLoanAndCreateEscrows / resumeEscrowCreation). */
+export interface CloseTxEvent {
+  step: "origination_fee" | "loan_set" | "escrow_batch" | "escrow_create";
+  tx: TxResult;
+  /** Milestones this tx created escrows for ([] for the fee top-up and LoanSet). */
+  milestoneIds: string[];
 }
 
 export interface MilestoneEscrowInfo {
@@ -389,6 +435,7 @@ export interface MilestoneEscrowInfo {
   owner: string;
   offerSequence: number;
   condition: string;
+  /** The EscrowCreate hash; in batch mode the Batch's INNER EscrowCreate (its own on-ledger tx), not the Batch. */
   createTx: string;
   /** Matches shared Milestone.escrow. */
   escrow: NonNullable<Milestone["escrow"]>;
@@ -404,22 +451,57 @@ export interface CloseLoanResult {
   originationFeeTopUpTx?: TxResult;
   /** One per milestone, in project.milestones order (structurally the shared `EscrowRef`). */
   escrows: MilestoneEscrowInfo[];
-  /** LoanSet + one EscrowCreate per milestone, in order (shared `CloseResult.txs`). */
+  /** LoanSet + one EscrowCreate per milestone, in order (shared `CloseResult.txs`). Batch mode: the inner EscrowCreates. */
   txs: TxResult[];
   /** Lower bound of loan maturity used for the CancelAfter check (ISO). */
   maturity: string;
   events: ChainEvent[];
+  /** How the escrows were created (XRPL-13b). */
+  escrowMode: EscrowMode;
+  /** Batch mode: the outer Batch tx (fee paid by the SPV). Not an escrow's createTx: those are its inner txs. */
+  batchTx?: TxResult;
+}
+
+/** ISO close time of the ledger a validated tx landed in (`tx.date`), if rippled returned it. */
+function txTime(t: TxResult): string | undefined {
+  const d = (t.tx as { date?: unknown }).date;
+  return typeof d === "number" ? rippleTimeToISOTime(d) : undefined;
+}
+
+function escrowInfo(spv: string, e: { milestoneId: string; offerSequence: number; condition: string; createTx: string; amount: string; cancelAfter: string; createdAt?: string }): MilestoneEscrowInfo {
+  const { milestoneId, offerSequence, condition, createTx, amount, cancelAfter } = e;
+  return {
+    milestoneId,
+    owner: spv,
+    offerSequence,
+    condition,
+    createTx,
+    amount,
+    cancelAfter,
+    escrow: { owner: spv, offerSequence, condition, createTx, createdAt: e.createdAt ?? new Date().toISOString() },
+  };
+}
+
+const createdRefOf = ({ escrow: _e, amount: _a, ...ref }: MilestoneEscrowInfo): CreatedEscrowRef => ref;
+
+function batchEscrowInfo(spv: string, e: AtomicEscrow): MilestoneEscrowInfo {
+  const createdAt = txTime(e.tx);
+  return escrowInfo(spv, { ...e, cancelAfter: rippleTimeToISOTime(e.cancelAfter), ...(createdAt ? { createdAt } : {}) });
 }
 
 /**
- * LoanSet (platform = Account, SPV multisig countersigns) -> principal lands in the SPV -> immediately one
- * EscrowCreate per milestone (SPV multisig) with the caller's conditions, so the SPV's liquid balance returns to ~0.
+ * LoanSet (platform = Account, SPV multisig countersigns) -> principal lands in the SPV -> immediately every milestone
+ * escrow (SPV multisig) with the caller's conditions, so the SPV's liquid balance returns to ~0. XRPL-13b: for 2..8
+ * milestones the escrows go in ONE all-or-nothing Batch (`escrowMode`, default), else one EscrowCreate each.
  *
  * Everything is validated BEFORE any tx (planLoanClose): PaymentTotal ≥ 2, InterestRate > 0, the loan fits the vault,
- * well-formed + unique conditions (also vs the SPV's open escrows), now + 60s < CancelAfter < maturity, the SPV signers
- * reach quorum. Bad input → `CloseValidationError` (code "validation"), nothing submitted. Vault still in Subscription
- * with `waitForInvestmentPhase: false` → shared `TooSoonError`. An EscrowCreate failing after LoanSet →
- * `CloseLoanPartialError` with the loanId, the escrows created so far and the pending milestones.
+ * well-formed + unique conditions (also vs the SPV's open escrows), now + 60s < CancelAfter < maturity, escrowMode fits
+ * the milestone count, the SPV signers reach quorum. Bad input → `CloseValidationError` (code "validation"), nothing
+ * submitted. Vault still in Subscription with `waitForInvestmentPhase: false` → shared `TooSoonError`. A failure after
+ * LoanSet (an EscrowCreate, or a Batch that did not apply) → `CloseLoanPartialError` with the loanId, the escrows
+ * created so far and the pending milestones; `resumeEscrowCreation(err)` creates exactly the missing ones.
+ * Validation through the last escrow holds the SPV's submit lock: a second close of the same project in this process
+ * waits, then is refused before any tx (its conditions are on the SPV's escrows).
  */
 export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoanOptions): Promise<CloseLoanResult> {
   const w = loadWallets();
@@ -429,123 +511,535 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
 
   const vault = await getVault(vaultId);
   if (!vault) throw new Error(`vault ${vaultId} not found`);
-  let now = await ledgerTime();
-  if (vault.SubscriptionDate != null && now <= vault.SubscriptionDate) {
+  const before = await ledgerTime();
+  if (vault.SubscriptionDate != null && before <= vault.SubscriptionDate) {
     if (opts.waitForInvestmentPhase === false) {
-      throw new TooSoonError(`vault ${vaultId} is in Subscription until ${rippleTimeToISOTime(vault.SubscriptionDate)} (ledger now ${rippleTimeToISOTime(now)}); LoanSet would fail tecTOO_SOON`);
+      throw new TooSoonError(`vault ${vaultId} is in Subscription until ${rippleTimeToISOTime(vault.SubscriptionDate)} (ledger now ${rippleTimeToISOTime(before)}); LoanSet would fail tecTOO_SOON`);
     }
     await waitForLedgerTimeAfter(vault.SubscriptionDate, opts.onWait);
-    now = await ledgerTime();
   }
 
-  const termsSchedule = loanScheduleFromTerms(project.terms);
-  const signers = opts.spvSigners ?? defaultSpvSignerWallets();
-  const existing = await listEscrows(spv);
-  const plan = planLoanClose({
-    milestones: project.milestones,
-    conditions: opts.conditions,
-    ...(opts.cancelAfters ? { cancelAfters: opts.cancelAfters } : {}),
-    ...(opts.defaultCancelAfter ? { defaultCancelAfter: isoTimeToRippleTime(opts.defaultCancelAfter.toISOString()) } : {}),
-    now,
-    paymentTotal: opts.paymentTotal ?? termsSchedule.paymentTotal,
-    paymentIntervalS: opts.paymentIntervalS ?? termsSchedule.paymentIntervalS,
-    interestRate: project.terms.interestRateBps * 10, // bps -> 1/10 bps
-    ...(vault.RedemptionDate != null ? { redemptionDate: vault.RedemptionDate } : {}),
-    existingConditions: existing.flatMap((e) => (e.Condition ? [e.Condition] : [])),
-  });
-  if (!opts.spvSingleKey) {
-    const info = await getSpvInfo(spv);
-    const q = info.signerQuorum == null ? undefined : checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signers.map((s) => s.classicAddress));
-    if (!q?.ok) {
-      const why = !q ? "SPV has no SignerList" : q.unknown.length ? `not on the SPV list: ${q.unknown.join(", ")}` : q.duplicates.length ? `duplicate signers: ${q.duplicates.join(", ")}` : `weight ${q.weight} < quorum ${q.quorum}`;
-      throw new CloseValidationError([`SPV signers cannot countersign: ${why}`]);
-    }
-  }
-
-  const originationFee = opts.originationFee ?? originationFeeFor(project.terms.principal);
-  const escrowTotal = plan.escrows.reduce((a, e) => a + toMicro(e.amount), 0n);
-  if (escrowTotal > toMicro(project.terms.principal)) {
-    throw new CloseValidationError([`milestone amounts sum to ${fromMicro(escrowTotal)} > principal ${project.terms.principal}`]);
-  }
-  const spvHeld = BigInt(Math.floor(Number(await rlusdBalance(spv, issuer)) * 1e6));
-  const shortfall = escrowTotal - (toMicro(project.terms.principal) - toMicro(originationFee)) - spvHeld;
-  let originationFeeTopUpTx: TxResult | undefined;
-  if (shortfall > 0n) {
-    const payer = resolveWallet(opts.originationFeePayer ?? "builder");
-    const held = await rlusdBalance(payer.classicAddress, issuer);
-    if (Number(held) * 1e6 < Number(shortfall)) {
-      throw new Error(`origination fee: ${payer.classicAddress} holds ${held} RLUSD, needs ${fromMicro(shortfall)} to pay it into the SPV (or pass originationFee: "0")`);
-    }
-    originationFeeTopUpTx = await payRlusd(payer, spv, issuer, fromMicro(shortfall));
-  }
-
-  let loan: { tx: TxResult; loanId: string };
-  try {
-    loan = await loanSet({
-      brokerOwner: w.platform,
-      loanBrokerId,
-      borrower: spv,
-      principal: project.terms.principal,
-      interestRate: plan.interestRate,
-      paymentTotal: plan.paymentTotal,
-      paymentIntervalS: plan.paymentIntervalS,
-      allowOverpayment: opts.allowOverpayment ?? true,
-      ...(Number(originationFee) > 0 ? { originationFee } : {}),
-      data: `xrlp:${project.id}`,
-      borrowerSig: opts.spvSingleKey ? { single: opts.spvSingleKey } : { multisig: signers },
+  return withAccountLock(spv, async () => {
+    const now = await ledgerTime();
+    const termsSchedule = loanScheduleFromTerms(project.terms);
+    const signers = opts.spvSigners ?? defaultSpvSignerWallets();
+    const existing = await listEscrows(spv);
+    const plan = planLoanClose({
+      milestones: project.milestones,
+      conditions: opts.conditions,
+      ...(opts.cancelAfters ? { cancelAfters: opts.cancelAfters } : {}),
+      ...(opts.defaultCancelAfter ? { defaultCancelAfter: isoTimeToRippleTime(opts.defaultCancelAfter.toISOString()) } : {}),
+      ...(opts.escrowMode ? { escrowMode: opts.escrowMode } : {}),
+      now,
+      paymentTotal: opts.paymentTotal ?? termsSchedule.paymentTotal,
+      paymentIntervalS: opts.paymentIntervalS ?? termsSchedule.paymentIntervalS,
+      interestRate: project.terms.interestRateBps * 10, // bps -> 1/10 bps
+      ...(vault.RedemptionDate != null ? { redemptionDate: vault.RedemptionDate } : {}),
+      existingConditions: existing.flatMap((e) => (e.Condition ? [e.Condition] : [])),
     });
-  } catch (e) {
-    if (e instanceof XrplTxError && e.engineResult === "tecTOO_SOON") {
-      throw new TooSoonError(`LoanSet: vault ${vaultId} still in Subscription`, { txResult: e.engineResult, ...(e.hash ? { txHash: e.hash } : {}) });
+    if (!opts.spvSingleKey) {
+      const info = await getSpvInfo(spv);
+      const q = info.signerQuorum == null ? undefined : checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signers.map((s) => s.classicAddress));
+      if (!q?.ok) {
+        const why = !q ? "SPV has no SignerList" : q.unknown.length ? `not on the SPV list: ${q.unknown.join(", ")}` : q.duplicates.length ? `duplicate signers: ${q.duplicates.join(", ")}` : `weight ${q.weight} < quorum ${q.quorum}`;
+        throw new CloseValidationError([`SPV signers cannot countersign: ${why}`]);
+      }
     }
-    throw e;
-  }
-  const events: ChainEvent[] = [
-    toChainEvent(loan.tx, { projectId: project.id, kind: "loan_set", actor: spv, amount: project.terms.principal }),
-  ];
-  const txs: TxResult[] = [loan.tx];
 
-  const builder = opts.builderAddress ?? w.builder.classicAddress;
-  const escrows: MilestoneEscrowInfo[] = [];
-  for (const e of plan.escrows) {
-    let esc: Awaited<ReturnType<typeof createMilestoneEscrow>>;
+    const originationFee = opts.originationFee ?? originationFeeFor(project.terms.principal);
+    const escrowTotal = plan.escrows.reduce((a, e) => a + toMicro(e.amount), 0n);
+    if (escrowTotal > toMicro(project.terms.principal)) {
+      throw new CloseValidationError([`milestone amounts sum to ${fromMicro(escrowTotal)} > principal ${project.terms.principal}`]);
+    }
+    const spvHeld = BigInt(Math.floor(Number(await rlusdBalance(spv, issuer)) * 1e6));
+    const shortfall = escrowTotal - (toMicro(project.terms.principal) - toMicro(originationFee)) - spvHeld;
+    let originationFeeTopUpTx: TxResult | undefined;
+    if (shortfall > 0n) {
+      const payer = resolveWallet(opts.originationFeePayer ?? "builder");
+      const held = await rlusdBalance(payer.classicAddress, issuer);
+      if (Number(held) * 1e6 < Number(shortfall)) {
+        throw new Error(`origination fee: ${payer.classicAddress} holds ${held} RLUSD, needs ${fromMicro(shortfall)} to pay it into the SPV (or pass originationFee: "0")`);
+      }
+      originationFeeTopUpTx = await payRlusd(payer, spv, issuer, fromMicro(shortfall));
+      await opts.onTx?.({ step: "origination_fee", tx: originationFeeTopUpTx, milestoneIds: [] });
+    }
+
+    let loan: { tx: TxResult; loanId: string };
     try {
-      esc = await createMilestoneEscrow({
+      loan = await loanSet({
+        brokerOwner: w.platform,
+        loanBrokerId,
+        borrower: spv,
+        principal: project.terms.principal,
+        interestRate: plan.interestRate,
+        paymentTotal: plan.paymentTotal,
+        paymentIntervalS: plan.paymentIntervalS,
+        allowOverpayment: opts.allowOverpayment ?? true,
+        ...(Number(originationFee) > 0 ? { originationFee } : {}),
+        data: `xrlp:${project.id}`,
+        borrowerSig: opts.spvSingleKey ? { single: opts.spvSingleKey } : { multisig: signers },
+      });
+    } catch (e) {
+      if (e instanceof XrplTxError && e.engineResult === "tecTOO_SOON") {
+        throw new TooSoonError(`LoanSet: vault ${vaultId} still in Subscription`, { txResult: e.engineResult, ...(e.hash ? { txHash: e.hash } : {}) });
+      }
+      throw e;
+    }
+    const events: ChainEvent[] = [
+      toChainEvent(loan.tx, { projectId: project.id, kind: "loan_set", actor: spv, amount: project.terms.principal, ...atOf(loan.tx) }),
+    ];
+    const txs: TxResult[] = [loan.tx];
+
+    // From here on the loan exists: every failure is a CloseLoanPartialError (the SPV holds what isn't escrowed yet).
+    const builder = opts.builderAddress ?? w.builder.classicAddress;
+    const escrows: MilestoneEscrowInfo[] = [];
+    const context = { projectId: project.id, spv, builder, issuer, escrowMode: plan.escrowMode, planned: plan.escrows, maturity: plan.maturity, originationFee };
+    const partial = (failure: unknown, extra: { prepared?: { hash: string; lastLedgerSequence: number }; uncertain?: boolean } = {}) =>
+      closePartialError({ loanId: loan.loanId, loanSetTx: loan.tx.hash, created: escrows.map(createdRefOf), failure, context, ...extra });
+    const hook = async (e: CloseTxEvent) => {
+      try {
+        await opts.onTx?.(e);
+      } catch (err) {
+        throw partial(err, { uncertain: false });
+      }
+    };
+    const record = (info: MilestoneEscrowInfo, tx: TxResult) => {
+      escrows.push(info);
+      txs.push(tx);
+      events.push(toChainEvent(tx, { projectId: project.id, milestoneId: info.milestoneId, kind: "escrow_created", actor: spv, amount: info.amount, ...atOf(tx) }));
+    };
+    await hook({ step: "loan_set", tx: loan.tx, milestoneIds: [] });
+
+    let batchTx: TxResult | undefined;
+    if (plan.escrowMode === "batch") {
+      let prepared: { hash: string; lastLedgerSequence: number } | undefined;
+      let created: Awaited<ReturnType<typeof createEscrowsAtomic>>;
+      try {
+        created = await createEscrowsAtomic({
+          spv,
+          builder,
+          issuer,
+          milestones: plan.escrows,
+          ...(opts.spvSingleKey ? { spvSingleKey: opts.spvSingleKey } : { spvSigners: signers }),
+          onPrepared: (b) => (prepared = b),
+        });
+      } catch (err) {
+        throw partial(err, prepared ? { prepared } : {});
+      }
+      batchTx = created.batch.tx;
+      for (const e of created.escrows) record(batchEscrowInfo(spv, e), e.tx);
+      await hook({ step: "escrow_batch", tx: batchTx, milestoneIds: created.escrows.map((e) => e.milestoneId) });
+    } else {
+      for (const e of plan.escrows) {
+        let esc: Awaited<ReturnType<typeof createMilestoneEscrow>>;
+        try {
+          esc = await createMilestoneEscrow({
+            spv,
+            builder,
+            issuer,
+            amount: e.amount,
+            condition: e.condition,
+            cancelAfter: e.cancelAfter,
+            ...(opts.spvSingleKey ? { singleKey: opts.spvSingleKey } : { signers }),
+          });
+        } catch (err) {
+          throw partial(err);
+        }
+        const createdAt = txTime(esc.tx);
+        record(
+          escrowInfo(spv, { milestoneId: e.milestoneId, offerSequence: esc.offerSequence, condition: e.condition, createTx: esc.tx.hash, amount: e.amount, cancelAfter: rippleTimeToISOTime(e.cancelAfter), ...(createdAt ? { createdAt } : {}) }),
+          esc.tx,
+        );
+        await hook({ step: "escrow_create", tx: esc.tx, milestoneIds: [e.milestoneId] });
+      }
+    }
+    return {
+      loanId: loan.loanId,
+      loanSetTx: loan.tx,
+      originationFee,
+      ...(originationFeeTopUpTx ? { originationFeeTopUpTx } : {}),
+      escrows,
+      txs,
+      maturity: rippleTimeToISOTime(plan.maturity),
+      events,
+      escrowMode: plan.escrowMode,
+      ...(batchTx ? { batchTx } : {}),
+    };
+  });
+}
+
+/** `{ at }` for toChainEvent: the tx's ledger close time when known (else toChainEvent uses now). */
+function atOf(t: TxResult): { at?: string } {
+  const at = txTime(t);
+  return at ? { at } : {};
+}
+
+// ---------------------------------------------------------------- recovering a partial close (XRPL-13b)
+
+/** resumeEscrowCreation input when the CloseLoanPartialError is gone (e.g. after a restart). */
+export interface ResumeEscrowInput {
+  project: Project;
+  loanId: string;
+  /** Escrows known to exist (CloseLoanPartialError.created). Default []. */
+  created?: CreatedEscrowRef[];
+  /**
+   * Milestones still without an escrow (CloseLoanPartialError.pending). Only sanity-checked: resume always completes
+   * every milestone of the project and re-checks the SPV's escrows by condition first.
+   */
+  pending?: string[];
+  /** Same shapes as CloseLoanOptions.conditions; needed for every milestone not in `created`. */
+  conditions: CloseConditions;
+  /** ISO by milestone index; else milestone.cancelAfter; else (real) loan maturity − one payment interval. */
+  cancelAfters?: string[];
+  /** The LoanSet hash, if known (else it is looked up in the SPV's history). */
+  loanSetTx?: string;
+}
+
+export interface ResumeEscrowOptions {
+  /** Default: "batch" for 2..8 missing escrows, else "sequential". */
+  escrowMode?: EscrowMode;
+  /** SPV quorum for the EscrowCreates. Default platform + builder + trustee. */
+  spvSigners?: Wallet[];
+  spvSingleKey?: Wallet;
+  /** Escrow destination for the `{ project, ... }` form (a CloseLoanPartialError carries its own). Default: demo builder. */
+  builderAddress?: string;
+  /** RLUSD issuer for the `{ project, ... }` form (a CloseLoanPartialError carries its own). Default: the demo issuer. */
+  issuer?: string;
+  /**
+   * When the failed close's last submit had an unknown outcome (`context.uncertain`), wait until that tx can no longer
+   * validate (its LastLedgerSequence, else one DEFAULT_LLS_MARGIN) before reading the ledger. Default true.
+   */
+  waitForInFlight?: boolean;
+  onWait?: (ledgersRemaining: number) => void;
+  onTx?: (e: CloseTxEvent) => void | Promise<void>;
+  /** Network seams (tests). Defaults are the real devnet reads and submits. */
+  deps?: Partial<ResumeDeps>;
+}
+
+/** What resumeEscrowCreation reads and submits (all injectable for offline tests). */
+export interface ResumeDeps {
+  ledgerNow(): Promise<{ ledgerIndex: number; closeTime: number }>;
+  getLoan(loanId: string): Promise<LoanEntry | undefined>;
+  /** The escrow lister: raw Escrow nodes the SPV owns (account_objects). */
+  listEscrowNodes(spv: string): Promise<unknown[]>;
+  /** Raw account_tx entries of the SPV (validated, newest first). */
+  accountTx(spv: string): Promise<unknown[]>;
+  rlusdBalance(account: string, issuer: string): Promise<string>;
+  fetchTx(hash: string): Promise<TxResult>;
+  createEscrowsAtomic: typeof createEscrowsAtomic;
+  createMilestoneEscrow: typeof createMilestoneEscrow;
+  sleep(ms: number): Promise<void>;
+}
+
+export interface ResumeEscrowResult extends CloseLoanResult {
+  resumed: {
+    /** Milestones this call created escrows for, project order. [] = nothing was missing and nothing was submitted. */
+    created: string[];
+    /** Milestones whose escrow already existed: reported created, open on the SPV, or already finished / cancelled. */
+    alreadyPresent: { milestoneId: string; source: ResumeEscrowRef["source"] }[];
+    /** What this call submitted: the escrow Batch, or each EscrowCreate. */
+    submitted: TxResult[];
+  };
+}
+
+/** The SPV's validated history, newest first (account_tx, up to 5 pages of 200). */
+async function spvHistory(spv: string): Promise<unknown[]> {
+  const client = await getClient();
+  const out: unknown[] = [];
+  let marker: unknown;
+  for (let page = 0; page < 5; page++) {
+    const res = await client.request({ command: "account_tx", account: spv, ledger_index_min: -1, ledger_index_max: -1, limit: 200, forward: false, ...(marker ? { marker } : {}) });
+    out.push(...res.result.transactions);
+    marker = res.result.marker;
+    if (!marker) break;
+  }
+  return out;
+}
+
+const realResumeDeps: ResumeDeps = {
+  ledgerNow: fetchLedgerNow,
+  getLoan,
+  listEscrowNodes: listEscrows,
+  accountTx: spvHistory,
+  rlusdBalance,
+  fetchTx: validatedTx,
+  createEscrowsAtomic,
+  createMilestoneEscrow,
+  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+};
+
+interface ResumeSource {
+  projectId: string;
+  spv: string;
+  builder: string;
+  issuer?: string;
+  loanId: string;
+  loanSetTx?: string;
+  created: CreatedEscrowRef[];
+  escrowMode?: EscrowMode;
+  originationFee?: string;
+  uncertain: boolean;
+  inFlightUntilLedger?: number;
+  /** Milestones in project order; CancelAfter defaults to (real maturity − interval) where none was given. */
+  milestones(maturity: number | undefined, interval: number | undefined): ResumeMilestone[];
+}
+
+function resumeSourceOf(input: CloseLoanPartialError | ResumeEscrowInput, opts: ResumeEscrowOptions): ResumeSource {
+  const what = "resumeEscrowCreation";
+  if (input instanceof CloseLoanPartialError) {
+    const c = input.context;
+    if (!c) throw new CloseValidationError(["this CloseLoanPartialError has no context; pass { project, loanId, created, pending, conditions, cancelAfters } instead"], what);
+    if (opts.builderAddress && opts.builderAddress !== c.builder) {
+      throw new CloseValidationError([`builderAddress ${opts.builderAddress} is not the failed close's escrow destination ${c.builder}`], what);
+    }
+    return {
+      projectId: c.projectId ?? PLATFORM_SCOPE,
+      spv: c.spv,
+      builder: c.builder,
+      ...(c.issuer ? { issuer: c.issuer } : {}),
+      loanId: input.loanId,
+      loanSetTx: input.loanSetTx,
+      created: input.created,
+      escrowMode: c.escrowMode,
+      ...(c.originationFee ? { originationFee: c.originationFee } : {}),
+      uncertain: c.uncertain === true,
+      ...(c.inFlightUntilLedger != null ? { inFlightUntilLedger: c.inFlightUntilLedger } : {}),
+      milestones: () => c.planned.map((e) => ({ milestoneId: e.milestoneId, index: e.index, amount: e.amount, condition: e.condition, cancelAfter: e.cancelAfter })),
+    };
+  }
+  const { project } = input;
+  const spv = project.chain.spv;
+  const issues: string[] = [];
+  if (!spv) issues.push("project.chain.spv missing");
+  const conds = conditionsByIndex(project.milestones, input.conditions, issues);
+  if (input.cancelAfters && input.cancelAfters.length !== project.milestones.length) {
+    issues.push(`cancelAfters has ${input.cancelAfters.length} entries for ${project.milestones.length} milestones (index = project.milestones[i])`);
+  }
+  const explicit = project.milestones.map((m, i) => {
+    const raw = input.cancelAfters?.[i] ?? m.cancelAfter;
+    if (raw == null) return undefined;
+    const t = Date.parse(raw);
+    if (Number.isNaN(t)) issues.push(`milestone ${m.id} (#${i}): CancelAfter is not an ISO timestamp: ${JSON.stringify(raw)}`);
+    return Number.isNaN(t) ? undefined : isoTimeToRippleTime(new Date(t).toISOString());
+  });
+  const created = input.created ?? [];
+  const ids = new Set(project.milestones.map((m) => m.id));
+  for (const id of input.pending ?? []) {
+    if (!ids.has(id)) issues.push(`pending: unknown milestone ${id}`);
+    if (created.some((c) => c.milestoneId === id)) issues.push(`milestone ${id} is both created and pending`);
+  }
+  if (issues.length) throw new CloseValidationError(issues, what);
+  return {
+    projectId: project.id,
+    spv: spv!,
+    builder: opts.builderAddress ?? loadWallets().builder.classicAddress,
+    ...(opts.issuer ? { issuer: opts.issuer } : {}),
+    loanId: input.loanId,
+    ...(input.loanSetTx ? { loanSetTx: input.loanSetTx } : {}),
+    created,
+    uncertain: false,
+    milestones: (maturity, interval) =>
+      project.milestones.map((m, index) => {
+        const cancelAfter = explicit[index] ?? (maturity != null && interval != null ? maturity - interval : undefined);
+        return { milestoneId: m.id, index, amount: m.amount, ...(conds[index] != null ? { condition: conds[index] } : {}), ...(cancelAfter != null ? { cancelAfter } : {}) };
+      }),
+  };
+}
+
+const historyTxResult = (h: HistoryTx): TxResult => ({
+  hash: h.hash,
+  explorerUrl: explorerTxUrl(h.hash),
+  result: String(h.meta.TransactionResult ?? "unknown"),
+  ...(h.ledgerIndex != null ? { ledgerIndex: h.ledgerIndex } : {}),
+  tx: h.closeTime && (h.tx as { date?: unknown }).date == null ? { ...h.tx, date: isoTimeToRippleTime(h.closeTime) } : h.tx,
+  meta: h.meta,
+});
+
+/**
+ * Finish a partial close: create exactly the milestone escrows that are missing, then return the completed
+ * CloseLoanResult (+ `resumed`: what this call created / found / submitted). Idempotent: before creating anything it
+ * re-reads the SPV's escrows and matches them **by condition** (open ones, and ones already finished or cancelled per
+ * the SPV's history), so a retry never double-creates; a second run submits nothing.
+ *
+ * Input: the `CloseLoanPartialError` (its `context` carries the plan, builder, Batch state), or
+ * `{ project, loanId, created, pending, conditions, cancelAfters }`. Order: wait out an in-flight tx of the failed close
+ * (only when its outcome was unknown) → the loan must exist with Borrower = SPV → plan (`planEscrowResume`: every new
+ * escrow passes the close's checks, CancelAfter before the REAL loan maturity) → the SPV must hold the RLUSD for the
+ * missing escrows → create them ("batch" for 2..8, else "sequential") under the SPV's submit lock. Bad input or a
+ * mismatch → CloseValidationError, nothing submitted; a failure while creating → a new CloseLoanPartialError (resume
+ * again).
+ */
+export async function resumeEscrowCreation(input: CloseLoanPartialError | ResumeEscrowInput, opts: ResumeEscrowOptions = {}): Promise<ResumeEscrowResult> {
+  const d: ResumeDeps = { ...realResumeDeps, ...opts.deps };
+  const what = "resumeEscrowCreation";
+  const src = resumeSourceOf(input, opts);
+  const { spv, builder, loanId, projectId } = src;
+
+  if (src.uncertain && opts.waitForInFlight !== false) {
+    let at = await d.ledgerNow();
+    const until = src.inFlightUntilLedger ?? at.ledgerIndex + DEFAULT_LLS_MARGIN;
+    while (at.ledgerIndex <= until) {
+      opts.onWait?.(until - at.ledgerIndex + 1);
+      await d.sleep(3_000);
+      at = await d.ledgerNow();
+    }
+  }
+
+  const loan = await d.getLoan(loanId);
+  if (!loan) throw new CloseValidationError([`loan ${loanId} not found on the ledger`], what);
+  if (loan.Borrower !== spv) throw new CloseValidationError([`loan ${loanId} is borrowed by ${loan.Borrower}, not the SPV ${spv}`], what);
+  const maturity = loanMaturity(loan);
+  const milestones = src.milestones(maturity, loan.PaymentInterval);
+
+  return withAccountLock(spv, async () => {
+    const now = await d.ledgerNow();
+    const history = await d.accountTx(spv);
+    const ledgerEscrows = mergeLedgerEscrows(ledgerEscrowsFromNodes(await d.listEscrowNodes(spv), spv), escrowCreatesFromHistory(history, spv));
+    const plan = planEscrowResume({ spv, builder, milestones, created: src.created, ledgerEscrows, now: now.closeTime, ...(maturity != null ? { maturity } : {}) });
+    const byHash = new Map(historyTxs(history).map((h) => [h.hash, h]));
+    const txOf = async (hash: string | undefined): Promise<TxResult | undefined> => {
+      if (!hash) return undefined;
+      const h = byHash.get(hash);
+      if (h) return historyTxResult(h);
+      try {
+        return await d.fetchTx(hash);
+      } catch {
+        return undefined;
+      }
+    };
+    // Resolve the LoanSet BEFORE submitting anything, so a lookup problem never strands half-created escrows.
+    const loanSetEntry = loanSetFromHistory(history, loanId);
+    const loanSetTx = loanSetEntry ? historyTxResult(loanSetEntry) : await txOf(src.loanSetTx);
+    if (!loanSetTx) throw new CloseValidationError([`LoanSet of loan ${loanId} not found in the SPV's history${src.loanSetTx ? ` or by hash ${src.loanSetTx}` : ""}; pass loanSetTx`], what);
+
+    const present = new Map(plan.present.map((p) => [p.milestoneId, p]));
+    const createdNow = new Map<string, { info: MilestoneEscrowInfo; tx: TxResult }>();
+    const submitted: TxResult[] = [];
+    let mode: EscrowMode | undefined;
+    let batchTx: TxResult | undefined;
+
+    if (plan.toCreate.length) {
+      mode = resolveEscrowMode(plan.toCreate.length, opts.escrowMode, what);
+      const issuer = src.issuer ?? loadWallets().issuer.classicAddress;
+      const need = plan.toCreate.reduce((a, e) => a + toMicro(e.amount), 0n);
+      const held = await d.rlusdBalance(spv, issuer);
+      if (BigInt(Math.floor(Number(held) * 1e6)) < need) {
+        throw new CloseValidationError([`SPV ${spv} holds ${held} RLUSD < ${fromMicro(need)} for the missing escrows [${plan.toCreate.map((e) => e.milestoneId).join(", ")}]`], what);
+      }
+      const signers = opts.spvSingleKey ? undefined : (opts.spvSigners ?? defaultSpvSignerWallets());
+      const planned: PlannedEscrow[] = milestones.map((m) => {
+        const p = present.get(m.milestoneId);
+        const t = plan.toCreate.find((e) => e.milestoneId === m.milestoneId);
+        if (t) return t;
+        return { milestoneId: m.milestoneId, index: m.index, amount: m.amount, condition: p?.condition ?? m.condition ?? "", cancelAfter: p?.cancelAfter ? isoTimeToRippleTime(p.cancelAfter) : (m.cancelAfter ?? 0) };
+      });
+      const context: Omit<ClosePartialContext, "batch" | "uncertain" | "inFlightUntilLedger"> = {
+        projectId,
         spv,
         builder,
         issuer,
-        amount: e.amount,
-        condition: e.condition,
-        cancelAfter: e.cancelAfter,
-        ...(opts.spvSingleKey ? { singleKey: opts.spvSingleKey } : { signers }),
-      });
-    } catch (err) {
-      const pending = plan.escrows.slice(e.index).map((x) => x.milestoneId);
-      throw new CloseLoanPartialError(loan.loanId, loan.tx.hash, escrows.map(({ escrow: _e, amount: _a, ...ref }) => ref), pending, err);
+        escrowMode: mode,
+        planned,
+        ...(maturity != null ? { maturity } : {}),
+        ...(src.originationFee ? { originationFee: src.originationFee } : {}),
+      };
+      const createdRefs = () => [
+        ...plan.present.map(({ amount: _a, source: _s, ...ref }) => ref),
+        ...[...createdNow.values()].map((c) => createdRefOf(c.info)),
+      ];
+      const partial = (failure: unknown, extra: { prepared?: { hash: string; lastLedgerSequence: number }; uncertain?: boolean } = {}) =>
+        closePartialError({ loanId, loanSetTx: loanSetTx.hash, created: createdRefs(), failure, context, ...extra });
+      const hook = async (e: CloseTxEvent) => {
+        try {
+          await opts.onTx?.(e);
+        } catch (err) {
+          throw partial(err, { uncertain: false });
+        }
+      };
+
+      if (mode === "batch") {
+        let prepared: { hash: string; lastLedgerSequence: number } | undefined;
+        let r: Awaited<ReturnType<typeof createEscrowsAtomic>>;
+        try {
+          r = await d.createEscrowsAtomic({
+            spv,
+            builder,
+            issuer,
+            milestones: plan.toCreate,
+            ...(opts.spvSingleKey ? { spvSingleKey: opts.spvSingleKey } : { spvSigners: signers! }),
+            now: now.closeTime,
+            onPrepared: (b) => (prepared = b),
+          });
+        } catch (err) {
+          throw partial(err, prepared ? { prepared } : {});
+        }
+        batchTx = r.batch.tx;
+        submitted.push(batchTx);
+        for (const e of r.escrows) createdNow.set(e.milestoneId, { info: batchEscrowInfo(spv, e), tx: e.tx });
+        await hook({ step: "escrow_batch", tx: batchTx, milestoneIds: r.escrows.map((e) => e.milestoneId) });
+      } else {
+        for (const e of plan.toCreate) {
+          let esc: Awaited<ReturnType<typeof createMilestoneEscrow>>;
+          try {
+            esc = await d.createMilestoneEscrow({
+              spv,
+              builder,
+              issuer,
+              amount: e.amount,
+              condition: e.condition,
+              cancelAfter: e.cancelAfter,
+              ...(opts.spvSingleKey ? { singleKey: opts.spvSingleKey } : { signers: signers! }),
+            });
+          } catch (err) {
+            throw partial(err);
+          }
+          submitted.push(esc.tx);
+          const createdAt = txTime(esc.tx);
+          createdNow.set(e.milestoneId, {
+            info: escrowInfo(spv, { milestoneId: e.milestoneId, offerSequence: esc.offerSequence, condition: e.condition, createTx: esc.tx.hash, amount: e.amount, cancelAfter: rippleTimeToISOTime(e.cancelAfter), ...(createdAt ? { createdAt } : {}) }),
+            tx: esc.tx,
+          });
+          await hook({ step: "escrow_create", tx: esc.tx, milestoneIds: [e.milestoneId] });
+        }
+      }
     }
-    escrows.push({
-      milestoneId: e.milestoneId,
-      owner: spv,
-      offerSequence: esc.offerSequence,
-      condition: e.condition,
-      createTx: esc.tx.hash,
-      amount: e.amount,
-      cancelAfter: rippleTimeToISOTime(e.cancelAfter),
-      escrow: { owner: spv, offerSequence: esc.offerSequence, condition: e.condition, createTx: esc.tx.hash, createdAt: new Date().toISOString() },
-    });
-    txs.push(esc.tx);
-    events.push(toChainEvent(esc.tx, { projectId: project.id, milestoneId: e.milestoneId, kind: "escrow_created", actor: spv, amount: e.amount }));
-  }
-  return {
-    loanId: loan.loanId,
-    loanSetTx: loan.tx,
-    originationFee,
-    ...(originationFeeTopUpTx ? { originationFeeTopUpTx } : {}),
-    escrows,
-    txs,
-    maturity: rippleTimeToISOTime(plan.maturity),
-    events,
-  };
+
+    // The completed close: LoanSet + one escrow per milestone, project order (pre-existing ones rebuilt from history).
+    const principal = loanSetTx.tx.PrincipalRequested;
+    const events: ChainEvent[] = [
+      toChainEvent(loanSetTx, { projectId, kind: "loan_set", actor: spv, ...(typeof principal === "string" ? { amount: principal } : {}), ...atOf(loanSetTx) }),
+    ];
+    const txs: TxResult[] = [loanSetTx];
+    const escrows: MilestoneEscrowInfo[] = [];
+    for (const m of milestones) {
+      const fresh = createdNow.get(m.milestoneId);
+      const p = present.get(m.milestoneId);
+      const tx = fresh?.tx ?? (await txOf(p?.createTx));
+      const info = fresh?.info ?? escrowInfo(spv, { ...p!, ...(tx && txTime(tx) ? { createdAt: txTime(tx)! } : {}) });
+      escrows.push(info);
+      if (tx) {
+        txs.push(tx);
+        events.push(toChainEvent(tx, { projectId, milestoneId: m.milestoneId, kind: "escrow_created", actor: spv, amount: info.amount, ...atOf(tx) }));
+      }
+    }
+    const originationFee = src.originationFee ?? (typeof loan.LoanOriginationFee === "string" ? loan.LoanOriginationFee : undefined) ?? "0";
+    return {
+      loanId,
+      loanSetTx,
+      originationFee,
+      escrows,
+      txs,
+      maturity: maturity != null ? rippleTimeToISOTime(maturity) : "",
+      events,
+      escrowMode: mode ?? src.escrowMode ?? defaultEscrowMode(milestones.length),
+      ...(batchTx ? { batchTx } : {}),
+      resumed: {
+        created: milestones.filter((m) => createdNow.has(m.milestoneId)).map((m) => m.milestoneId),
+        alreadyPresent: plan.present.map((p) => ({ milestoneId: p.milestoneId, source: p.source })),
+        submitted,
+      },
+    };
+  });
 }
 
 // ---------------------------------------------------------------- approvals + release

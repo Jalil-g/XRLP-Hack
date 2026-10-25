@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Wallet } from "xrpl";
 import { disconnect, getClient, ledgerTime, signAndSubmit, waitForLedgerTimeAfter, type TxResult } from "../src/client.ts";
-import { generateMilestoneCondition } from "../src/condition.ts";
+import { testConditionPair } from "../test/support/conditions.ts";
 import { createMilestoneEscrow, finishEscrow } from "../src/escrow.ts";
 import { createLoanBroker, depositBrokerCover, getLoan, loanSet } from "../src/loan.ts";
 import { configureIssuer, ensureTrustline, issueRlusd, rlusdAmount } from "../src/rlusd.ts";
@@ -138,9 +138,9 @@ try {
   await captureVault("vault-investment", vault.vaultId, "same vault in Investment phase after LoanSet 1000 of 1234.5");
 
   // Escrows from the borrower to the builder: open (7-decimal amount), expired-but-present, finished.
-  const open = generateMilestoneCondition();
-  const short = generateMilestoneCondition();
-  const done = generateMilestoneCondition();
+  const open = testConditionPair();
+  const short = testConditionPair();
+  const done = testConditionPair();
   const t0 = await ledgerTime();
   const escOpen = await createMilestoneEscrow({ spv: w.borrower.classicAddress, builder: w.builder.classicAddress, issuer, amount: "100.1234567", condition: open.condition, cancelAfter: t0 + 3600, singleKey: w.borrower });
   spike.rows.push({ step: "EscrowCreate open 100.1234567", result: escOpen.tx.result, hash: escOpen.tx.hash });
