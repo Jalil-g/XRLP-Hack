@@ -6,7 +6,7 @@ import { getClient, ledgerTime, waitForLedgerTimeAfter, XrplTxError, type TxResu
 import { submitAttestation, type AttestationPayload } from "./attest.ts";
 import { grantCredential } from "./compliance.ts";
 import { getCredential, revokeCredential, type CredentialStatus, type CredentialType } from "./credentials.ts";
-import { cancelEscrow, createMilestoneEscrow, finishEscrow, listEscrows } from "./escrow.ts";
+import { cancelEscrow, createMilestoneEscrow, escrowAmountFromMeta, finishEscrow, finishWithWrongFulfillment, getEscrowAtLedger, listEscrows } from "./escrow.ts";
 import { toChainEvent } from "./events.ts";
 import {
   COVER_RATE_LIQUIDATION,
@@ -23,11 +23,11 @@ import {
   validateVaultDates,
   vaultDatesFor,
 } from "./lending-math.ts";
-import { createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet, type LoanPayMode } from "./loan.ts";
+import { ceilMicro, createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet, planLoanPayment, type LoanPayMode, type LoanPayPlan } from "./loan.ts";
 import { configureIssuer, ensureTrustline, payRlusd, rlusdBalance, topUpRlusd } from "./rlusd.ts";
 import { CloseLoanPartialError, CloseValidationError, planLoanClose, type CloseConditions } from "./loan-close.ts";
 import { checkSignerQuorum, createSpvAccount, getSpvInfo, lockSpv, type SpvSigners } from "./spv.ts";
-import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx } from "./vault.ts";
+import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
 import {
   credentialPlan,
   ensureFundedWallets,
@@ -302,10 +302,17 @@ export async function depositToVault(p: { projectId: string; vaultId: string; in
   return { tx, event: toChainEvent(tx, { projectId: p.projectId, kind: "vault_deposit", actor: inv.classicAddress, amount: p.amount }) };
 }
 
-/** Only succeeds in the vault's Redemption phase (closed-ended vault). */
+/**
+ * VaultWithdraw. Reads the vault phase from LEDGER time first and throws shared `TooSoonError` (nothing submitted)
+ * in the Investment phase, i.e. before RedemptionDate; an on-ledger tecTOO_SOON is mapped to `TooSoonError` as well.
+ */
 export async function withdrawFromVault(p: { projectId: string; vaultId: string; investor: WalletRef; amount: string }): Promise<{ tx: TxResult; event: ChainEvent }> {
   const w = loadWallets();
   const inv = resolveWallet(p.investor);
+  const vault = await getVault(p.vaultId);
+  if (!vault) throw new Error(`vault ${p.vaultId} not found`);
+  const gate = withdrawPhaseCheck(vault, await ledgerTime());
+  if (!gate.ok) throw new TooSoonError(`${gate.message} (nothing submitted)`);
   const tx = await withdrawFromVaultTx(inv, p.vaultId, w.issuer.classicAddress, p.amount);
   return { tx, event: toChainEvent(tx, { projectId: p.projectId, kind: "vault_withdraw", actor: inv.classicAddress, amount: p.amount }) };
 }
@@ -566,7 +573,12 @@ export async function attestApproval(p: {
   };
 }
 
-/** EscrowFinish with the inspector-supplied fulfillment. Platform submits (anyone could). */
+/**
+ * EscrowFinish with the release fulfillment, submitted by `releaseService` (default). `finishEscrow` runs
+ * preflightFinish first (UnsafeReleaseError, nothing submitted), uses its fulfillment-sized Fee and a 60-ledger
+ * LastLedgerSequence, and rebuilds once (after a fresh preflight) if the submit fails retriable.
+ * Event `escrow_finished`; `amount` defaults to the escrowed amount read from the tx metadata.
+ */
 export async function releaseMilestone(p: {
   projectId: string;
   milestoneId: string;
@@ -574,16 +586,61 @@ export async function releaseMilestone(p: {
   fulfillment: string;
   amount?: string;
   submitter?: WalletRef;
+  /** Expected escrow Destination (Builder.address); preflight refuses a mismatch. */
+  destination?: string;
+  /** Preflight/LLS knobs (defaults FINISH_LLS_MARGIN = 60 ledgers, marginS 120). */
+  lastLedgerMargin?: number;
+  marginS?: number;
 }): Promise<{ tx: TxResult; event: ChainEvent }> {
-  const submitter = resolveWallet(p.submitter ?? "platform");
-  const tx = await finishEscrow({ submitter, owner: p.escrow.owner, offerSequence: p.escrow.offerSequence, condition: p.escrow.condition, fulfillment: p.fulfillment });
+  const submitter = resolveWallet(p.submitter ?? "releaseService");
+  const tx = await finishEscrow({
+    submitter,
+    owner: p.escrow.owner,
+    offerSequence: p.escrow.offerSequence,
+    condition: p.escrow.condition,
+    fulfillment: p.fulfillment,
+    ...(p.destination ? { destination: p.destination } : {}),
+    ...(p.lastLedgerMargin !== undefined ? { lastLedgerMargin: p.lastLedgerMargin } : {}),
+    ...(p.marginS !== undefined ? { marginS: p.marginS } : {}),
+  });
+  const amount = p.amount ?? escrowAmountFromMeta(tx.meta);
   return {
     tx,
-    event: toChainEvent(tx, { projectId: p.projectId, milestoneId: p.milestoneId, kind: "escrow_finished", actor: submitter.classicAddress, ...(p.amount ? { amount: p.amount } : {}) }),
+    event: toChainEvent(tx, { projectId: p.projectId, milestoneId: p.milestoneId, kind: "escrow_finished", actor: submitter.classicAddress, ...(amount ? { amount } : {}) }),
   };
 }
 
-/** EscrowCancel after CancelAfter; RLUSD returns to the SPV. Set wait=true to block until the ledger passes cancelAfter. */
+/**
+ * Demo "try to steal" (route 23): EscrowFinish with a random WRONG fulfillment from `submitter` (default platform).
+ * Bypasses preflight's condition check but refuses (UnsafeReleaseError, nothing submitted) if the escrow is gone or
+ * expired. Does not throw on the tec: resolves `{ tx, event }` with event kind `release_refused` and
+ * `result` = the on-ledger engine result (`tecCRYPTOCONDITION_ERROR`). Nothing moves.
+ */
+export async function tryFinishWithWrongFulfillment(p: {
+  projectId?: string;
+  milestoneId?: string;
+  owner: string;
+  offerSequence: number;
+  condition: string;
+  submitter?: WalletRef;
+}): Promise<{ tx: TxResult; event: ChainEvent }> {
+  const submitter = resolveWallet(p.submitter ?? "platform");
+  const tx = await finishWithWrongFulfillment({ submitter, owner: p.owner, offerSequence: p.offerSequence, condition: p.condition });
+  return {
+    tx,
+    event: {
+      ...toChainEvent(tx, { projectId: p.projectId ?? PLATFORM_SCOPE, kind: "release_refused", actor: submitter.classicAddress, ...(p.milestoneId ? { milestoneId: p.milestoneId } : {}) }),
+      result: tx.result,
+    },
+  };
+}
+
+/**
+ * EscrowCancel after CancelAfter (keeper: `releaseService` submits by default); RLUSD returns to the SPV.
+ * Checks CancelAfter against ledger time first: not passed -> shared `TooSoonError`, nothing submitted.
+ * `wait: true` blocks until the ledger passes CancelAfter (the given ISO, else the on-ledger value) instead.
+ * Event `escrow_cancelled`; `amount` defaults to the refunded amount from the tx metadata.
+ */
 export async function cancelExpiredMilestone(p: {
   projectId: string;
   milestoneId: string;
@@ -594,21 +651,41 @@ export async function cancelExpiredMilestone(p: {
   submitter?: WalletRef;
   onWait?: (secondsRemaining: number) => void;
 }): Promise<{ tx: TxResult; event: ChainEvent }> {
-  if (p.wait && p.cancelAfter) await waitForLedgerTimeAfter(isoTimeToRippleTime(p.cancelAfter), p.onWait);
-  const submitter = resolveWallet(p.submitter ?? "platform");
+  if (p.wait) {
+    const cancelAfter = p.cancelAfter ? isoTimeToRippleTime(p.cancelAfter) : (await getEscrowAtLedger(p.escrow.owner, p.escrow.offerSequence)).escrow?.CancelAfter;
+    if (cancelAfter !== undefined) await waitForLedgerTimeAfter(cancelAfter, p.onWait);
+  }
+  const submitter = resolveWallet(p.submitter ?? "releaseService");
   const tx = await cancelEscrow({ submitter, owner: p.escrow.owner, offerSequence: p.escrow.offerSequence });
+  const amount = p.amount ?? escrowAmountFromMeta(tx.meta);
   return {
     tx,
-    event: toChainEvent(tx, { projectId: p.projectId, milestoneId: p.milestoneId, kind: "escrow_cancelled", actor: submitter.classicAddress, ...(p.amount ? { amount: p.amount } : {}) }),
+    event: toChainEvent(tx, { projectId: p.projectId, milestoneId: p.milestoneId, kind: "escrow_cancelled", actor: submitter.classicAddress, ...(amount ? { amount } : {}) }),
   };
 }
 
 // ---------------------------------------------------------------- repayment
 
 /**
- * LoanPay from the SPV (multisig). amount defaults to the loan's PeriodicPayment (+service fee).
- * mode "overpayment" pays extra principal early (needs LoanSet tfLoanOverpayment, set by default).
- * If the next payment is already late, mode defaults to "late".
+ * Builder -> SPV RLUSD Payment (the builder funds a repayment; then `repayLoan({source: "builder"})` LoanPays it).
+ * No ChainEvent: shared has no kind for it yet (TODO(#53)); the audit trail event is the LoanPay's `loan_payment`.
+ */
+export async function builderPayToSpv(p: { projectId: string; spv: string; amount: string; builder?: WalletRef }): Promise<{ tx: TxResult; amount: string; from: string; to: string }> {
+  const w = loadWallets();
+  if (toMicro(p.amount) <= 0n) throw new Error(`builderPayToSpv: amount must be > 0 (got ${p.amount})`);
+  const builder = resolveWallet(p.builder ?? "builder");
+  const held = await rlusdBalance(builder.classicAddress, w.issuer.classicAddress);
+  if (ceilMicro(held) < toMicro(p.amount)) throw new Error(`builderPayToSpv: ${builder.classicAddress} holds ${held} RLUSD < ${p.amount}`);
+  const tx = await payRlusd(builder, p.spv, w.issuer.classicAddress, p.amount);
+  return { tx, amount: p.amount, from: builder.classicAddress, to: p.spv };
+}
+
+/**
+ * LoanPay from the SPV (multisig, default platform + builder + trustee), under the SPV's per-account lock.
+ * Amount defaults to one periodic payment (+ service fee) and is validated client-side (LoanPayAmountError, nothing
+ * submitted): >= one periodic payment (else tecINSUFFICIENT_PAYMENT) and <= everything outstanding.
+ * Mode (unless given): "late" when past due; `source: "escrow_refund"` above one periodic payment -> "overpayment"
+ * (excess pays principal down early; needs the loan's tfLoanOverpayment, set by default at LoanSet); else "regular".
  */
 export async function repayLoan(p: {
   projectId: string;
@@ -616,23 +693,26 @@ export async function repayLoan(p: {
   loanId: string;
   amount?: string;
   mode?: LoanPayMode;
+  /** "builder" (builder paid the SPV first, see builderPayToSpv) or "escrow_refund" (money back from EscrowCancel). */
+  source?: "builder" | "escrow_refund";
   signers?: Wallet[];
-}): Promise<{ tx: TxResult; event: ChainEvent; amount: string; mode: LoanPayMode }> {
+  /** Negative spikes only: let the ledger reject a sub-periodic amount. */
+  skipAmountCheck?: boolean;
+}): Promise<{ tx: TxResult; event: ChainEvent; amount: string; mode: LoanPayMode; plan: LoanPayPlan }> {
   const w = loadWallets();
   const loan = await getLoan(p.loanId);
   if (!loan) throw new Error(`loan ${p.loanId} not found`);
-  const periodic = Number(loan.PeriodicPayment ?? "0") + Number(loan.LoanServiceFee ?? "0");
-  const amount = p.amount ?? ceil6(periodic);
-  let mode = p.mode;
-  if (!mode) {
-    const now = await ledgerTime();
-    mode = loan.NextPaymentDueDate != null && now > loan.NextPaymentDueDate ? "late" : "regular";
-  }
-  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount, signers: p.signers ?? defaultSpvSignerWallets(), mode });
-  return { tx, amount, mode, event: toChainEvent(tx, { projectId: p.projectId, kind: "loan_payment", actor: p.spv, amount }) };
+  const plan = planLoanPayment({
+    loan,
+    nowRipple: await ledgerTime(),
+    ...(p.amount !== undefined ? { amount: p.amount } : {}),
+    ...(p.source ? { source: p.source } : {}),
+    ...(p.mode ? { mode: p.mode } : {}),
+    ...(p.skipAmountCheck ? { skipAmountCheck: true } : {}),
+  });
+  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount: plan.amount, signers: p.signers ?? defaultSpvSignerWallets(), mode: plan.mode });
+  return { tx, amount: plan.amount, mode: plan.mode, plan, event: toChainEvent(tx, { projectId: p.projectId, kind: "loan_payment", actor: p.spv, amount: plan.amount }) };
 }
-
-const ceil6 = (n: number) => (Math.ceil(n * 1e6) / 1e6).toFixed(6);
 
 export { getLoan };
 
