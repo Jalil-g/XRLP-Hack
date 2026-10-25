@@ -1,0 +1,17 @@
+{
+  "pass": {
+    "current": "conditional_BLS-88310.txt",
+    "previous": "unconditional_GRM-24117.txt"
+  },
+  "missing_previous_waiver": {
+    "current": "conditional_BLS-88310.txt",
+    "expected_check": "lien_waiver_present",
+    "expected_result": "fail"
+  },
+  "mismatched_previous_amount": {
+    "current": "conditional_BLS-88310.txt",
+    "previous": "unconditional_GRM-24117_wrong_amount.txt",
+    "expected_check": "lien_waiver_matches_invoices",
+    "expected_result": "fail"
+  }
+}

@@ -10,6 +10,7 @@ export const MILESTONE_CHECKS = [
   "inspector_audit_present",
   "audit_checklist_complete",
   "audit_matches_evidence",
+  "lien_waiver_present",
   "lien_waiver_matches_invoices",
   "stage_visually_consistent",
   "document_consistency",
@@ -19,7 +20,7 @@ export type MilestoneCheckName = (typeof MILESTONE_CHECKS)[number];
 /**
  * Checks decided by code. Strength differs — be honest about it in the pitch:
  * - STRONG: no_duplicate_photo (cross-project perceptual-hash dedupe), invoice_matches_budget,
- *   lien_waiver_matches_invoices, required_evidence_present.
+ *   lien_waiver_present, lien_waiver_matches_invoices, required_evidence_present.
  * - CATCHES LAZY FRAUD ONLY: gps_within_site, photo_fresh. EXIF GPS/time are trivially spoofable;
  *   they catch someone re-uploading an old phone photo, not a determined fraudster.
  */
@@ -31,6 +32,7 @@ export const DETERMINISTIC_CHECKS: readonly MilestoneCheckName[] = [
   "invoice_matches_budget",
   "inspector_audit_present",
   "audit_checklist_complete",
+  "lien_waiver_present",
   "lien_waiver_matches_invoices",
 ];
 export const LAZY_FRAUD_ONLY_CHECKS: readonly MilestoneCheckName[] = ["gps_within_site", "photo_fresh"];
