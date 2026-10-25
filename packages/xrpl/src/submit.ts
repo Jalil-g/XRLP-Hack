@@ -273,17 +273,30 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Reli
   /** First ledger each hash could have landed in (validated index + 1 at its first submit). */
   const firstLedger = new Map<string, number>();
   let connErrors = 0;
+  /**
+   * This call handed some blob to `io.submit` (it may have reached a server). While false, every error says `notSent`:
+   * finishEscrow, whose blob was signed just before, then reports its fulfillment as never revealed (unsafe_release).
+   */
+  let everSent = false;
 
   const fail = (code: string, retriable: boolean, opt: { hash?: string; detail?: string; cause?: unknown } = {}) =>
     new XrplTxError(cur.txType, redactSecrets(code), opt.hash, {
       retriable,
+      ...(everSent ? {} : { notSent: true }),
       ...(opt.detail ? { detail: opt.detail } : {}),
       ...(opt.cause !== undefined ? { cause: redactedCause(opt.cause) } : {}),
     });
 
   /** Hashes of this intent that may still apply, oldest first (for "check the hash" messages). */
   const unsettled = () => [...new Set([...live.keys(), cur.hash])];
-  const lost = (e: unknown) => fail("connection_lost", false, { hash: cur.hash, detail: `outcome unknown; check ${unsettled().join(", ")}`, cause: e });
+  // Before this call's first submit it is still connection_lost (a pre-signed blob may have an earlier history), but
+  // flagged notSent: a caller that knows the blob is fresh (finishEscrow) can tell its secret never left the process.
+  const lost = (e: unknown) =>
+    fail("connection_lost", false, {
+      hash: cur.hash,
+      detail: everSent ? `outcome unknown; check ${unsettled().join(", ")}` : "connection lost before this call submitted anything",
+      cause: e,
+    });
 
   const onConnError = async (e: unknown) => {
     if (++connErrors > MAX_CONN_ERRORS) throw lost(e);
@@ -422,6 +435,7 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Reli
       const minLedger = (await io.validatedLedgerIndex()) + 1;
       if (!firstLedger.has(cur.hash)) firstLedger.set(cur.hash, minLedger);
       sending = true; // from here on the blob may reach a server
+      everSent = true;
       let r = await io.submit(cur.blob);
       if (isDiscardedTec(r.engineResult)) {
         // Nothing applied (see the header): send the SAME blob again without fail_hard so the tec lands on-ledger.
