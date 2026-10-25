@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { EscrowSnapshot, LedgerPort, Milestone, Project, TxResult } from "@xrlp/shared";
+import { LedgerError, type EscrowSnapshot, type LedgerPort, type Milestone, type Project, type TxResult } from "@xrlp/shared";
 import { conditionFromFulfillment, fulfillmentMatches } from "../src/conditions.ts";
 import { DomainError } from "../src/errors.ts";
 import { FilePreimageVault, MemoryPreimageVault, ReleaseService } from "../src/release-service.ts";
@@ -14,10 +14,16 @@ const BUILDER = "rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe";
 const tx = (hash: string, result = "tesSUCCESS"): TxResult => ({ hash, explorerUrl: `https://devnet.xrpl.org/transactions/${hash}`, result });
 
 /** Records calls; escrows keyed by offerSequence. Only the methods ReleaseService uses are real. */
-function stubLedger(opts: { preflight?: { ok: boolean; reason?: string }; finishThrows?: boolean } = {}) {
+function stubLedger(opts: {
+  preflight?: { ok: boolean; reason?: string };
+  finishErrors?: Error[];
+  consumeOnFinishError?: boolean;
+  reconciliationReadThrows?: boolean;
+} = {}) {
   const calls: string[] = [];
   const escrows = new Map<number, EscrowSnapshot>();
   const finishes: { condition: string; fulfillment: string }[] = [];
+  let finishAttempted = false;
   const no = () => {
     throw new Error("not used");
   };
@@ -25,6 +31,7 @@ function stubLedger(opts: { preflight?: { ok: boolean; reason?: string }; finish
     mode: "fake",
     async getEscrow(_owner: string, seq: number) {
       calls.push("getEscrow");
+      if (finishAttempted && opts.reconciliationReadThrows) throw new Error("ledger read unavailable");
       return escrows.get(seq) ?? null;
     },
     async preflightFinish() {
@@ -35,10 +42,15 @@ function stubLedger(opts: { preflight?: { ok: boolean; reason?: string }; finish
       calls.push(`attest:${p.memo.kind}`);
       return tx("ATTEST");
     },
-    async finishEscrow(p: { condition: string; fulfillment: string }) {
+    async finishEscrow(p: { offerSequence: number; condition: string; fulfillment: string }) {
       calls.push("finishEscrow");
       finishes.push(p);
-      if (opts.finishThrows) throw Object.assign(new Error("tecNO_LINE"), { txResult: "tecNO_LINE", txHash: "FAILED" });
+      finishAttempted = true;
+      const failure = opts.finishErrors?.shift();
+      if (failure) {
+        if (opts.consumeOnFinishError) escrows.delete(p.offerSequence);
+        throw failure;
+      }
       return tx("FINISH");
     },
     async tryFinishWithWrongFulfillment() {
@@ -135,12 +147,64 @@ describe("ReleaseService", () => {
   });
 
   it("a failed finish marks the key exposed and blocks any retry", async () => {
-    const stub = stubLedger({ finishThrows: true });
+    const stub = stubLedger({ finishErrors: [new LedgerError("ledger_error", "tecNO_LINE", { txResult: "tecNO_LINE", txHash: "FAILED" })] });
     const rs = new ReleaseService({ ledger: stub.ledger, vault: new MemoryPreimageVault() });
     const p = escrowed(project(), await rs.conditionsForClose(project()), stub);
     await assert.rejects(rs.release({ project: p, milestone: p.milestones[0]! }), (e) => e instanceof DomainError && e.code === "LEDGER_ERROR" && e.txResult === "tecNO_LINE");
     await assert.rejects(rs.release({ project: p, milestone: p.milestones[0]! }), (e) => e instanceof DomainError && e.code === "UNSAFE_RELEASE");
     assert.equal(stub.calls.filter((c) => c === "finishEscrow").length, 1);
+  });
+
+  it("an unsafe_release from finish preserves the key and permits a later retry", async () => {
+    const stub = stubLedger({ finishErrors: [new LedgerError("unsafe_release", "destination trust line disappeared")] });
+    const vault = new MemoryPreimageVault();
+    const rs = new ReleaseService({ ledger: stub.ledger, vault });
+    const p = escrowed(project(), await rs.conditionsForClose(project()), stub);
+    await assert.rejects(
+      rs.release({ project: p, milestone: p.milestones[0]! }),
+      (e) => e instanceof DomainError && e.code === "UNSAFE_RELEASE" && /key preserved/.test(e.message),
+    );
+    assert.equal((await vault.all())[0]!.exposedAt, undefined);
+    const result = await rs.release({ project: p, milestone: p.milestones[0]! });
+    assert.equal(result[1]!.hash, "FINISH");
+    assert.equal(stub.calls.filter((call) => call === "finishEscrow").length, 2);
+  });
+
+  for (const ambiguous of ["connection_lost", "unknown_outcome"]) {
+    it(`reconciles ${ambiguous}: a consumed escrow advances release instead of burning the key`, async () => {
+      const hash = ambiguous === "connection_lost" ? "A".repeat(64) : "B".repeat(64);
+      const stub = stubLedger({
+        finishErrors: [new LedgerError("ledger_error", ambiguous, { txResult: ambiguous, txHash: hash })],
+        consumeOnFinishError: true,
+      });
+      const vault = new MemoryPreimageVault();
+      const rs = new ReleaseService({ ledger: stub.ledger, vault });
+      const p = escrowed(project(), await rs.conditionsForClose(project()), stub);
+      const result = await rs.release({ project: p, milestone: p.milestones[0]! });
+      assert.equal(result[1]!.hash, hash);
+      assert.equal(result[1]!.result, "reconciled_escrow_consumed");
+      assert.equal(result[1]!.kind, "escrow_finished");
+      assert.match(result[1]!.explorerUrl, new RegExp(`${hash}$`));
+      const entry = (await vault.all())[0]!;
+      assert.ok(entry.releasedAt);
+      assert.equal(entry.exposedAt, undefined);
+      assert.deepEqual(stub.calls.slice(-2), ["finishEscrow", "getEscrow"]);
+      await assert.rejects(rs.release({ project: p, milestone: p.milestones[0]! }), (e) => e instanceof DomainError && e.code === "CONFLICT");
+    });
+  }
+
+  it("an ambiguous finish with an open escrow, or failed reconciliation, marks the key exposed", async () => {
+    for (const reconciliationReadThrows of [false, true]) {
+      const stub = stubLedger({
+        finishErrors: [new LedgerError("ledger_error", "unknown", { txResult: "unknown_outcome", txHash: "C".repeat(64) })],
+        reconciliationReadThrows,
+      });
+      const vault = new MemoryPreimageVault();
+      const rs = new ReleaseService({ ledger: stub.ledger, vault });
+      const p = escrowed(project(), await rs.conditionsForClose(project()), stub);
+      await assert.rejects(rs.release({ project: p, milestone: p.milestones[0]! }), (e) => e instanceof DomainError && e.code === "LEDGER_ERROR");
+      assert.ok((await vault.all())[0]!.exposedAt);
+    }
   });
 
   it("tryStealDemo never reads the vault and returns the ledger's refusal", async () => {
