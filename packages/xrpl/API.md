@@ -302,9 +302,9 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 
 | Command | What | Time |
 |---|---|---|
-| `pnpm --filter @xrlp/xrpl demo` | CLI backup of the live demo, one fresh project: fee → `VERIFIED_BUILDER` → SPV (4 signers, q3) + private closed-ended vault + broker + cover → KYC'd deposits, investor3 `tecNO_AUTH` → LoanSet + 3 escrows → M1 audit + verdict + preflight + release attestation + `EscrowFinish` → M2 verdict `fail`, escrow stays → random fulfillment `tecCRYPTOCONDITION_ERROR` → M3 `EscrowCancel` → refund `LoanPay` (overpayment) → snapshots. Prints narration + a markdown tx table; run record in `.data/demo-run-*.json`. | ~7 min |
-| `pnpm --filter @xrlp/xrpl prestage` (= `demo --prestage`) | Projects **A** ready (3 escrows open, 6×30-day loan), **B** stalled (M1 released, M2 `CancelAfter` already past, 12×30-day loan), **C** repaid (all released, loan paid off, past `RedemptionDate`). Writes `.data/prestage.json` (`PrestageFile`) + `.data/prestage-preimages.json` (secret, mode 600). | ~12–15 min |
-| `pnpm --filter @xrlp/xrpl prestage --only A,B` | Re-stage a subset after a rehearsal; other projects are kept from the existing `prestage.json` (same issuer). | ~5 min |
+| `pnpm --filter @xrlp/xrpl demo` | CLI backup of the live demo, one fresh project: fee → `VERIFIED_BUILDER` → SPV (4 signers, q3) + private closed-ended vault + broker + cover → KYC'd deposits, investor3 `tecNO_AUTH` → LoanSet + 3 escrows → M1 audit + verdict + preflight + release attestation + `EscrowFinish` → M2 verdict `fail`, escrow stays → random fulfillment `tecCRYPTOCONDITION_ERROR` → M3 `EscrowCancel` → refund `LoanPay` (overpayment) → snapshots. Prints narration + a markdown tx table; run record in `.data/demo-run-*.json`. | ~5 min |
+| `pnpm --filter @xrlp/xrpl prestage` (= `demo --prestage`) | Projects **A** ready (3 escrows open, 6×30-day loan), **B** stalled (M1 released, M2 `CancelAfter` already past, 12×30-day loan), **C** repaid (all released, loan paid off, past `RedemptionDate`). Writes `.data/prestage.json` (`PrestageFile`) + `.data/prestage-preimages.json` (secret, mode 600). | ~11 min |
+| `pnpm --filter @xrlp/xrpl prestage --only A,B` | Re-stage a subset after a rehearsal; other projects are kept from the existing `prestage.json` (same issuer). | ~3–5 min |
 
 Core (CORE-07) reads `.data/prestage.json` with `parsePrestageFile` (exported from `@xrlp/xrpl`): `projects.{A,B,C}` carry
 project/milestone ids + amounts, `chain` (spv, vaultId, loanBrokerId, loanId, shareMptIssuanceId, domainId), escrows

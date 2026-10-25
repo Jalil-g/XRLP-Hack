@@ -11,7 +11,7 @@
 // Re-runs reuse wallets/credentials/domain and create fresh projects. `--only A,B` re-stages a subset and keeps the
 // other projects of the existing prestage.json (e.g. after a rehearsal consumed A's M1 and B's expired escrow: ~4 min).
 //
-// Timing: ~10-12 min for A+B+C (dominated by C waiting for its RedemptionDate), ~4 min for --only A,B.
+// Timing: ~11 min for A+B+C (dominated by C waiting for its RedemptionDate), ~3-5 min for --only A,B.
 // Env knobs (seconds):
 //   PRESTAGE_SUBSCRIPTION_S=60      deposit window per project.
 //   PRESTAGE_B_STALL_CANCEL_S=75    B's M2 CancelAfter after B's close (prestage waits until it has passed).
@@ -348,7 +348,7 @@ async function toPrestageProject(s: Staged, nowRipple: number): Promise<Prestage
 async function main() {
   const startedAt = new Date().toISOString();
   console.log(`prestage ${runId}: projects ${only.join(",")}  (wallets ${repoRel(config.walletsFile)})`);
-  console.log(`  expected duration: ${only.includes("C") ? "~10-12 min (C waits for its RedemptionDate)" : "~4 min"}`);
+  console.log(`  expected duration: ${only.includes("C") ? "~11 min (C waits for its RedemptionDate)" : "~3-5 min"}`);
 
   common.say("common: wallets, credentials, domain (idempotent)");
   const { wallets: w, txs } = await bootstrapWallets({ log: (s) => common.info(s) });

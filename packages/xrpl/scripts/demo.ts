@@ -1,4 +1,4 @@
-// pnpm --filter @xrlp/xrpl demo              CLI backup of the live demo (docs/04-demo-script.md beats 1-6), ~6 min
+// pnpm --filter @xrlp/xrpl demo              CLI backup of the live demo (docs/04-demo-script.md beats 1-6), ~5 min
 // pnpm --filter @xrlp/xrpl demo --prestage   = pnpm --filter @xrlp/xrpl prestage (Projects A/B/C -> .data/prestage.json)
 //
 // Whole v2 story on devnet with real txs, one fresh project per run (wallets reused from WALLETS_FILE):
