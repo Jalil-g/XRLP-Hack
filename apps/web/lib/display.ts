@@ -102,6 +102,9 @@ export const EVENT_TX: Record<ChainEventKind, string> = {
   inspector_assigned: "Attestation",
   loan_default: "LoanManage",
   release_refused: "EscrowFinish (refused)",
+  release_attested: "Attestation",
+  loan_impaired: "LoanManage",
+  builder_payment: "Payment",
 };
 
 /** One plain sentence per event. */
@@ -151,6 +154,12 @@ export function describeEvent(e: ChainEvent, who: (address?: string) => string, 
       return "Loan marked in default";
     case "release_refused":
       return `Platform tried to release ${ms}; the ledger refused`;
+    case "release_attested":
+      return `Release of ${ms} attested`;
+    case "loan_impaired":
+      return "Loan marked impaired";
+    case "builder_payment":
+      return `${who(e.actor)} sent ${amt} for a loan payment`;
   }
 }
 
