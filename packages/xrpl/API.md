@@ -15,6 +15,7 @@ pnpm --filter @xrlp/xrpl compliance     # XRPL-08 devnet proof: credentials x3, 
 pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
 pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one account, all tesSUCCESS
 pnpm --filter @xrlp/xrpl spike:release  # XRPL-07 devnet proof: finish, wrong fulfillment, repay, cancel+refund, withdraw (~7 min)
+pnpm --filter @xrlp/xrpl adapter:e2e    # XRPL-10 devnet: XrplLedgerAdapter through the whole LedgerPort flow (~7 min)
 pnpm --filter @xrlp/xrpl typecheck
 ```
 
@@ -297,27 +298,61 @@ one ledger index. `PreflightSnapshot.escrow` is the raw `PreflightEscrow` (the o
 alias in preflight.ts; it is not the shared `EscrowSnapshot`). Devnet proof:
 `pnpm --filter @xrlp/xrpl spike:preflight` (a builder with no trust line is refused and nothing is submitted, then it finishes once the line exists; a short-`CancelAfter` escrow is refused inside the margin).
 
-### Mapping to core's `LedgerPort` (origin/scaffold/core `packages/core/src/ports.ts`)
+### `XrplLedgerAdapter implements LedgerPort` (XRPL-10, `src/adapter.ts`)
 
-This package is the building block. The `LedgerPort` adapter (`packages/core/src/adapters/xrpl-ledger.ts`)
-is a follow-up ticket. It maps 1:1:
-- `setupProjectOnChain({project, builder, inspectors})` → `setupProjectOnChain(project, {...})`. Persist
-  `subscriptionEndsAt`/`redemptionAt` (not in the shared `Project` contract yet).
-- `closeLoanAndCreateEscrows({project, builder, conditions, cancelAfters})` → `closeLoanAndCreateEscrows(project, {conditions,
-  cancelAfters, builderAddress: builder.address, waitForInvestmentPhase: false})`. Result `{loanId, escrows, txs}` is the shared
-  `CloseResult` (`escrows[i]` ≅ `EscrowRef`). Map `CloseValidationError` → `validation`, `TooSoonError` → `too_soon`, `CloseLoanPartialError` → `ledger_error`.
-- `attestApproval({project, milestone, role, signer, ...})` → `signer` may be the address.
-- `releaseMilestone({project, milestone, fulfillment})` → `escrow: milestone.escrow`, `destination: builder.address`.
-- `finishEscrow` / `tryFinishWithWrongFulfillment` / `cancelEscrow` (shared port) → `releaseMilestone` / `tryFinishWithWrongFulfillment` / `cancelExpiredMilestone`, return `.tx`.
-- `cancelExpiredMilestone({project, milestone})` → `escrow: milestone.escrow`.
-- `repayLoan({project, amount, source})` → `source: "builder"`: `builderPayToSpv({spv, amount})` then `repayLoan({spv, loanId, amount, source})`;
-  `source: "escrow_refund"`: `repayLoan({spv, loanId, amount, source})` (mode picked automatically).
-- `withdraw({project, investor, amount})` → `withdrawFromVault({vaultId, investor, amount})` (throws shared `TooSoonError`).
-- `issueCredential` returns `projectId = "_platform"` (`PLATFORM_SCOPE`) by default.
-- `getEscrow(owner, offerSequence)` → `getEscrowSnapshot` (shared `EscrowSnapshot | null`); `getVaultSnapshot` /
-  `getLoanSnapshot` already return the shared types (`undefined` when the object is gone).
-- Errors: wrap each method in `withLedgerErrors(...)` (or `throw toLedgerError(e)`) so callers only ever see the shared
-  `LedgerError` / `TooSoonError`.
+The shared `LedgerPort` (`packages/shared/src/ports.ts`) over devnet, for core's `LEDGER_MODE=devnet`:
+
+```ts
+import { XrplLedgerAdapter } from "@xrlp/xrpl";
+const ledger = new XrplLedgerAdapter({ walletsFile: process.env.WALLETS_FILE, log: console.log }); // mode = "devnet"
+```
+
+Options: `walletsFile` (sets the process-wide wallet store path), `log` (one line per tx with its explorer link, and per
+refusal), `privateVault` (default `true`), `finishMargins` (`{lastLedgerMargin, marginS}`, used by both `preflightFinish` and
+`finishEscrow`; default 60 ledgers → preflight wants ≥ 300 s before CancelAfter; short-dated spikes pass `{ lastLedgerMargin: 20, marginS: 60 }`). Keys come from the wallet store: **every address core passes that must sign**
+(builder, investors, credential subjects, SPV signers) must be a bootstrapped wallet; else `validation`.
+
+| Port method | Does | Kinds on `TxResult` |
+|---|---|---|
+| `payVerificationFee({builder, amount})` | builder → platform RLUSD Payment | `verification_fee_paid` |
+| `issueCredential({subject, type})` | `grantCredential` (idempotent): CredentialCreate + subject's CredentialAccept. **Already accepted → `[]`** | `credential_issued`, `credential_accepted` |
+| `setupProjectOnChain({project, builder, inspectors, subscriptionDate, redemptionDate, coverDeposit?})` | platform PermissionedDomain (idempotent, KYC_INVESTOR) → SPV (TrustSet, SignerList **platform / `builder.address` / `inspectors[0]` / trustee**, quorum 3, master disabled) → private closed-ended vault (dates from the ISO args, `AssetsMaximum` = principal, non-transferable shares) → LoanBroker → cover deposit. Validates 4 distinct signers | `txs`: domain? / SPV ×3 (no kind) · `vault_created` · `loan_broker_created` · `cover_deposited` |
+| `deposit` | VaultDeposit (investor must hold an accepted KYC_INVESTOR) | `vault_deposit` |
+| `withdraw` | **`TooSoonError` before RedemptionDate (pre-checked, nothing submitted; stricter than `withdrawFromVault`, which allows Subscription-phase withdrawals)**, else `withdrawFromVault` | `vault_withdraw` |
+| `closeLoanAndCreateEscrows({project, builder, conditions, cancelAfters})` | api.ts `closeLoanAndCreateEscrows(project, {conditions, cancelAfters, builderAddress, spvSigners, waitForInvestmentPhase: false})`: **`TooSoonError` while ledger ≤ SubscriptionDate**, then `planLoanClose` (one PREIMAGE-SHA-256 condition + CancelAfter per milestone by index, **no duplicates** incl. the SPV's open escrows, now + 60 s < CancelAfter **< loan maturity**) → `validation`. Nothing submitted on either refusal. SPV signers = quorum from the **on-ledger** SignerList whose keys we hold (builder, platform, trustee preferred). LoanSet → EscrowCreate × N | `txs[0]` `loan_set`, `txs[1..N]` `escrow_created`, then (if paid) the origination-fee top-up Payment (no kind) |
+| `preflightFinish({owner, offerSequence, destination})` | `preflightFinish` as the releaseService. `reason` = `"<PreflightReason>: <message>"` | — |
+| `finishEscrow` | `releaseMilestone` by **releaseService** with `finishMargins`; re-runs preflight (refusal → `unsafe_release`, nothing submitted) | `escrow_finished` |
+| `tryFinishWithWrongFulfillment` | api.ts `tryFinishWithWrongFulfillment` from platform (random wrong fulfillment); **resolves** with the tec (`tecCRYPTOCONDITION_ERROR`). Escrow gone or near/past CancelAfter → `unsafe_release`, nothing submitted | `release_refused` |
+| `cancelEscrow` | `cancelExpiredMilestone` by releaseService, checked on one validated ledger first: consumed → `not_found`, **`TooSoonError` before CancelAfter**; nothing submitted on either | `escrow_cancelled` |
+| `repayLoan({project, amount, source})` | `planLoanPayment` first (amount < one periodic payment or > outstanding → `validation`, nothing submitted), and the SPV quorum. `"builder"`: `builderPayToSpv` (logged, not returned) then LoanPay; `"escrow_refund"`: LoanPay from what the SPV holds. Mode (api.ts `repayLoan`): past due → `late`; `escrow_refund` above one periodic payment → `overpayment`; else `regular`. SPV multisig from the on-ledger list | `loan_payment` |
+| `attest({signer, spv, memo})` | `xrlp/attest/v1` from aiAgent / platform / releaseService | `audit_attested` / `verdict_attested` / `decision_attested` / `approval_attested` (release) |
+| `submitSignedBlob(blob)` | inspector-app-signed attestation (shape-checked before submit) | by memo kind |
+| `getVaultSnapshot` / `getLoanSnapshot` | `src/reads.ts`; missing → `not_found` | — |
+| `getEscrow(owner, seq)` | `EscrowSnapshot` or `null` (finished / cancelled / never created) | — |
+| `getBalance(account, "XRP"\|"RLUSD")` | RLUSD from our issuer; XRP total | — |
+
+`TxResult.at` = the tx's ledger close time when rippled returns `date`.
+
+**Errors.** Every method throws a shared `LedgerError`: `TooSoonError` (`code "too_soon"`, from the pre-checks or `tecTOO_SOON`),
+or `XrplLedgerError extends LedgerError` with `apiCode` = the full API `ErrorCode`:
+
+| From | `apiCode` | `code` (shared union) |
+|---|---|---|
+| `tecTOO_SOON`, phase pre-checks | `too_soon` | `too_soon` (`TooSoonError`) |
+| `UnsafeReleaseError` (preflight refused inside `finishEscrow` / `tryFinishWithWrongFulfillment`; a shared `LedgerError`, passed through) | `unsafe_release` (+ `reason`) | `unsafe_release` |
+| `tecNO_ENTRY` / `tecNO_TARGET` / `tecNO_DST` / `tecOBJECT_NOT_FOUND` / `tecNO_LINE`, rippled `entryNotFound` / `actNotFound`, missing vault/loan/escrow | `not_found` | `ledger_error` |
+| `CloseValidationError` (XRPL-06), `LoanPayAmountError` (XRPL-07), `tem*`, adapter guards, package input errors (cover below minimum, bad dates, unknown wallet, ...) | `validation` | `ledger_error` |
+| `CloseLoanPartialError` (LoanSet ok, an EscrowCreate failed; passed through with `loanId` / `created` / `pending`) | `ledger_error` | `ledger_error` |
+| everything else (`tec*`, `tef*`, connection) | `ledger_error` | `ledger_error` |
+
+Shared `LedgerError`s pass through as is. Everything else goes through errors.ts `toLedgerError` / `toErrorCode`
+(`toAdapterError` in `src/adapter-map.ts`); `txHash` / `txResult` are kept and the original error is `cause`. Shared
+`LedgerError.code` has only three values, so `not_found` / `validation` ride on `apiCode` (TODO #53: widen `code`).
+Core: `apiCode ?? code` for the HTTP `ErrorCode` (or `apiCodeOf(e)`). Pure helpers (`toAdapterError`, `apiCodeOf`,
+`toPortTx`, `pickQuorumSigners`) are unit-tested offline in `test/adapter.test.ts`.
+
+Devnet e2e: `pnpm --filter @xrlp/xrpl adapter:e2e` (~6-8 min, bootstrap first) runs the whole port flow the way core
+does and writes `.data/adapter-e2e.json`.
 
 ### Finish, cancel, repay, withdraw (XRPL-07)
 

@@ -209,3 +209,7 @@ export type { FinishEscrowParams, CancelReadiness, EscrowTiming } from "./escrow
 export { loanPayMultisig, loanPayFlags, planLoanPayment, ceilMicro, LoanPayAmountError, LSF_LOAN_OVERPAYMENT } from "./loan.ts";
 export type { LoanPayMode, LoanPayPlan } from "./loan.ts";
 export { withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
+// XRPL-10: shared LedgerPort adapter (core: LEDGER_MODE=devnet) + its pure mapping helpers
+export { XrplLedgerAdapter } from "./adapter.ts";
+export type { XrplLedgerAdapterOptions } from "./adapter.ts";
+export { XrplLedgerError, toAdapterError, apiCodeOf, toPortTx, pickQuorumSigners } from "./adapter-map.ts";
