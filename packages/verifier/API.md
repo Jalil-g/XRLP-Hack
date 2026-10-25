@@ -180,5 +180,26 @@ or re-stamping with stampExif before a real-time demo.
 
 ## Environment
 
+## AWS-native Claude provider (VER-14)
+
+The owner explicitly selected AWS Bedrock for live validation. Set VERIFIER_PROVIDER=bedrock,
+AWS_REGION=us-west-2 and AWS_BEARER_TOKEN_BEDROCK in a gitignored environment. The factory sends
+that token only to https://bedrock-mantle.<region>.api.aws/anthropic using the native Messages API.
+Model IDs carry the anthropic. prefix. Existing prompts, structured schemas, 20s deadlines and zero
+retries are unchanged. Both project and milestone review use this factory; cache keys include provider.
+Mock mode still requires no key. The direct Anthropic provider remains the default. Example values
+are in packages/verifier/.env.example; real keys must never be committed or logged.
+
+This uses the documented native Messages endpoint with the existing Anthropic SDK, rather than
+adding the legacy InvokeModel SDK. Reference: https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock
+No claim is made about AWS prize qualification or available account credits.
+
+Live check: a minimal inference request authenticated but returned HTTP 403 because the IAM identity
+lacks bedrock-mantle:CreateInference. The standard model-catalog read also returned 403. No inference
+succeeded and the full live eval was not run. An AWS administrator must grant the session suitable
+model inference permissions; there is no code-side bypass. VER-10 remains pending live acceptance.
+
+## Environment
+
 VERIFIER_MODE=mock|live; ANTHROPIC_API_KEY for live only; VERIFIER_MODEL overrides the configured
 model; DATA_DIR supplies evidence paths. No secrets belong in source, fixtures, examples or PRs.

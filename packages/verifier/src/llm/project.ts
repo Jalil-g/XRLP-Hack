@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { createLiveClient } from "./client.ts";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
 import { resolveModel } from "../config.ts";
@@ -8,7 +8,7 @@ const Section = z.object({ result: z.enum(["pass", "fail", "warn"]), confidence:
 const Review = z.object({ identity: Section, feasibility: Section, capability: Section });
 
 export async function reviewProjectLive(input: VerifyProjectInput): Promise<z.infer<typeof Review>> {
-  const client = new Anthropic({ timeout: 20_000, maxRetries: 0 });
+  const client = createLiveClient();
   const res = await client.beta.messages.parse({
     model: resolveModel(input.model), max_tokens: 2400,
     output_config: { format: betaZodOutputFormat(Review) },
