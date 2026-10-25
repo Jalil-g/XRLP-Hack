@@ -128,7 +128,7 @@ export async function runDevnetFlow(o: FlowOptions): Promise<Row[]> {
   const doc = (kind: "invoice" | "document", filename: string, lines: string[]): Upload => ({ kind, filename, mime: "text/plain", bytes: Buffer.from(lines.join("\n") + "\n") });
 
   // 21: clean store + devnet parties (builder, panel, KYC'd investors) from WALLETS_FILE
-  await call("reset + seed devnet parties", "POST", "/api/admin/demo/reset", { seed: "maple-st" });
+  await call("reset + seed devnet parties", "POST", "/api/admin/demo/reset", { seed: "participants" });
   const builders = await call<{ id: string; address: string; name: string }[]>("builders", "GET", "/api/builders", undefined, [200], (j) => `${j.length} builder(s)`);
   const builder = builders.find((b) => b.address === o.ids.builder.address);
   if (!builder) throw new Error(`builder ${o.ids.builder.address} not registered by the devnet seed`);

@@ -10,6 +10,8 @@ import { explorerTxUrl, type AttestMemo, type EscrowSnapshot, type LedgerPort, t
 import { FakeClock } from "../src/clock.ts";
 import { conditionFromFulfillment } from "../src/conditions.ts";
 import { importPrestage, planPrestageImport, RESTAGE_HINT } from "../src/demo/prestage-import.ts";
+import { devnetSeed } from "../src/demo/prestage-seed.ts";
+import { createHttpServer } from "../src/http/app.ts";
 import { DomainError } from "../src/errors.ts";
 import { createCore } from "../src/factory.ts";
 import { fakeAddress, fakeHash } from "../src/ids.ts";
@@ -430,7 +432,26 @@ describe("CORE-07 devnet route 21 (stub ledger)", () => {
     writeFileSync(ctx.prestagePath, JSON.stringify(fixture("r9", { aCancelAfter: at(5 * MIN) }).file));
     await assert.rejects(ctx.svc.resetDemo({ seed: "prestage" }), isCode("CONFLICT", /prestage --only A,B/));
     assert.equal(await ctx.core.store.read((d) => d.projects.length), before);
-    await assert.rejects(ctx.svc.resetDemo({ seed: "maple-st" }), isCode("VALIDATION", /use seed "prestage"/));
+    // "maple-st" (the web's Reset button) is the prestage on devnet, so it hits the same stale-file check
+    await assert.rejects(ctx.svc.resetDemo({ seed: "maple-st" }), isCode("CONFLICT", /prestage --only A,B/));
+    assert.equal(await ctx.core.store.read((d) => d.projects.length), before);
+    // "participants" needs CORE-05's WALLETS_FILE identities (an injected ledger has none)
+    await assert.rejects(ctx.svc.resetDemo({ seed: "participants" }), isCode("VALIDATION", /use seed "prestage"/));
+  });
+
+  it("web Reset button: route 21 {seed:\"maple-st\"} loads the prestage on devnet (no web change)", async () => {
+    const f = fixture();
+    const ctx = devnetCore(f);
+    const app = createHttpServer(ctx.svc, { dataDir: mkdtempSync(join(tmpdir(), "core07-http-")) });
+    const r = await app.request("/api/admin/demo/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ seed: "maple-st" }) });
+    assert.equal(r.status, 200, await r.clone().text());
+    const ids = (await ctx.svc.listProjects()).map((p) => p.id).sort();
+    assert.deepEqual(ids, [f.file.projects.A!.projectId, f.file.projects.B!.projectId, f.file.projects.C!.projectId].sort());
+    assert.ok(!ids.includes("maple-st-duplex"), "never the fake back-dated scenario on devnet");
+    assert.equal(ctx.stub.submitted.filter((s) => s.type === "attest:audit").length, 2);
+    assert.equal(devnetSeed("maple-st"), "prestage");
+    assert.equal(devnetSeed(undefined), "prestage");
+    assert.equal(devnetSeed("participants"), "participants");
   });
 });
 
@@ -441,6 +462,7 @@ describe("CORE-07 fake mode untouched", () => {
     await core.service.resetDemo({ seed: "maple-st" });
     assert.deepEqual((await core.service.listProjects()).map((p) => p.id).sort(), ["maple-st-duplex", "oak-ave-renovation"]);
     await assert.rejects(core.service.resetDemo({ seed: "prestage" }), isCode("VALIDATION", /LEDGER_MODE=devnet/));
+    await assert.rejects(core.service.resetDemo({ seed: "participants" }), isCode("VALIDATION", /LEDGER_MODE=devnet/));
     await core.service.resetDemo({});
     assert.equal((await core.service.listProjects()).length, 0);
   });

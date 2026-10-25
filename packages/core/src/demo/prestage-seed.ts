@@ -1,6 +1,8 @@
-// CORE-07: route 21 wiring for LEDGER_MODE=devnet. `seed: "prestage"` (also the default when the body names no seed)
-// loads the XRPL prestage instead of the fake back-dated scenario; any other seed goes to `other` (CORE-05: devnet
-// participants). prestage-import.ts (and with it @xrlp/xrpl) is loaded lazily, so fake-mode cores never import it.
+// CORE-07: route 21 wiring for LEDGER_MODE=devnet. `seed: "prestage"` loads the XRPL prestage instead of the fake
+// back-dated scenario. So do `seed: "maple-st"` (the web's /demo Reset button always sends it, apps/web/lib/api.ts) and
+// an empty body: on devnet the Maple St story IS the prestage. `seed: "participants"` goes to `other` (CORE-05: devnet
+// builder/panel/KYC'd investors, no projects; the live-flow e2e script uses it). prestage-import.ts (and with it
+// @xrlp/xrpl) is loaded lazily, so fake-mode cores never import it.
 import type { LedgerPort } from "@xrlp/shared";
 import type { DemoSeed } from "../api-surface.ts";
 import { DomainError } from "../errors.ts";
@@ -21,8 +23,13 @@ export interface PrestageSeedDeps {
   log?: Log;
   /** CORE-05 devnet identity (WALLETS_FILE): the prestage must have been made with the same wallets. */
   walletsPlatform?: string;
-  /** Seeds other than "prestage" (CORE-05's devnet participants for a live flow). Without it they are refused. */
+  /** Seed "participants" (CORE-05's devnet participants for a live flow). Without it, that seed is refused. */
   other?: CoreServiceOptions["seed"];
+}
+
+/** Devnet route 21: "maple-st" (the web's Reset button) and no seed mean the prestage; "participants" stays as is. */
+export function devnetSeed(name: DemoSeed | undefined): DemoSeed {
+  return !name || name === "maple-st" ? "prestage" : name;
 }
 
 export function prestageSeedOptions(d: PrestageSeedDeps): Pick<CoreServiceOptions, "seed" | "checkSeed" | "defaultSeed"> {
@@ -32,15 +39,17 @@ export function prestageSeedOptions(d: PrestageSeedDeps): Pick<CoreServiceOption
     return { ...m.prestagePathsFromEnv(d.env, d.dataDir), store: d.store, vault: d.vault, ledger: d.ledger, walletsPlatform: d.walletsPlatform, now: () => d.service().clock.now(), log: d.log };
   };
   const refuse = (name: DemoSeed) => {
-    throw new DomainError("VALIDATION", `Seed "${name}" is the fake-ledger scenario; with LEDGER_MODE=devnet use seed "prestage"`);
+    throw new DomainError("VALIDATION", `Seed "${name}" needs the WALLETS_FILE identities (CORE-05 wiring); with LEDGER_MODE=devnet use seed "prestage"`);
   };
   return {
     defaultSeed: "prestage",
-    checkSeed: async (name) => {
+    checkSeed: async (requested) => {
+      const name = devnetSeed(requested);
       if (name !== "prestage") return d.other ? undefined : refuse(name);
       await (await load()).planPrestageImport(await opts());
     },
-    seed: async (name) => {
+    seed: async (requested) => {
+      const name = devnetSeed(requested);
       if (name !== "prestage") return d.other ? d.other(name) : refuse(name);
       const m = await load();
       const imported = await m.importPrestage(await opts());

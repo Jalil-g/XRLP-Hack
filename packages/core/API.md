@@ -15,7 +15,8 @@ pnpm --filter @xrlp/core test
   `devnet` → `XrplLedgerAdapter` (`@xrlp/xrpl`, CORE-05). Needs a bootstrapped `WALLETS_FILE` (relative paths = repo root) and
   `XRPL_NETWORK=devnet`; mainnet endpoints are refused (xrpl's `assertNotMainnet`). Platform / AI agent / release service, the
   demo builder, inspectors 1–3 and investors 1–3 are the `WALLETS_FILE` roles (`src/adapters/devnet-identities.ts`); route 21
-  `{"seed":"maple-st"}` registers them (no projects: prestage is CORE-07). First-loss cover is 11% of principal on devnet
+  `{"seed":"participants"}` registers them (no projects). Route 21 with `{"seed":"prestage"}`, `{"seed":"maple-st"}` (what the
+  web's Reset button sends) or `{}` loads the XRPL prestage A/B/C (CORE-07, `src/demo/prestage-import.ts`). First-loss cover is 11% of principal on devnet
   (the ledger wants ≥ 10% of principal + interest). `DEMO_CANCEL_AFTER_S=1500,1800,420` = CancelAfter per milestone, seconds after close.
 - `verifier`: `CORE_VERIFIER=fake` → `FakeVerifier` (deterministic Maple St fixtures); on devnet it reads EXIF / pHash / invoice
   totals from the uploaded bytes (`src/adapters/evidence-meta.ts`). `CORE_VERIFIER=verifier`, or `VERIFIER_MODE=live` without

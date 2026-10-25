@@ -53,7 +53,7 @@ Port interfaces live in packages/shared/src/ports.ts.
 | 18 | `GET /api/inspectors` · `GET /api/inspectors/:address/queue` | — | `Inspector[]` / `InspectorTask[]` (`needs: "pre_visit" \| "audit" \| "re_audit" \| "none"`) | `inspectorQueue()` |
 | 19 | `POST /api/investors/:address/kyc` | — | `{ events }` | `kycInvestor()` |
 | 20 | `GET /api/portfolio/:investor` | — | `PortfolioPosition[]` | `portfolio()` |
-| 21 | `POST /api/admin/demo/reset` | `{ seed?: "maple-st" \| "prestage" }` (fake: `maple-st`; `LEDGER_MODE=devnet`: `prestage`, also the default) | `{ ok }` (`validation`/`invalid_state` if the prestage files are missing/stale; nothing wiped) | `resetDemo()` |
+| 21 | `POST /api/admin/demo/reset` | `{ seed?: "maple-st" \| "prestage" \| "participants" }` (fake: `maple-st`; `LEDGER_MODE=devnet`: `prestage`, `maple-st` and no seed all load the XRPL prestage, `participants` = devnet parties only) | `{ ok }` (`validation`/`invalid_state` if the prestage files are missing/stale; nothing wiped) | `resetDemo()` |
 | 22 | `POST /api/admin/keeper/tick` | — | `{ events }` | `keeperTick()` |
 | 23 | `POST /api/admin/demo/try-steal/:id/:mid` | — | `{ result: "tecCRYPTOCONDITION_ERROR", txHash, explorerUrl }` (wrong fulfillment, never reads stored preimages) | `tryStealDemo()` |
 

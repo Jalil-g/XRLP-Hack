@@ -101,8 +101,12 @@ export interface CoreApi {
   tryStealDemo(id: string, mid: string): Promise<TryStealResult>; // 23
 }
 
-/** Route 21 seeds: "maple-st" = fake-mode back-dated scenario; "prestage" = devnet, loads the XRPL prestage (CORE-07). */
-export const DEMO_SEEDS = ["maple-st", "prestage"] as const;
+/**
+ * Route 21 seeds. Fake mode: "maple-st" = the back-dated scenario (others are refused). LEDGER_MODE=devnet: "prestage",
+ * "maple-st" (what the web's Reset button sends) and no seed all load the XRPL prestage (CORE-07); "participants" = the
+ * devnet builder, inspector panel and KYC'd investors only, no projects (CORE-05 live-flow e2e).
+ */
+export const DEMO_SEEDS = ["maple-st", "prestage", "participants"] as const;
 export type DemoSeed = (typeof DEMO_SEEDS)[number];
 
 /**
