@@ -34,7 +34,7 @@ export function AuditRow({
     <li className={cn(ROW_GRID, state === "fail" && "bg-fail-bg/60")}>
       <StatusIcon state={state} />
       <span className={cn("text-body", state === "queued" && !audit ? "text-ink-2" : "font-medium text-ink")}>Inspector audit</span>
-      <span className={cn("text-small", state === "fail" ? "font-medium text-fail" : gaps ? "font-medium text-review" : "truncate text-ink-3")}>{detail}</span>
+      <span className={cn("text-small", state === "fail" ? "font-medium text-fail" : gaps ? "font-medium text-review" : "text-ink-3 lg:truncate")}>{detail}</span>
       <span />
     </li>
   );

@@ -54,6 +54,7 @@ html[data-projector="true"] {
 /* Checks rows: icon, name, detail, flagged evidence. Name and detail stack below 1024px. */
 .check-row { display: grid; grid-template-columns: 20px minmax(0, 1fr); }
 .check-row > :nth-child(n + 3) { grid-column: 2; justify-self: start; min-width: 0; }
+.check-row > :nth-child(3) { justify-self: stretch; }
 @media (min-width: 1024px) {
   .check-row { grid-template-columns: 20px 280px minmax(0, 1fr) auto; }
   .check-row > :nth-child(n + 3) { grid-column: auto; }

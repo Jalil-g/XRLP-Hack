@@ -17,7 +17,7 @@ export function CheckRow({ check, state, evidence = [] }: { check: Pick<CheckRes
         {checkName(check.check)}
         {AI_CHECKS.has(check.check) && <span className="rounded-[5px] border border-line px-1 text-[11px] leading-4 font-semibold tracking-wide text-ink-3">AI</span>}
       </span>
-      <span title={loud ? undefined : reason} className={cn("text-small", loud ? (state === "fail" ? "font-medium text-fail" : "font-medium text-review") : "truncate text-ink-3")}>
+      <span title={loud ? undefined : reason} className={cn("text-small", loud ? (state === "fail" ? "font-medium text-fail" : "font-medium text-review") : "text-ink-3 lg:truncate")}>
         {reason}
       </span>
       <span className="flex gap-1.5 justify-self-end">

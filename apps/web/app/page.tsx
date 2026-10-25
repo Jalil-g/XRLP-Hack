@@ -23,6 +23,7 @@ export default async function ProjectsPage() {
   return (
     <div className="space-y-12">
       <AutoRefresh ms={5000} />
+      <h1 className="sr-only">Projects</h1>
 
       {projects.length === 0 ? (
         <Empty title="No verified projects" action={<Link href="/demo" className={buttonClass("secondary")}>Open demo</Link>} />

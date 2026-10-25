@@ -151,7 +151,7 @@ function Finding({ check: c }: { check: CheckResult }) {
     <li className={cn(ROW_GRID, c.result === "fail" && "bg-fail-bg/60", c.result === "warn" && "bg-review-bg/60")}>
       <StatusIcon state={c.result} />
       <span className="text-body font-medium text-ink">{checkLabel(c)}</span>
-      <span title={loud ? undefined : reason} className={cn("text-small", loud ? (c.result === "fail" ? "font-medium text-fail" : "font-medium text-review") : "truncate text-ink-3")}>
+      <span title={loud ? undefined : reason} className={cn("text-small", loud ? (c.result === "fail" ? "font-medium text-fail" : "font-medium text-review") : "text-ink-3 lg:truncate")}>
         {reason}
       </span>
       <span>
