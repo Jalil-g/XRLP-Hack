@@ -1,4 +1,4 @@
-// INS-06: pre-construction site visit. When project verification escalates (`needs_human`), the AI assigns an inspector and
+// INS-06: pre-construction site visit. When project verification escalates (`needs_human`), an inspector is assigned and
 // route 18 lists the project with `needs: "pre_visit"`. The inspector confirms the site and files a signed report.
 //
 // TODO(#53): NONE OF THIS IS AN AGREED CONTRACT YET. It implements the area:inspector proposal on #53
