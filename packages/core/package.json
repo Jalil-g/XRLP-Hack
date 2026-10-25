@@ -14,7 +14,8 @@
     "seed": "tsx src/scripts/seed.ts",
     "simulate": "tsx src/scripts/simulate.ts",
     "serve": "tsx src/http/server.ts",
-    "e2e:devnet": "NODE_USE_ENV_PROXY=1 tsx scripts/devnet-e2e.ts"
+    "e2e:devnet": "NODE_USE_ENV_PROXY=1 tsx scripts/devnet-e2e.ts",
+    "rehearse": "tsx scripts/rehearse.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
