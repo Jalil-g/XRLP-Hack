@@ -236,7 +236,7 @@ export function checkInvoiceMatchesBudget(
       unread.push(inv);
       continue;
     }
-    total += toCents(t);
+    try { total += toCents(t); } catch { unread.push(inv); continue; }
     parts.push(`${name(inv)} ${fmtMoney(t)}`);
   }
   if (unread.length) {
@@ -244,16 +244,18 @@ export function checkInvoiceMatchesBudget(
       unread.map((l) => l.evidence.id));
   }
   const draw = toCents(ctx.milestone.amount);
+  if (draw <= 0n) return outcome(c, "fail", "Draw must be positive before reconciling invoices.");
   const ratio = pct(total, draw);
-  const { invoiceUnderTolerancePct: under, invoiceOverTolerancePct: over } = policy.thresholds;
+  const { invoiceUnderTolerancePct: under, invoiceOverTolerancePct: over, invoiceWarnTolerancePct: warn } = policy.thresholds;
   const ids = invoices.map((l) => l.evidence.id);
   const head = `Invoices total ${fmtMoney(centsToString(total))} vs draw ${fmtMoney(ctx.milestone.amount)} (${ratio}%)${modelExtracted ? " [includes LLM-extracted totals]" : ""}`;
-  if (ratio < 100 - under) {
+  const difference = total >= draw ? total - draw : draw - total;
+  if (difference * 100n > draw * BigInt(warn)) {
     return outcome(c, "fail",
-      `${head}: invoices support only ${ratio}% of the requested draw (tolerance −${under}%). Shortfall ${fmtMoney(draw - total)}. [${parts.join("; ")}]`, ids);
+      `${head}: absolute mismatch exceeds ${warn}%; ${total < draw ? "shortfall" : "overrun"} ${fmtMoney(difference)}. [${parts.join("; ")}]`, ids);
   }
-  if (ratio > 100 + over) {
-    return outcome(c, "warn", `${head}: costs exceed the budget line by more than ${over}% — overrun to flag.`, ids, 0.8);
+  if ((total < draw && difference * 100n > draw * BigInt(under)) || (total > draw && difference * 100n > draw * BigInt(over))) {
+    return outcome(c, "warn", `${head}: outside the pass band (−${under}% / +${over}%) but within ${warn}%; reconcile before release.`, ids, 0.8);
   }
   return outcome(c, "pass", `${head}: within tolerance (−${under}% / +${over}%).`, ids);
 }
