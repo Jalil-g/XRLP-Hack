@@ -418,6 +418,61 @@ Answers to the research questions (rippled `LoanSet.cpp` / `Batch.cpp`, 3.4.1 an
 - **Limits:** 2..8 inner txs, so `escrows` mode takes 2..8 milestones and `full` mode 1..7 (the LoanSet takes one slot). One milestone →
   use `createMilestoneEscrow`.
 
+### 2e. XRPL-13b devnet results (atomic escrows in close, recovery)
+
+`WALLETS_FILE=.data/wallets.<you>.json pnpm --filter @xrlp/xrpl spike:close-batch` (2026-10-25 01:20–01:24 UTC, own bootstrap
+store, rippled 3.4.1, exit 0). Three fresh projects, each principal 3000 RLUSD, 3 milestones (1000 / 1200 / 800), 10% APR,
+`PaymentTotal 3 × 300 s`, origination fee 45; v2 SPV (4 × w1, quorum 3, master disabled), default signers platform + builder +
+trustee; conditions from the script (stand-in for CORE-12). Code: `closeLoanAndCreateEscrows` (`escrowMode`) and
+`resumeEscrowCreation` in `packages/xrpl/src/api.ts`, `src/batch.ts`, `src/loan-close.ts`. SPVs: A `rPh7svZz9AA8KdZF3iUqww9aQv3ta9YcVE` ·
+B `rwjDsiGgTTrpNUud1tn8HNDwjQiZb1JiYH` · C `rNHBybT9KeJ3jyatxMc8whsRFQxM8Aj67Y`; issuer `rLnisxZ6B2G27zVhrtiKcRXYs2V1wFKyST`.
+Setup txs (SPV TrustSet / SignerListSet / disable master, VaultCreate, LoanBrokerSet, cover, deposit) omitted; they are in the run record.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| A1 | builder → SPV origination-fee shortfall 45 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/E84FB45B474A3A18B5945D09E10B05C2AE9BED5AF898C36BD2C02983B5B4DA0A |
+| A2 | **LoanSet** (platform `Account`, SPV 3-of-4 countersign), ledger 6392715 (01:22:10Z) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4661D0C6F321BA6DD46887294EA1C86B36F812FD9C0C1969016BD0CFA6148A70 |
+| A3 | **Batch** outer = SPV (multisig 3/4), `tfAllOrNothing`, 3 × EscrowCreate, fee 8 drops, ledger 6392717 (01:22:12Z) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/1DD530999139C1867549DAB971D9D01438A28093B16772A84E132CFE976EFB89 |
+| A3↳ | inner EscrowCreates m1 1000 / m2 1200 / m3 800 (OfferSequence 6392670 / 71 / 72) = `escrows[i].createTx` | `tesSUCCESS` ×3 | https://devnet.xrpl.org/transactions/57B76453C7A797C646497549C506D3ECE3E120B11C54610A05DA8222FCF625F4 · https://devnet.xrpl.org/transactions/DD743BE9384936A2DAFB048DF738CEEE65B7CA89EB6B97486C3A8A3FB05B2934 · https://devnet.xrpl.org/transactions/66481BDA5DDEEE1D0B32D7160D34A02F74E95D6067BA5E5788235603D0169E24 |
+| B1 | LoanSet, ledger 6392726 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/2E8AFFD64A405780C8C73F8F21111CF096C0BA6BE1A9C542F6DD786B5092ED69 |
+| B2 | (spike, `onTx` after LoanSet) issuer `TrustSet tfSetFreeze` on the SPV's RLUSD line | `tesSUCCESS` | https://devnet.xrpl.org/transactions/AC3455ECC0B9745C2BEF6A81592FD1C830F81589808C26472071AAAA77B4DCFC |
+| B3 | Batch, 3 × EscrowCreate on the frozen line, fee 8 drops, ledger 6392730: **outer applied, no inner applied** | `tesSUCCESS` (outer) | https://devnet.xrpl.org/transactions/AF14693582FDB295889241F74A4688EEA2BC8AFF85A5EAB061B756181299C989 |
+| B3↳ | inner EscrowCreates (Sequence 6392685..87): ranged `tx` lookup in ledger 6392730 → `txnNotFound`, `searched_all: true` | not applied | — (not on ledger) |
+| B4 | `CloseLoanPartialError`: `txResult inner_failed`, `txHash` = B3, created [], pending [m1, m2, m3], `context.batch.outcome rolled_back`; SPV holds **3000 RLUSD liquid, 0 escrows** | (client) | — |
+| B5 | issuer `TrustSet tfClearFreeze` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/F3B6F788EF5FB500FA7B2427D8CE6D0175F444ABA02CE45CA1C68A245B16547E |
+| B6 | `resumeEscrowCreation(err)`: one Batch, 3 × EscrowCreate, ledger 6392734 → SPV liquid 0 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/EE8F9497C3EA7BA85081B933ECAF09D89BD8C532309F800F0E82DD1263782DBD |
+| B6↳ | inner EscrowCreates (OfferSequence 6392686 / 87 / 88) | `tesSUCCESS` ×3 | https://devnet.xrpl.org/transactions/5139037C57BF7175AAA73790EB6C225DC3145AA9E9C60838F0D19D197272F91E · https://devnet.xrpl.org/transactions/F16E774AC8F5078AD99864A358D48815865877EF02F242FFBE582A847FAD0E85 · https://devnet.xrpl.org/transactions/362077D1FA47B867C00821574091F3639A865E1D6002ABF30CA117486CBD41DF |
+| B7 | `resumeEscrowCreation(err)` again (same stale error) → m1/m2/m3 found open by condition | **nothing submitted** (SPV Sequence + RLUSD unchanged) | — |
+| C1 | LoanSet, ledger 6392740 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/18E81078A96BB2AD33A1A9C9B4E520B367C42C7E3A92F6B8C6676AF4816B23E1 |
+| C2 | EscrowCreate m1 (`escrowMode: "sequential"`) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/63856886B46E5C2F39BFDEEB7CE144D327B270D01800554D6EF0CE9D7BC73C3F |
+| C3 | (spike, `onTx` after m1) issuer `TrustSet tfSetFreeze` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A9F1106E2AEB65CD8FCA914B733D42CC73A6EA76A91B066DC8B0E5569C92696F |
+| C4 | EscrowCreate m2 on the frozen line, ledger 6392746, fee 4 drops, Sequence 6392701 consumed | **`tecFROZEN`** (on-ledger) | https://devnet.xrpl.org/transactions/68D86E1D391E3567162EAF15DCADF73D0DF8B61CF3AEDF7EF6893AACA1919D08 |
+| C5 | `CloseLoanPartialError`: `txResult tecFROZEN`, `txHash` = C4, created [m1], pending [m2, m3] | (client) | — |
+| C6 | issuer `TrustSet tfClearFreeze` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/E045CD8DB89AA8FA18CCDBD4DF1E79EE3CB4C690AF6DBB0D054DB996E9FED1F0 |
+| C7 | `resumeEscrowCreation(err)`: one Batch with only m2 + m3 (m1 kept), fee 7 drops, ledger 6392750 → SPV liquid 0 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/EFBE271962D82F6231939700148E3C31D0F74C8BABDA3D935C6E1B3E091C312A |
+| C7↳ | inner EscrowCreates m2 / m3 (OfferSequence 6392703 / 04) | `tesSUCCESS` ×2 | https://devnet.xrpl.org/transactions/DBAF5C424FD9FB305729EA0C72802A3BC141A21C665716E57A5DA142BB463E45 · https://devnet.xrpl.org/transactions/9E160A126E5CDA5B9BD202DD59042EA99E553D3747E9AC7D41CA4E1B60425F44 |
+| C8 | `resumeEscrowCreation(err)` again → m1 (created) / m2 / m3 (open) | **nothing submitted** | — |
+
+Observations:
+- **The default close is now LoanSet + one Batch.** In A the SPV held liquid principal from the LoanSet ledger (6392715) to the
+  Batch ledger (6392717): **2 ledgers, 2 s of close time**, then 0 liquid with 3 escrows = 3000. In §2c (sequential) it was 1 + 3 txs.
+  `escrows[i].createTx` / `txs[1..3]` are the inner EscrowCreates (each has `ParentBatchID` = A3 in its metadata); A3 is `batchTx`.
+- **A rolled-back Batch looks applied from the outside.** B3 is `tesSUCCESS`, charged 8 drops, and its metadata only moves the
+  SPV's fee and Sequence (6392684 → 6392685), exactly like the applied A3. Only the inner lookups tell: pinned to the Batch's own
+  ledger, rippled answers `txnNotFound` with `searched_all: true`, so "not applied" is proven, not guessed. Recorded as
+  `test/fixtures/batch-escrows-rolled-back.json` (offline test). After it, the SPV held the whole principal liquid with no escrow:
+  the state `CloseLoanPartialError` + `resumeEscrowCreation` exist for.
+- The rolled-back inners did not consume Sequences 6392685..87: the resume Batch B6 took 6392685 as its outer Sequence and
+  6392686..88 for its inners (same as §2d C).
+- **EscrowCreate checks the source line's freeze at create time** (XLS-85): C4 is a validated `tecFROZEN` (fee paid, Sequence used),
+  so a sequential partial close leaves an explorer-visible failure; m1 stayed escrowed.
+- **Resume is exact and idempotent:** B6 created all 3, C7 only the 2 missing (m1 kept from `created`). Re-running it with the same
+  stale error (B7, C8) re-read the SPV's escrows, matched every condition, and submitted nothing.
+- Fees: Batch = base + base × (1 + 3 outer signers) + Σ inner base = 8 drops for 3 escrows, 7 for 2; multisig EscrowCreate 4 drops.
+- The freeze is spike-only, to force an on-ledger failure at a chosen point via the `onTx` hook. Production never freezes. The same
+  `CloseLoanPartialError` → `resumeEscrowCreation` path covers a crash or network error after LoanSet; with an unknown outcome,
+  resume first waits out the Batch's `LastLedgerSequence`.
+
 ---
 
 ## 3. (c) Vault mechanics, and the V1_1 closed-ended lifecycle

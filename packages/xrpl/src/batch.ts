@@ -10,6 +10,9 @@
 //   - closeLoanAtomic({ mode: "full" }): the real atomic close. Outer = platform (broker owner), inners = LoanSet
 //     (Counterparty = SPV, no CounterpartySignature) + EscrowCreate×N from the SPV, BatchSigners = SPV multisig.
 //     Fails with temINVALID_INNER_BATCH until LendingProtocolV1_2 is on the network.
+// XRPL-13b: closeLoanAndCreateEscrows (api.ts) uses createEscrowsAtomic by default for 2..8 milestones. Every escrow
+// goes through validateEscrowSpecs before anything is signed; inner results are looked up in the Batch's own ledger
+// (`searched_all` makes "not applied" provable) and every created escrow is checked against its metadata.
 import {
   BatchFlags,
   convertStringToHex,
@@ -28,8 +31,17 @@ import {
   type Wallet,
 } from "xrpl";
 import { explorerTxUrl } from "@xrlp/shared";
-import { createdNodeId, DEFAULT_LLS_MARGIN, getClient, submitBlob, withAccountLock, XrplTxError, type TxResult } from "./client.ts";
+import { createdNodeId, DEFAULT_LLS_MARGIN, getClient, ledgerTime, submitBlob, withAccountLock, XrplTxError, type TxResult } from "./client.ts";
+import { normalizeCondition } from "./condition.ts";
 import { loanSet, type LoanSetParams } from "./loan.ts";
+import {
+  CloseLoanPartialError,
+  CloseValidationError,
+  validateEscrowSpecs,
+  type ClosePartialContext,
+  type CreatedEscrowRef,
+  type PlannedEscrow,
+} from "./loan-close.ts";
 import { rlusdAmount } from "./rlusd.ts";
 
 /** XLS-56: 2..8 inner transactions. */
@@ -177,17 +189,31 @@ export interface InnerResult {
   transactionType: string;
   account: string;
   sequence: number;
-  /** Engine result of the inner tx, or "not_applied" (tfAllOrNothing rolled back, or the inner was skipped). */
+  /**
+   * Engine result of the inner tx as applied by THIS Batch (`tesSUCCESS`, or a recorded `tec*`), or
+   * "not_applied" (provably absent from the Batch's ledger: tfAllOrNothing rolled back, or skipped), or
+   * "unknown" (not found but the server could not say it searched the whole ledger, or found outside this Batch).
+   */
   result: string;
   tx?: Record<string, unknown>;
   meta?: Record<string, unknown>;
+  ledgerIndex?: number;
+  /** ISO close time of the inner tx's ledger. */
+  closeTime?: string;
 }
+
+/**
+ * all_applied: every inner tx is tesSUCCESS in this Batch's ledger. rolled_back: every inner tx is provably absent
+ * (tfAllOrNothing). partial: some applied, some not. unknown: at least one lookup could not tell.
+ */
+export type BatchOutcome = "all_applied" | "rolled_back" | "partial" | "unknown";
 
 export interface BatchResult {
   tx: TxResult;
   inners: InnerResult[];
   /** True when every inner tx is on-ledger with tesSUCCESS. */
   allApplied: boolean;
+  outcome: BatchOutcome;
 }
 
 export interface SubmitBatchParams {
@@ -205,6 +231,8 @@ export interface SubmitBatchParams {
   /** Override the computed fee (drops). */
   fee?: string;
   lastLedgerMargin?: number;
+  /** Called with the signed Batch right before it is submitted (its hash + LastLedgerSequence: the in-flight window). */
+  onPrepared?: (b: { hash: string; lastLedgerSequence: number; batch: Batch }) => void;
 }
 
 async function nextSequence(account: string): Promise<number> {
@@ -265,21 +293,82 @@ export function signPreparedBatch(
   return { batch: unsigned, blob, hash: hashes.hashSignedTx(blob) };
 }
 
-/** Look up every inner tx of a validated Batch by its hash. Missing = rolled back / not applied. */
-export async function fetchInnerResults(batch: Batch): Promise<InnerResult[]> {
+/** What a `tx` lookup of one inner hash returned. `searchedAll` = rippled's flag on a ranged txnNotFound. */
+export type InnerLookup = { found: true; result: Record<string, unknown> } | { found: false; searchedAll: boolean };
+
+/**
+ * Pure: one inner tx's fate. Applied by THIS Batch = validated, `meta.ParentBatchID` = the Batch hash, and (when the
+ * Batch ledger is known) in that same ledger. Not found with `searchedAll` → "not_applied"; anything else → "unknown".
+ */
+export function classifyInnerLookup(
+  batch: { hash?: string; ledgerIndex?: number },
+  base: Pick<InnerResult, "hash" | "explorerUrl" | "transactionType" | "account" | "sequence">,
+  lookup: InnerLookup,
+): InnerResult {
+  if (!lookup.found) return { ...base, result: lookup.searchedAll ? "not_applied" : "unknown" };
+  const r = lookup.result;
+  const meta = (r.meta ?? {}) as Record<string, unknown>;
+  const tx = (r.tx_json ?? r.tx ?? r) as Record<string, unknown>;
+  const ledgerIndex = typeof r.ledger_index === "number" ? r.ledger_index : undefined;
+  const closeTime = typeof r.close_time_iso === "string" ? r.close_time_iso : undefined;
+  const ours =
+    r.validated === true &&
+    (batch.hash == null || meta.ParentBatchID === batch.hash) &&
+    (batch.ledgerIndex == null || ledgerIndex === batch.ledgerIndex);
+  return {
+    ...base,
+    result: ours ? String(meta.TransactionResult ?? "unknown") : "unknown",
+    tx,
+    meta,
+    ...(ledgerIndex != null ? { ledgerIndex } : {}),
+    ...(closeTime ? { closeTime } : {}),
+  };
+}
+
+/** Pure: the Batch as a whole from its inner results (see BatchOutcome). */
+export function batchOutcome(inners: Pick<InnerResult, "result">[]): BatchOutcome {
+  if (!inners.length || inners.some((i) => i.result === "unknown")) return "unknown";
+  if (inners.every((i) => i.result === "tesSUCCESS")) return "all_applied";
+  if (inners.every((i) => i.result === "not_applied")) return "rolled_back";
+  return "partial";
+}
+
+/** An inner result as this package's TxResult (its own hash / explorer link / metadata). */
+export function innerTxResult(i: InnerResult): TxResult {
+  return { hash: i.hash, explorerUrl: i.explorerUrl, result: i.result, ...(i.ledgerIndex != null ? { ledgerIndex: i.ledgerIndex } : {}), tx: i.tx ?? {}, meta: i.meta ?? {} };
+}
+
+/**
+ * Look up every inner tx of a validated Batch by its hash. With `at.ledgerIndex` the lookup is pinned to the Batch's
+ * ledger (inner txs apply in the same ledger), so a missing inner comes back with `searched_all` → provably
+ * "not_applied"; `at.hash` also requires `meta.ParentBatchID` to match. Without `at` (legacy): plain lookups, and a
+ * missing inner reads "not_applied".
+ */
+export async function fetchInnerResults(batch: Batch, at?: { hash?: string; ledgerIndex?: number }): Promise<InnerResult[]> {
   const client = await getClient();
+  const ranged = at?.ledgerIndex != null;
   const out: InnerResult[] = [];
   for (const { RawTransaction: t } of batch.RawTransactions) {
     const hash = innerTxHash(t);
     const base = { hash, explorerUrl: explorerTxUrl(hash), transactionType: t.TransactionType, account: t.Account, sequence: Number(t.Sequence) };
-    try {
-      const r = (await client.request({ command: "tx", transaction: hash })).result as unknown as Record<string, unknown>;
-      const meta = (r.meta ?? {}) as Record<string, unknown>;
-      out.push({ ...base, result: String(meta.TransactionResult ?? "unknown"), tx: (r.tx_json ?? r) as Record<string, unknown>, meta });
-    } catch (e) {
-      if ((e as { data?: { error?: string } })?.data?.error !== "txnNotFound") throw e;
-      out.push({ ...base, result: "not_applied" });
+    const lookupOnce = async (): Promise<InnerLookup> => {
+      try {
+        const range = ranged ? { min_ledger: at!.ledgerIndex!, max_ledger: at!.ledgerIndex! } : {};
+        const res = await client.request({ command: "tx", transaction: hash, ...range });
+        return { found: true, result: res.result as unknown as Record<string, unknown> };
+      } catch (e) {
+        const d = (e as { data?: { error?: string; searched_all?: boolean } })?.data;
+        if (d?.error !== "txnNotFound") throw e;
+        return { found: false, searchedAll: ranged ? d.searched_all === true : true };
+      }
+    };
+    // A just-validated ledger can lag in the tx index for a moment: retry an "unknown" twice before reporting it.
+    let result = classifyInnerLookup(at ?? {}, base, await lookupOnce());
+    for (let retry = 0; retry < 2 && result.result === "unknown"; retry++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      result = classifyInnerLookup(at ?? {}, base, await lookupOnce());
     }
+    out.push(result);
   }
   return out;
 }
@@ -288,7 +377,8 @@ export async function fetchInnerResults(batch: Batch): Promise<InnerResult[]> {
  * Prepare (sequences, fee, LastLedgerSequence), sign (outer + BatchSigners), submit, wait. Holds the per-account
  * submit lock of the outer account and of every inner account, so no other submit races for their Sequences.
  * Throws XrplTxError on tem/tef (nothing on ledger). On tesSUCCESS returns the inner results: with tfAllOrNothing
- * a failing inner tx means the Batch is still `tesSUCCESS` on-ledger (fee paid) but NO inner tx is applied.
+ * a failing inner tx means the Batch is still `tesSUCCESS` on-ledger (fee paid) but NO inner tx is applied
+ * (`outcome: "rolled_back"`).
  */
 export async function submitBatch(p: SubmitBatchParams): Promise<BatchResult> {
   const accounts = [...new Set([p.account, ...p.inners.map((t) => t.Account)])].sort();
@@ -298,20 +388,38 @@ export async function submitBatch(p: SubmitBatchParams): Promise<BatchResult> {
     for (const a of accounts) nextSeq[a] = await nextSequence(a);
     const outerSequence = nextSeq[p.account]!;
     const lastLedgerSequence = (await client.getLedgerIndex()) + (p.lastLedgerMargin ?? DEFAULT_LLS_MARGIN);
-    const { batch, blob } = signPreparedBatch(p, {
+    const { batch, blob, hash } = signPreparedBatch(p, {
       outerSequence,
       nextSequence: nextSeq,
       baseDrops: await baseFeeDrops(),
       lastLedgerSequence,
       ...(client.networkID != null ? { networkId: client.networkID } : {}),
     });
+    p.onPrepared?.({ hash, lastLedgerSequence, batch });
     const tx = await submitBlob(blob, "Batch");
-    const inners = await fetchInnerResults(batch);
-    return { tx, inners, allApplied: inners.every((i) => i.result === "tesSUCCESS") };
+    const inners = await fetchInnerResults(batch, { hash: tx.hash, ...(tx.ledgerIndex != null ? { ledgerIndex: tx.ledgerIndex } : {}) });
+    return { tx, inners, allApplied: inners.every((i) => i.result === "tesSUCCESS"), outcome: batchOutcome(inners) };
   };
   // Nested per-account locks, always taken in sorted order.
   const locked = accounts.reduceRight<() => Promise<BatchResult>>((inner, a) => () => withAccountLock(a, inner), run);
   return locked();
+}
+
+/**
+ * A validated Batch (outer tesSUCCESS, fee paid) whose inner txs did not all apply: tfAllOrNothing rolled them back
+ * (`batch.outcome` "rolled_back"), or their fate is unknown. `engineResult` is "inner_failed".
+ */
+export class BatchNotAppliedError extends XrplTxError {
+  constructor(
+    readonly batch: BatchResult,
+    what: string,
+  ) {
+    const bad = batch.inners.filter((i) => i.result !== "tesSUCCESS").map((i) => `${i.transactionType}#${i.sequence}=${i.result}`);
+    super("Batch", "inner_failed", batch.tx.hash, {
+      detail: `${what}: ${bad.join(", ")}; outcome ${batch.outcome}${batch.outcome === "rolled_back" ? " (tfAllOrNothing: nothing applied)" : ""}`,
+    });
+    this.name = "BatchNotAppliedError";
+  }
 }
 
 // ---------------------------------------------------------------- loan close
@@ -319,7 +427,7 @@ export async function submitBatch(p: SubmitBatchParams): Promise<BatchResult> {
 export interface AtomicMilestone {
   milestoneId: string;
   amount: string;
-  /** Hex PREIMAGE-SHA-256 condition from the inspector. */
+  /** Hex PREIMAGE-SHA-256 condition (from core's release service). */
   condition: string;
   /** Ripple-epoch seconds. */
   cancelAfter: number;
@@ -335,6 +443,8 @@ export interface AtomicEscrow {
   /** Hash of the inner EscrowCreate (its own on-ledger tx). */
   createTx: string;
   explorerUrl: string;
+  /** The inner EscrowCreate as a TxResult (its hash, metadata, ledger). */
+  tx: TxResult;
 }
 
 function escrowCreateTx(spv: string, builder: string, issuer: string, m: AtomicMilestone): EscrowCreate {
@@ -348,38 +458,132 @@ function escrowCreateTx(spv: string, builder: string, issuer: string, m: AtomicM
   };
 }
 
-function toEscrows(spv: string, milestones: AtomicMilestone[], inners: InnerResult[]): AtomicEscrow[] {
+/** The Escrow ledger object an EscrowCreate's metadata created (NewFields + LedgerIndex), if any. Pure. */
+export function createdEscrowFromMeta(meta: Record<string, unknown> | undefined): { index: string; account: string; destination: string; amount: unknown; condition?: string; cancelAfter?: number; sequence?: number } | undefined {
+  const nodes = (meta?.AffectedNodes ?? []) as { CreatedNode?: { LedgerEntryType?: string; LedgerIndex?: string; NewFields?: Record<string, unknown> } }[];
+  const n = nodes.find((x) => x.CreatedNode?.LedgerEntryType === "Escrow")?.CreatedNode;
+  if (!n?.NewFields || !n.LedgerIndex) return undefined;
+  const f = n.NewFields;
+  return {
+    index: n.LedgerIndex,
+    account: String(f.Account),
+    destination: String(f.Destination),
+    amount: f.Amount,
+    ...(typeof f.Condition === "string" ? { condition: f.Condition } : {}),
+    ...(typeof f.CancelAfter === "number" ? { cancelAfter: f.CancelAfter } : {}),
+    ...(typeof f.Sequence === "number" ? { sequence: f.Sequence } : {}),
+  };
+}
+
+/**
+ * Map the applied EscrowCreate inners (in order) to the milestones, checking each one's metadata: it must have
+ * created an Escrow owned by the SPV, to the builder, with the milestone's condition. Pure.
+ */
+export function escrowsFromBatch(spv: string, builder: string, milestones: AtomicMilestone[], inners: InnerResult[]): AtomicEscrow[] {
   const escrowInners = inners.filter((i) => i.transactionType === "EscrowCreate");
+  if (escrowInners.length !== milestones.length) throw new Error(`Batch: ${escrowInners.length} EscrowCreate inners for ${milestones.length} milestones`);
   return milestones.map((m, i) => {
     const inner = escrowInners[i]!;
-    return { ...m, owner: spv, offerSequence: inner.sequence, createTx: inner.hash, explorerUrl: inner.explorerUrl };
+    const node = createdEscrowFromMeta(inner.meta);
+    const ok = inner.result === "tesSUCCESS" && node && node.account === spv && node.destination === builder && normalizeCondition(node.condition ?? "") === normalizeCondition(m.condition);
+    if (!ok) throw new Error(`Batch inner ${inner.hash} (${inner.result}): metadata shows no Escrow ${spv} -> ${builder} with milestone ${m.milestoneId}'s condition`);
+    return { ...m, owner: spv, offerSequence: node.sequence ?? inner.sequence, createTx: inner.hash, explorerUrl: inner.explorerUrl, tx: innerTxResult(inner) };
   });
 }
 
-function assertAllApplied(r: BatchResult, what: string): void {
-  if (r.allApplied) return;
-  const bad = r.inners.filter((i) => i.result !== "tesSUCCESS").map((i) => `${i.transactionType}#${i.sequence}=${i.result}`);
-  throw new XrplTxError("Batch", `inner_failed (${what}: ${bad.join(", ")}; tfAllOrNothing → nothing applied)`, r.tx.hash);
+/** Network seam of createEscrowsAtomic (tests inject a fake). */
+export interface CreateEscrowsAtomicDeps {
+  submitBatch: typeof submitBatch;
+}
+
+export interface CreateEscrowsAtomicParams {
+  spv: string;
+  builder: string;
+  issuer: string;
+  /** 2..8 milestones (XLS-56 inner-tx limit). */
+  milestones: AtomicMilestone[];
+  /** SPV quorum: the outer Batch is multisigned by these (any 3 of {platform, builder, inspector, trustee}). */
+  spvSigners?: Wallet[];
+  /** Fallback: the SPV's own key while its master key is still enabled (outer single-signed). */
+  spvSingleKey?: Wallet;
+  /** Ledger now (Ripple s): also refuse a CancelAfter within MIN_ESCROW_LIFETIME_S of it. */
+  now?: number;
+  /** Called with the signed Batch's hash + LastLedgerSequence right before it is submitted. */
+  onPrepared?: (b: { hash: string; lastLedgerSequence: number }) => void;
+  deps?: Partial<CreateEscrowsAtomicDeps>;
 }
 
 /**
  * Every milestone EscrowCreate from the SPV in ONE Batch (tfAllOrNothing): outer Account = SPV, multisigned by the
- * SPV quorum, no BatchSigners needed. 2..8 milestones. Either all escrows exist afterwards or none.
+ * SPV quorum (or its own key), no BatchSigners needed. 2..8 milestones. Either all escrows exist afterwards or none.
+ * Every milestone passes validateEscrowSpecs BEFORE anything is signed (CloseValidationError, nothing submitted).
+ * A validated Batch whose inners did not all apply → BatchNotAppliedError (`batch.outcome`).
  */
-export async function createEscrowsAtomic(p: {
-  spv: string;
-  builder: string;
-  issuer: string;
-  milestones: AtomicMilestone[];
-  spvSigners: Wallet[];
-}): Promise<{ batch: BatchResult; escrows: AtomicEscrow[] }> {
-  const batch = await submitBatch({
-    account: p.spv,
-    outerSigner: { multisig: p.spvSigners },
-    inners: p.milestones.map((m) => escrowCreateTx(p.spv, p.builder, p.issuer, m)),
+export async function createEscrowsAtomic(p: CreateEscrowsAtomicParams): Promise<{ batch: BatchResult; escrows: AtomicEscrow[] }> {
+  const milestones = validateEscrowSpecs(p.milestones, {
+    min: BATCH_MIN_INNER,
+    max: BATCH_MAX_INNER,
+    ...(p.now != null ? { now: p.now } : {}),
+    what: "createEscrowsAtomic",
   });
-  assertAllApplied(batch, "EscrowCreate batch");
-  return { batch, escrows: toEscrows(p.spv, p.milestones, batch.inners) };
+  if (!p.spvSingleKey && !p.spvSigners?.length) throw new CloseValidationError(["no SPV signers (spvSigners or spvSingleKey)"], "createEscrowsAtomic");
+  const batch = await (p.deps?.submitBatch ?? submitBatch)({
+    account: p.spv,
+    outerSigner: p.spvSingleKey ? { single: p.spvSingleKey } : { multisig: p.spvSigners! },
+    inners: milestones.map((m) => escrowCreateTx(p.spv, p.builder, p.issuer, m)),
+    ...(p.onPrepared ? { onPrepared: ({ hash, lastLedgerSequence }) => p.onPrepared!({ hash, lastLedgerSequence }) } : {}),
+  });
+  if (batch.outcome !== "all_applied") throw new BatchNotAppliedError(batch, "EscrowCreate batch");
+  return { batch, escrows: escrowsFromBatch(p.spv, p.builder, milestones, batch.inners) };
+}
+
+/**
+ * True when a failed submit's outcome is unknown, i.e. the tx may still validate until its LastLedgerSequence:
+ * connection lost mid-submit, server history incomplete, or an unexpected (non-ledger) error. A validated result
+ * (tec*, a rolled-back Batch), a tem/tef/tel refusal and a local CloseValidationError are definite.
+ */
+export function isUncertainSubmitFailure(e: unknown): boolean {
+  if (e instanceof BatchNotAppliedError || e instanceof CloseValidationError) return false;
+  if (e instanceof XrplTxError) return e.engineResult === "connection_lost" || e.engineResult === "unknown_outcome";
+  return true;
+}
+
+/**
+ * Build the CloseLoanPartialError for a failure after LoanSet: `pending` = planned minus `created`, plus the context
+ * resumeEscrowCreation needs (planned escrows, mode, the Batch's hash / LastLedgerSequence / outcome, and whether a
+ * tx may still be in flight). Pure.
+ */
+export function closePartialError(p: {
+  loanId: string;
+  loanSetTx: string;
+  created: CreatedEscrowRef[];
+  failure: unknown;
+  context: Omit<ClosePartialContext, "batch" | "uncertain" | "inFlightUntilLedger">;
+  /** The escrow Batch, if one was signed (from onPrepared). */
+  prepared?: { hash: string; lastLedgerSequence: number };
+  /** Force the in-flight flag (e.g. false for an error thrown by a caller's hook). Default: isUncertainSubmitFailure. */
+  uncertain?: boolean;
+}): CloseLoanPartialError {
+  const done = new Set(p.created.map((c) => c.milestoneId));
+  const pending = p.context.planned.filter((e) => !done.has(e.milestoneId)).map((e) => e.milestoneId);
+  const b = p.failure instanceof BatchNotAppliedError ? p.failure.batch : undefined;
+  const uncertain = p.uncertain ?? isUncertainSubmitFailure(p.failure);
+  const batch: ClosePartialContext["batch"] =
+    b || p.prepared
+      ? {
+          ...(b?.tx.hash ?? p.prepared?.hash ? { hash: b?.tx.hash ?? p.prepared!.hash } : {}),
+          ...(p.prepared ? { lastLedgerSequence: p.prepared.lastLedgerSequence } : {}),
+          ...(b?.tx.ledgerIndex != null ? { ledgerIndex: b.tx.ledgerIndex } : {}),
+          outcome: b?.outcome ?? "unknown",
+        }
+      : undefined;
+  const inFlightUntilLedger = uncertain && !b ? p.prepared?.lastLedgerSequence : undefined;
+  return new CloseLoanPartialError(p.loanId, p.loanSetTx, p.created, pending, p.failure, {
+    ...p.context,
+    ...(batch ? { batch } : {}),
+    ...(uncertain && !b ? { uncertain: true } : {}),
+    ...(inFlightUntilLedger != null ? { inFlightUntilLedger } : {}),
+  });
 }
 
 /** Pure: the inner LoanSet for the full atomic close (Counterparty = SPV; its approval comes from BatchSigners). */
@@ -423,7 +627,7 @@ export interface CloseLoanAtomicResult {
   mode: AtomicCloseMode;
   loanId: string;
   /** "full": the inner LoanSet. "escrows": the standalone countersigned LoanSet. */
-  loanSetTx: { hash: string; explorerUrl: string; result: string };
+  loanSetTx: { hash: string; explorerUrl: string; result: string; ledgerIndex?: number };
   /** The Batch tx (outer). */
   batchTx: TxResult;
   escrows: AtomicEscrow[];
@@ -431,32 +635,67 @@ export interface CloseLoanAtomicResult {
 
 /**
  * Close the loan and create every milestone escrow with as much atomicity as the network allows (see file header).
+ * Every milestone passes validateEscrowSpecs (against ledger now) BEFORE the LoanSet. "escrows" mode: a failure after
+ * LoanSet → CloseLoanPartialError (loanId, pending milestones, Batch outcome), resumable with resumeEscrowCreation.
  */
 export async function closeLoanAtomic(p: CloseLoanAtomicParams): Promise<CloseLoanAtomicResult> {
   const mode = p.mode ?? "escrows";
   const spv = p.loan.borrower;
+  const now = await ledgerTime();
+  const milestones =
+    mode === "escrows"
+      ? validateEscrowSpecs(p.milestones, { min: BATCH_MIN_INNER, max: BATCH_MAX_INNER, now, what: "closeLoanAtomic" })
+      : validateEscrowSpecs(p.milestones, { min: 1, max: BATCH_MAX_INNER - 1, now, what: "closeLoanAtomic full" });
   if (mode === "escrows") {
     const loan = await loanSet({ ...p.loan, borrowerSig: { multisig: p.spvSigners } });
-    const { batch, escrows } = await createEscrowsAtomic({ spv, builder: p.builder, issuer: p.issuer, milestones: p.milestones, spvSigners: p.spvSigners });
-    return { mode, loanId: loan.loanId, loanSetTx: { hash: loan.tx.hash, explorerUrl: loan.tx.explorerUrl, result: loan.tx.result }, batchTx: batch.tx, escrows };
+    let prepared: { hash: string; lastLedgerSequence: number } | undefined;
+    let r: Awaited<ReturnType<typeof createEscrowsAtomic>>;
+    try {
+      r = await createEscrowsAtomic({ spv, builder: p.builder, issuer: p.issuer, milestones, spvSigners: p.spvSigners, onPrepared: (b) => (prepared = b) });
+    } catch (failure) {
+      const planned: PlannedEscrow[] = milestones.map((m, index) => ({ milestoneId: m.milestoneId, index, amount: m.amount, condition: m.condition, cancelAfter: m.cancelAfter }));
+      throw closePartialError({
+        loanId: loan.loanId,
+        loanSetTx: loan.tx.hash,
+        created: [],
+        failure,
+        context: {
+          spv,
+          builder: p.builder,
+          issuer: p.issuer,
+          escrowMode: "batch",
+          planned,
+          maturity: now + p.loan.paymentIntervalS * p.loan.paymentTotal,
+          ...(p.loan.originationFee ? { originationFee: p.loan.originationFee } : {}),
+        },
+        ...(prepared ? { prepared } : {}),
+      });
+    }
+    return {
+      mode,
+      loanId: loan.loanId,
+      loanSetTx: { hash: loan.tx.hash, explorerUrl: loan.tx.explorerUrl, result: loan.tx.result, ...(loan.tx.ledgerIndex != null ? { ledgerIndex: loan.tx.ledgerIndex } : {}) },
+      batchTx: r.batch.tx,
+      escrows: r.escrows,
+    };
   }
-  if (p.milestones.length < 1 || p.milestones.length > BATCH_MAX_INNER - 1) throw new Error(`closeLoanAtomic full: 1..${BATCH_MAX_INNER - 1} milestones`);
   const platform = p.loan.brokerOwner;
   const batch = await submitBatch({
     account: platform.classicAddress,
     outerSigner: { single: platform },
-    inners: [innerLoanSetTx(p.loan), ...p.milestones.map((m) => escrowCreateTx(spv, p.builder, p.issuer, m))],
+    inners: [innerLoanSetTx(p.loan), ...milestones.map((m) => escrowCreateTx(spv, p.builder, p.issuer, m))],
     batchSigners: { [spv]: p.spvSigners },
   });
-  assertAllApplied(batch, "LoanSet + EscrowCreate batch");
+  if (batch.outcome !== "all_applied") throw new BatchNotAppliedError(batch, "LoanSet + EscrowCreate batch");
   const loanInner = batch.inners[0]!;
-  const loanId = createdNodeId({ hash: loanInner.hash, explorerUrl: loanInner.explorerUrl, result: loanInner.result, tx: loanInner.tx ?? {}, meta: loanInner.meta ?? {} }, "Loan");
+  const loanId = createdNodeId(innerTxResult(loanInner), "Loan");
   if (!loanId) throw new Error(`inner LoanSet ${loanInner.hash}: no Loan node in metadata`);
   return {
     mode,
     loanId,
-    loanSetTx: { hash: loanInner.hash, explorerUrl: loanInner.explorerUrl, result: loanInner.result },
+    loanSetTx: { hash: loanInner.hash, explorerUrl: loanInner.explorerUrl, result: loanInner.result, ...(loanInner.ledgerIndex != null ? { ledgerIndex: loanInner.ledgerIndex } : {}) },
     batchTx: batch.tx,
-    escrows: toEscrows(spv, p.milestones, batch.inners),
+    escrows: escrowsFromBatch(spv, p.builder, milestones, batch.inners),
   };
 }
+
