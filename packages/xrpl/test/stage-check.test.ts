@@ -445,6 +445,7 @@ const WARN: { name: string; mut: (f: Fixture) => void; id: string; beat?: StageB
   { name: "A m1 expires inside the window", mut: (f) => (led(f, "A").escrows[0]!.CancelAfter = T + 1_800), id: "A.m1.release", beat: "D3", msg: /release before/ },
   { name: "A m2 expires inside the window (D4)", mut: (f) => (led(f, "A").escrows[1]!.CancelAfter = T + 1_800), id: "A.m2.locked", beat: "D4" },
   { name: "A m2 expires inside the window (D5)", mut: (f) => (led(f, "A").escrows[1]!.CancelAfter = T + 1_800), id: "A.m2.wrong_finish", beat: "D5", msg: /expires in 30 min: run the random-fulfillment try before/ },
+  { name: "A m3 CancelAfter inside the release margin + window", mut: (f) => (led(f, "A").escrows[2]!.CancelAfter = T + 1_800), id: "A.escrows", beat: "D2", msg: /A m3 CancelAfter in 30 min \(< 300 s release margin/ },
   { name: "A SPV holds liquid RLUSD", mut: (f) => (led(f, "A").spvRlusd = "9000"), id: "A.spv", beat: "D2", msg: /9000 RLUSD liquid/ },
   { name: "B stall escrow cancellable within the window", mut: (f) => (led(f, "B").escrows[1]!.CancelAfter = T + 600), id: "B.stall", beat: "D6", msg: /cancellable in 10 min/ },
   { name: "B payment due inside the window", mut: (f) => (led(f, "B").loan!.NextPaymentDueDate = T + 1_800), id: "B.refund", beat: "D6" },

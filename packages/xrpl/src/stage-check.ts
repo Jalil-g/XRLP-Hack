@@ -775,13 +775,20 @@ function projectA(c: Ctx, A: PrestageProject, la: StageProjectLedger) {
   if (!la.loan) add(c, "A.loan", "NO-GO", `A loan ${short(A.chain.loanId)} is not on the ledger`, ["D2", "D3", "D4", "D5"], { fix: stage("A") });
   else if (!(la.loan.PaymentRemaining ?? 0)) add(c, "A.loan", "NO-GO", "A loan is fully repaid: not a ready project", ["D2"], { fix: stage("A") });
   else add(c, "A.loan", "GO", `A loan ${toRlusd(la.loan.PrincipalOutstanding)} outstanding, ${la.loan.PaymentRemaining} payments left`, ["D2"]);
-  const states = A.escrows.map((e, i) => {
+  // Every A escrow open, and each CancelAfter beyond the release margin for the whole window (else: WARN).
+  const escrows = A.escrows.map((e, i) => {
     const n = la.escrows[i] ?? null;
-    return !n ? `${mLabel("A", e.index ?? i)} gone` : n.CancelAfter !== undefined && t > n.CancelAfter ? `${mLabel("A", e.index ?? i)} expired` : "open";
+    const label = mLabel("A", e.index ?? i);
+    const left = n?.CancelAfter === undefined ? Infinity : n.CancelAfter - t;
+    return { label, left, state: !n ? "gone" : left < 0 ? "expired" : left < RELEASE_MARGIN_S + c.o.windowS ? "soon" : "open" };
   });
-  const open = states.filter((s) => s === "open").length;
-  if (open === A.escrows.length) add(c, "A.escrows", "GO", `${open}/${A.escrows.length} escrows open`, ["D2"], { summary: "D2" });
-  else add(c, "A.escrows", "NO-GO", `A: ${open}/${A.escrows.length} escrows open (${states.filter((s) => s !== "open").join(", ")}; a rehearsal?)`, ["D2"], { fix: stage("A") });
+  const open = escrows.filter((x) => x.state === "open" || x.state === "soon").length;
+  const bad = escrows.filter((x) => x.state === "gone" || x.state === "expired");
+  const soon = escrows.filter((x) => x.state === "soon");
+  if (bad.length) add(c, "A.escrows", "NO-GO", `A: ${open}/${A.escrows.length} escrows open (${bad.map((x) => `${x.label} ${x.state}`).join(", ")}; a rehearsal?)`, ["D2"], { fix: stage("A") });
+  else if (soon.length) {
+    add(c, "A.escrows", "WARN", `A: ${soon.map((x) => `${x.label} CancelAfter in ${fmtDuration(x.left)}`).join(", ")} (< ${RELEASE_MARGIN_S} s release margin + the window)`, ["D2"], { fix: stage("A") });
+  } else add(c, "A.escrows", "GO", `${open}/${A.escrows.length} escrows open`, ["D2"], { summary: "D2" });
   if (la.spvRlusd === null) add(c, "A.spv", "WARN", `A SPV ${A.chain.spv} has no RLUSD line`, ["D2"], { fix: stage("A") });
   else if (micro(la.spvRlusd) <= micro(c.o.spvDustRlusd)) add(c, "A.spv", "GO", `SPV ${toRlusd(la.spvRlusd)} RLUSD liquid`, ["D2"], { summary: "D2" });
   else add(c, "A.spv", "WARN", `A SPV holds ${toRlusd(la.spvRlusd)} RLUSD liquid (the money map says ≈ 0)`, ["D2"], { fix: stage("A") });
