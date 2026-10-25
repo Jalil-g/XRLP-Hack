@@ -13,7 +13,7 @@ Sizes: **S** ≤ 1.5h · **M** 2–3h · **L** 4–5h.
 | **@Jalil-g** | `area:xrpl` | `packages/xrpl/**`: money path, credentials (3 roles), fee payment, private vault, bootstrap/prestage/demo scripts, `adapter.ts` = `LedgerPort` |
 | **@elmir132** | `area:verifier` | `packages/verifier/**`, `fixtures/**`: project verification, milestone test suite (checks + Claude), inspector matching, fixtures, `adapter.ts` = `VerifierPort` |
 | **@bri-yin** | `area:web` | `apps/web/**`: marketplace (verified projects), project detail with **checks panel**, invest, portfolio, builder onboarding (fee → verification), create project from SoV, `/demo` |
-| **@RoroDev2023** | `area:inspector` | `apps/inspector/**` (:3001) + `packages/attest-signer/**` (today `ledger-signer`): queue, **audit form**, signed audit submission, audit history; attestation signing (software key) |
+| **@RoroDev2023** | `area:inspector` | `apps/inspector/**` (:3001) + `packages/attest-signer/**`: queue, **audit form**, signed audit submission, audit history; attestation signing (software key) |
 | **@seanpatrickmay** | `area:core` | `packages/core/**` (orchestrator, **release service**, HTTP, keeper, store, adapters), `packages/shared/**` (contract), root/CI, `docs/05-api.md`, integration |
 | everyone | `area:pitch` | `docs/**`, `pitch/**` |
 
@@ -113,7 +113,7 @@ handoff comments on the issue with the `HANDOFF` template; PRs ≤ ~400 lines, t
 `size:S` `demo-critical` `checkpoint:T+6h`. Pure, table-tested: required vs optional checks per project type / risk tier / amount; `minConfidence` 0.7/0.8/0.9; `requiredAudits` 2 when amount ≥ `TWO_INSPECTOR_THRESHOLD` or `riskTier=high`.
 
 ### VER-07 · Verdict assembly + canonical `verdictHash`
-`size:S` `demo-critical` `checkpoint:T+6h`. Any required `fail` → `fail`; confidence < min → `needs_human`; else `pass`. `verdictHash` = sha256 of canonical JSON (sorted keys), exported for core's attestation. Snapshot tests. Replace the `'9f'.repeat(32)` placeholder in ledger-signer.
+`size:S` `demo-critical` `checkpoint:T+6h`. Any required `fail` → `fail`; confidence < min → `needs_human`; else `pass`. `verdictHash` = sha256 of canonical JSON (sorted keys), exported for core's attestation. Snapshot tests. (The `'9f'.repeat(32)` placeholder in ledger-signer was removed with the v1 `AccountSet` builder in INS-04.)
 
 ### VER-08 · Project verification: identity, feasibility, capability (AI-first)
 `size:L` `demo-critical` `checkpoint:T+14h`. `verifyProject(input)` → `ProjectVerification`: **identity** (licence active, insurance in force, entity match: mock registries labelled MOCK), **feasibility** (SoV sums to principal, line amounts within regional ranges from a mock cost table, permits/plans present, site geo resolves, timeline sane), **capability** (completed projects, open load, prior milestone pass rate, → `riskTier`). Any dimension `needs_human` → `inspectorPreVisitRequired=true`. Fixtures: Maple St (pass), one with expired insurance (fail), one with an SoV 40% over market (needs_human). Mock deterministic; live via Claude.
@@ -147,7 +147,7 @@ handoff comments on the issue with the `HANDOFF` template; PRs ≤ ~400 lines, t
 `size:M` `demo-critical` `checkpoint:T+14h`. Cards: **Verified** badge (link to verification report), funding bar, deadline countdown, principal, rate, builder credential badge. Filter by type. Polls 5s.
 
 ### WEB-03 · Project detail = the demo screen (with the **Milestone checks panel**)
-`size:L` `demo-critical` `checkpoint:T+14h`. SoV → milestone rail; per milestone a **checks panel styled like GitHub checks**: one row per check (icon, name, reason, evidence thumbnails, attestation link), inspector audit row with signer address + tx link, AI verdict row with confidence + hash link, outcome banner (Released / Failed / Needs human / Pending). Vault panel (phase, share price with "booked at close" tooltip, AssetsAvailable, redeem date), loan panel, timeline, money map. Polls 3s.
+`size:L` `demo-critical` `checkpoint:T+14h`. SoV → milestone rail; per milestone a **checks panel styled like GitHub checks**: one row per check (icon, name, reason, evidence thumbnails, attestation link), inspector audit row with signer address + tx link, AI verdict row with confidence + hash link, outcome banner (Released / Failed / Needs human / Pending). Vault panel (phase, share price with "rises as interest is repaid" tooltip, AssetsAvailable, redeem date), loan panel, timeline, money map. Polls 3s.
 
 ### WEB-04 · Checks panel + verdict components
 `size:M` `demo-critical` `checkpoint:T+6h`. `ChecksPanel`, `CheckRow`, `AuditRow`, `VerdictRow` from the shared types. `/dev/checks` renders pass, duplicate-photo fail, missing-audit fail, needs_human.

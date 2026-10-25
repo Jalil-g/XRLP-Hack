@@ -19,7 +19,7 @@ Read in order: `docs/00-overview.md` → `docs/decisions.md` (**Direction v2**) 
 | `packages/xrpl` | @Jalil-g | #1 | All ledger transactions, devnet bootstrap/demo, real LedgerPort adapter |
 | `packages/verifier` | @elmir132 | #2 | AI evidence checks; must work in `VERIFIER_MODE=mock`; real VerifierPort adapter |
 | `apps/web` | @bri-yin | #3 | Investor/builder UI + `/demo` control room; data only via `lib/api.ts` |
-| `apps/inspector`, `packages/attest-signer` (today `ledger-signer`, renamed in INS-04) | @RoroDev2023 | #4 | Inspector app: queue, audit form, **signed audit submission** with a software key. No release keys, no hardware wallet |
+| `apps/inspector`, `packages/attest-signer` | @RoroDev2023 | #4 | Inspector app: queue, audit form, **signed audit submission** with a software key. No release keys, no hardware wallet |
 | `packages/core`, `packages/shared`, root config | @seanpatrickmay | #5 | Orchestrator, HTTP routes, integration. `shared` = **the contract** → PR reviewed by Sean |
 | `docs/` | everyone | — | Ideas go in `docs/ideas/<short-name>.md` (one file per idea → no merge conflicts) |
 

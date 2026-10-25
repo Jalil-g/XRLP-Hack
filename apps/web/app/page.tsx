@@ -1,74 +1,82 @@
-import { BadgeCheck, Lock, ScanSearch, ShieldCheck, Unlock, Wallet } from "lucide-react";
+import Link from "next/link";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { ProjectCard } from "@/components/project-card";
-import { StatTile } from "@/components/stat-tile";
-import { getMarketplace } from "@/lib/api";
-import { BRAND, formatAmount } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
+import { Tag } from "@/components/ui/tag";
+import { api } from "@/lib/api";
+import { PROJECT_STATUS, PROJECT_TYPE } from "@/lib/display";
+import { BRAND, formatAmount, formatBps, formatDate, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default async function MarketplacePage() {
-  const { stats, projects } = await getMarketplace();
+export default async function ProjectsPage() {
+  const projects = await api.listProjects({ status: "verified" });
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-16">
       <AutoRefresh ms={5000} />
 
-      {/* Hero */}
-      <section className="relative overflow-hidden rounded-2xl border border-line bg-surface px-6 pt-12 pb-8 shadow-card sm:px-10">
-        <div className="bg-grid pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_at_top,black_30%,transparent_75%)]" aria-hidden />
-        <div className="relative max-w-3xl">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-brand-100 bg-brand-50 px-3 py-1 text-xs font-medium text-brand">
-            <ShieldCheck className="size-3.5" />
-            Milestone-verified construction lending on the XRP Ledger
-          </span>
-          <h1 className="mt-5 text-4xl leading-[1.08] font-semibold tracking-tight text-balance sm:text-5xl">{BRAND.tagline}</h1>
-          <p className="mt-5 max-w-2xl text-[17px] leading-relaxed text-ink-2">
-            Pool RLUSD into a project vault. Each construction stage is locked in its own on-chain escrow and released only after an AI
-            evidence check and a licensed inspector&apos;s signed approval.
-          </p>
-          <ol className="mt-7 flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-ink-2">
-            {[
-              { icon: Wallet, text: "Investors fund a vault" },
-              { icon: Lock, text: "Each stage locked in escrow" },
-              { icon: ScanSearch, text: "AI checks the evidence" },
-              { icon: BadgeCheck, text: "Inspector signs" },
-              { icon: Unlock, text: "Money moves" },
-            ].map(({ icon: Icon, text }, i) => (
-              <li key={text} className="flex items-center gap-2">
-                <span className="flex size-6 items-center justify-center rounded-full bg-subtle text-[11px] font-semibold text-muted">{i + 1}</span>
-                <Icon className="size-4 text-faint" />
-                {text}
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        <div className="relative mt-10 grid gap-4 sm:grid-cols-3">
-          <StatTile label="Committed by investors" value={formatAmount(stats.totalCommitted)} unit="RLUSD" icon={Wallet} hint={`${stats.activeProjects} active projects`} />
-          <StatTile label="Locked in milestone escrows" value={formatAmount(stats.lockedInEscrow)} unit="RLUSD" icon={Lock} hint="Payable only to the builder — or back" />
-          <StatTile
-            label="Released on verified proof"
-            value={formatAmount(stats.releasedOnProof)}
-            unit="RLUSD"
-            icon={BadgeCheck}
-            hint={`${stats.milestonesVerified} milestones verified & signed`}
-          />
-        </div>
-      </section>
+      <header className="max-w-[760px] pt-6">
+        <h1 className="text-display">{BRAND.line}</h1>
+        <p className="mt-4 text-body text-ink-2">
+          Investors fund verified projects. Each milestone&apos;s money waits in its own XRPL escrow and pays the builder only after the
+          milestone passes its checks: a licensed inspector&apos;s signed audit, plus automated and AI checks on the evidence.
+        </p>
+      </header>
 
       <section>
-        <div className="mb-4 flex items-end justify-between">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">Projects</h2>
-            <p className="text-[13px] text-muted">{stats.verifiedBuilders} builders verified with an on-chain VERIFIED_BUILDER credential.</p>
-          </div>
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="text-heading">Verified projects</h2>
+          <span className="text-caption text-ink-2">{projects.length} listed</span>
         </div>
-        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-          {projects.map((p) => (
-            <ProjectCard key={p.project.id} summary={p} />
-          ))}
-        </div>
+
+        {projects.length === 0 ? (
+          <p className="rounded-panel bg-band px-6 py-10 text-center text-small text-ink-2">No verified projects yet. Builders appear here once their project passes verification.</p>
+        ) : (
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="border-y border-line bg-band text-caption text-ink-2">
+                <th className="px-4 py-2.5 font-medium">Project</th>
+                <th className="px-4 py-2.5 font-medium">Builder</th>
+                <th className="w-[220px] px-4 py-2.5 font-medium">Raised</th>
+                <th className="px-4 py-2.5 text-right font-medium">Rate</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((p) => {
+                const pct = (toCents(p.raised) / Math.max(1, toCents(p.principal))) * 100;
+                const status = PROJECT_STATUS[p.status];
+                return (
+                  <tr key={p.id} className="group relative border-b border-line transition-colors duration-150 hover:bg-band/60">
+                    <td className="px-4 py-4">
+                      <Link href={`/projects/${p.id}`} className="text-body font-medium text-ink after:absolute after:inset-0 group-hover:text-link">
+                        {p.name}
+                      </Link>
+                      <div className="text-caption text-ink-2">
+                        {p.siteAddress.split(",").slice(1, 2).join("").trim() || p.siteAddress} · {PROJECT_TYPE[p.type]}
+                      </div>
+                    </td>
+                    <td className="px-4 py-4 text-small">
+                      {p.builderName}
+                      {p.builderVerified && <div className="text-caption text-pass">Verified builder</div>}
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="tabular text-small">
+                        {formatAmount(p.raised)} <span className="text-ink-2">of {formatAmount(p.principal)}</span>
+                      </div>
+                      <Progress value={pct} className="mt-2" label={`${Math.floor(pct)}% raised`} />
+                      {p.status === "funding" && <div className="mt-1.5 text-caption text-ink-2">Funding closes {formatDate(p.fundingDeadline)}</div>}
+                    </td>
+                    <td className="tabular px-4 py-4 text-right text-small">{p.interestRateBps !== undefined ? formatBps(p.interestRateBps) : "—"}</td>
+                    <td className="px-4 py-4">
+                      <Tag tone={status.tone}>{status.label}</Tag>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </section>
     </div>
   );
