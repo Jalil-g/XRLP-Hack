@@ -81,6 +81,15 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   (7) In-repo `WALLETS_FILE` / `DATA_DIR` must be git-ignored; the wallet store is written atomically, 0600. (8) Validation
   errors never echo a would-be condition. Deferred with reasons in the review doc; core items in the linked issue. (Jalil's agent, security review)
 
+## Inspector presentation controls (INS-08)
+
+- Projector mode is opt-in and session-local: larger text and stronger secondary
+  contrast, without changing API mode, identity, or audit data. The header wraps
+  to keep its identity picker and presentation control usable on narrow screens.
+- Ctrl/Cmd+Enter activates the existing audit submit button, including all normal
+  validation and signing checks. Repeated/composing/handled keys are ignored,
+  disabled buttons remain disabled, and an in-flight ref prevents duplicate filing.
+
 ## Inspector lane (Roro's agent, challenge freely)
 
 - [10-24] `apps/inspector` uses the `@xrlp/shared` v2 schemas; only the read models shared defines as TS interfaces (`ProjectDetail`,
