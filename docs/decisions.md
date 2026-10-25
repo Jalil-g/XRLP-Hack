@@ -69,6 +69,15 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Loan default (`src/default.ts`): `defaultLoan` / `impairLoan` / `unimpairLoan` = `LoanManage` by the platform (broker owner). A pure guard (`checkLoanManage`) mirrors rippled 3.4.1's checks in its order, and it runs on one validated ledger under the platform account lock, so nothing is submitted that the ledger would refuse. Devnet has fixCleanup3_4_0, so both boundaries are exclusive: default only when ledger time > `NextPaymentDueDate + GracePeriod`, impair only when > `NextPaymentDueDate`. A timing refusal throws `LoanManageTooSoonError`, a shared `TooSoonError` that adds `allowedAfter` for the keeper's retry; anything else throws `LoanManageRefusedError` (`ledger_error`). `defaultLoan` is idempotent: on an already-defaulted loan it returns the original tx via `Loan.PreviousTxnID` and submits nothing. The `loan_default` amount is DefaultAmount. Impair/unimpair emit **no** ChainEvent: shared has no impairment kind, and `loan_default` would claim a default that hasn't happened (`loan_impaired` proposed on #53, with `LedgerPort.defaultLoan`). (Jalil's agent, XRPL-15)
 - [10-25] Devnet vaults are **cash basis** (`Vault.LEVersion 1`, LendingProtocolV1_1; the patch is reserved as XLS-66.1.1 and unpublished). A default writes off `PrincipalOutstanding` only, `DebtTotal` is principal only, and with our 10% / 100% rates **DefaultCovered = 10% of DebtTotal at default time**. Devnet run: 1000 defaulted, cover returned 100 (= `expectedDefaultCovered`), vault loss 900, share price 1 → 0.1; the leftover cover (10.000043) stays with the platform. With 600 repaid first: 400.00019 defaulted, cover 40.000019025767 (rounded up at LoanScale, = expected), share price 1 → 0.64. The stall path holds: refunds are repaid first, then the cover pays, then investors absorb the rest. Note that repaying first also shrinks the cover the default can draw. Protocol-notes §3c (Jalil's agent, XRPL-15)
 
+## Inspector presentation controls (INS-08)
+
+- Projector mode is opt-in and session-local: larger text and stronger secondary
+  contrast, without changing API mode, identity, or audit data. The header wraps
+  to keep its identity picker and presentation control usable on narrow screens.
+- Ctrl/Cmd+Enter activates the existing audit submit button, including all normal
+  validation and signing checks. Repeated/composing/handled keys are ignored,
+  disabled buttons remain disabled, and an in-flight ref prevents duplicate filing.
+
 ## Inspector lane (Roro's agent, challenge freely)
 
 - [10-24] `apps/inspector` uses the `@xrlp/shared` v2 schemas; only the read models shared defines as TS interfaces (`ProjectDetail`,
@@ -130,15 +139,6 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
-
-## Inspector presentation controls (INS-08)
-
-- Projector mode is opt-in and session-local: larger text and stronger secondary
-  contrast, without changing API mode, identity, or audit data. The header wraps
-  to keep its identity picker and presentation control usable on narrow screens.
-- Ctrl/Cmd+Enter activates the existing audit submit button, including all normal
-  validation and signing checks. Repeated/composing/handled keys are ignored,
-  disabled buttons remain disabled, and an in-flight ref prevents duplicate filing.
 
 ## Open
 
