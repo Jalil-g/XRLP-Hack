@@ -106,6 +106,36 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   supply yet), fed with metadata extracted from uploaded bytes on devnet; `VERIFIER_MODE=live` / `CORE_VERIFIER=verifier` → `ClaudeVerifierAdapter`.
   Devnet cover = 11% of principal (ledger minimum is 10% of principal + interest). A self-addressed attestation (platform → platform,
   e.g. inspector assignment before an SPV exists) is a memo-only `AccountSet`: a Payment to yourself is `temREDUNDANT`.
+- [10-25] Submission package `docs/submission/` cites only tx hashes already published in our docs or PR bodies: the v2 proof (#126) first,
+  then Batch from protocol-notes §2d / §2e, LoanManage from §3c, the CLI demo's batch close from `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`,
+  and the platform try-steal / inspector-app signer / adapter private vault from #125 / #128 / #121.
+  `node docs/submission/check-links.mjs --devnet` re-checks every link (published, validated, result = link text): 64/64 green on 10-25,
+  80/80 after XRPL-13b / XRPL-15 / XRPL-11 merged. (Jalil's agent, PITCH-04)
+- [10-25] PITCH-04 wording calls: `LoanManage` moved from "not used" into the primitives table once XRPL-15 (#132) proved it on devnet;
+  the v2 run's `demo.ts` attestation rows aren't cited (deprecated `xrlp/attestation/v1` memo); the v2 demo's `EscrowFinish` isn't called a suite-gated release
+  (it was sent from `platform`, before #125 made `releaseService` the default). (Jalil's agent, PITCH-04)
+
+- [10-25] Prestage (XRPL-11) = three fresh projects per run, pipelined C → B → A (C first: it must wait for its RedemptionDate). A: 6 × 30-day loan, escrow CancelAfter +30/60/90 d. B: M1 released, **M2 (12k) is the stall escrow** (CancelAfter past before the file is written), 12 × 30-day loan so the refund LoanPay is on time and ≥ one periodic payment. C: 2 × 240 s loan (XRPL-06 needs PaymentTotal ≥ 2 and CancelAfter < maturity: C's escrows cancel at +360 s), all escrows released, builder → SPV → two LoanPays pay it off, then wait for RedemptionDate. `--only A,B` re-stages a subset and keeps the rest of `prestage.json` (a rehearsal consumes A's M1/M2 and B's expired escrow; C stays valid). (Jalil's agent, XRPL-11)
+- [10-25] `.data/prestage.json` shape = `PrestageFile` in `packages/xrpl/src/prestage-types.ts` (exported, with `parsePrestageFile`); preimages only in `.data/prestage-preimages.json` / `.data/demo-preimages.json` (mode 600, never printed, old entries kept); the writer validates that the file has no preimage/fulfillment/seed field. (Jalil's agent, XRPL-11)
+- [10-25] Scripts make every project vault **private** (tfVaultPrivate + platform DomainID + non-transferable shares) by composing `setupProjectOnChain`'s steps in `scripts/demo-lib.ts` (`setupProjectOnChain` got `domainId` / `nonTransferableShares` in XRPL-10, but it fixes SubscriptionDate before the SPV's txs, which would eat the scripts' 60 s deposit window; switch once it can anchor on ledger time at VaultCreate). The CLI demo dropped the `DEMO_SPV_MODE=single` master-key fallback (XRPL-01 proved multisig LoanSet). Scripts delete an old investor3 `KYC_INVESTOR` credential so the `tecNO_AUTH` beat works with v1 wallet files. (Jalil's agent, XRPL-11)
+- [10-25] On merging XRPL-11 with XRPL-13b/15: the demo/prestage close uses the default batch mode (one `tfAllOrNothing` Batch row in the tx table, then each milestone's inner EscrowCreate), and the deprecated `generateMilestoneCondition` / `MilestoneCondition` exports are removed from `@xrlp/xrpl` (no users left; core has its own `packages/core/src/conditions.ts`) (Jalil's agent M5, integration)
+
+## Pitch review (Jalil's agent, PITCH-09)
+
+- [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected
+  07 fact (name decided; slide 8 says the verification fee scales with project size). Factual errors in the demo beats (08 §3,
+  `docs/04-demo-script.md`) and positioning changes (hook "impossible", D5 "us trying to release it anyway") go to their owners on #72,
+  not edited here. (Jalil's agent, PITCH-09)
+- [10-25] Treated as facts, not positioning: "AI judgement can only turn a green into `needs_human`" was wrong (a red required AI check fails
+  the milestone: verifier `decide()`, 03 §Release), and so was "`AssetsMaximum` mitigates under-funding" (it only caps over-funding). Left as
+  suggestions: "funding-portal status" (funding portals are Reg CF only; counsel words it), "most fraud" (unsourced), inspection pass-through
+  counted as revenue in the business illustration. (Jalil's agent, PITCH-09)
+- [10-25] New disclosure in `docs/pitch-qa.md` Q2: the platform, as vault owner = loan broker, picks the `LoanSet` borrower, and nothing
+  on-ledger binds a vault to its project account. The answer is visibility (SPV + signer list exist from lock-terms, any other counterparty is
+  public at once) until a broker co-signed by the trustee exists. Proposed slide-6 row on #72, not applied. (Jalil's agent, PITCH-09)
+- [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
+  lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
+  confirms on #72. (Jalil's agent, PITCH-09)
 
 ## Open
 
