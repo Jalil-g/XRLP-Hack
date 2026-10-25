@@ -68,11 +68,12 @@ export function Properties({ items, labelWidth = 160, className }: { items: { la
 }
 
 /** Empty / not-yet state that says what happens next. */
-export function Empty({ title, children, className }: { title: string; children?: React.ReactNode; className?: string }) {
+export function Empty({ title, children, action, className }: { title: string; children?: React.ReactNode; action?: React.ReactNode; className?: string }) {
   return (
     <div className={cn("rounded-panel bg-band px-6 py-8 text-center", className)}>
       <p className="text-body font-medium text-ink">{title}</p>
       {children && <div className="mx-auto mt-1 max-w-[52ch] text-small text-ink-2">{children}</div>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }

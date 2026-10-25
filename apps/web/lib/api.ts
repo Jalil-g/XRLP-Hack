@@ -36,11 +36,12 @@ import type {
   VerifyProjectResult,
   XrplAddress,
 } from "./contract";
+import { isClientErrorCode, type ClientErrorCode } from "./error-feedback";
 
 export const API_MODE: "mock" | "http" = process.env.NEXT_PUBLIC_API_MODE === "http" ? "http" : "mock";
 
 /** Client-side codes on top of the contract's ErrorCode. */
-export type ClientErrorCode = ErrorCode | "unreachable" | "unknown";
+export type { ClientErrorCode } from "./error-feedback";
 
 export class ApiError extends Error {
   constructor(
@@ -55,8 +56,14 @@ export class ApiError extends Error {
   }
 
   static fromBody(body: unknown, status: number): ApiError {
-    const e = (body as Partial<ApiErrorBody> | undefined)?.error;
-    if (e && typeof e.code === "string") return new ApiError(e.code, e.message ?? e.code, status, e.txResult, e.txHash);
+    const e = body && typeof body === "object" ? (body as { error?: unknown }).error : undefined;
+    if (e && typeof e === "object") {
+      const value = e as Record<string, unknown>;
+      const code = isClientErrorCode(value.code) ? value.code : "unknown";
+      return new ApiError(code, typeof value.message === "string" ? value.message : `Request failed (${status})`, status,
+        typeof value.txResult === "string" ? value.txResult : undefined,
+        typeof value.txHash === "string" ? value.txHash : undefined);
+    }
     return new ApiError("unknown", `Request failed (${status})`, status);
   }
 
