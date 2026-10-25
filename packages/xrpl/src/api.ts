@@ -106,6 +106,10 @@ export interface SetupProjectOptions {
   lockSpv?: boolean;
   /** SPV signer addresses. Pass the project's builder + assigned inspector; defaults come from the demo roles (builder, inspector1). */
   spvSigners?: Partial<SpvSigners>;
+  /** XRPL-10: private vault gated by this PermissionedDomain (compliance.ts createDomain). Default: public vault. */
+  domainId?: string;
+  /** XRPL-10: tfVaultShareNonTransferable (no secondary market for shares). Default false. */
+  nonTransferableShares?: boolean;
 }
 
 export interface ProjectChainSetup {
@@ -189,6 +193,8 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
     assetsMaximum: project.terms.principal,
     loanSchedule: schedule,
     data: `xrlp:${project.id}`,
+    ...(opts.domainId ? { domainId: opts.domainId } : {}),
+    ...(opts.nonTransferableShares ? { nonTransferableShares: true } : {}),
   });
   txs.vaultCreate = vault.tx;
   events.push(toChainEvent(vault.tx, { projectId: project.id, kind: "vault_created", actor: w.platform.classicAddress }));

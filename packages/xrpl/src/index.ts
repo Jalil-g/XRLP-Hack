@@ -137,3 +137,8 @@ export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErr
 export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
 export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
 export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
+// XRPL-10: shared LedgerPort adapter (core: LEDGER_MODE=devnet) + its pure mapping helpers
+export { XrplLedgerAdapter } from "./adapter.ts";
+export type { XrplLedgerAdapterOptions } from "./adapter.ts";
+export { XrplLedgerError, toLedgerError, apiCodeOf, toPortTx, tecToPortTx, pickQuorumSigners, validateCloseInputs, repayMode, toEscrowSnapshot } from "./adapter-map.ts";
+export type { CloseInputCheck } from "./adapter-map.ts";
