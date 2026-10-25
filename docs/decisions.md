@@ -1,5 +1,12 @@
 # Decisions log
 
+## Adopted presentation decision — 2026-10-25
+
+User confirmed one three-minute total slot, Apple/Notion simplicity, guided flows with review before signing/paying, and a prerecorded demo. The authoritative plan is [08-pitch-storyline.md](08-pitch-storyline.md): six slides, 8/22/15/15/100/10 seconds, 170 seconds content plus 10 seconds reserve. The demo shows one release and one failed hold. Slide 3 states AI/inspector/XRPL responsibilities; slide 6 closes with fees, one construction-lending pilot ask, and thanks.
+
+Use [deck guide](ideas/pitch-3min-style-guide.md), [Claude PowerPoint prompts](ideas/pitch-3min-claude-prompts.md), [recording script](04-demo-script.md), and [shared frontend direction](ideas/shared-frontend-style.md). Finished deck/video remain to be produced. Historical entries below retain their context; old eight-slide numbering, live-stage beats, and the 3:00 + 2:00 assumption are superseded.
+
+
 Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 ## Decided (team)
@@ -28,7 +35,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] **Release = milestone test suite.** Like a GitHub release: a licensed inspector audits the site and files a signed report; the AI runs
   the suite (deterministic checks + judgement) over builder evidence + inspector audit; all required checks pass → the platform's release
   service finishes the escrow. Inspectors do **not** hold a release key. `needs_human` → platform operator decides with a signed reason. (Jalil)
-- [10-24] **Preimages are held by core's release service** (unique per escrow, encrypted at rest), disclosed on slide 6. Ledger enforces
+- [10-24] **Preimages are held by core's release service** (unique per escrow, encrypted at rest), disclosed on slide 3 and in Q&A. Ledger enforces
   destination + expiry; the suite + on-chain attestations make release timing auditable. Smart Escrows (XLS-100) = roadmap. (Jalil)
 - [10-24] **Per-project verification fee** paid by the builder in RLUSD on-chain; AI-first verification of builder identity, project feasibility
   and builder capability; inspectors only when the AI escalates (`needs_human` → pre-construction site visit). `VERIFIED_BUILDER` on first pass. (Jalil)
@@ -183,7 +190,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] New disclosure in `docs/pitch-qa.md` Q2: the platform, as vault owner = loan broker, picks the `LoanSet` borrower, and nothing
   on-ledger binds a vault to its project account. The answer is visibility (SPV + signer list exist from lock-terms, any other counterparty is
   public at once) until a broker co-signed by the trustee exists. Proposed slide-6 row on #72, not applied. (Jalil's agent, PITCH-09)
-- [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
+- [10-25, SUPERSEDED by adopted presentation decision above] Timing assumed a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
 

@@ -1,5 +1,7 @@
 # Idea: Design review — architecture flaws, pitch holes, ticket deltas (2026-10-24, T+0)
 
+> Historical design critique. Presentation structure and timing are superseded by the [adopted six-slide pitch](../08-pitch-storyline.md) and [deck guide](pitch-3min-style-guide.md). Retain technical concerns as review context.
+
 - **Author / agent:** Jalil's agent (Claude), with two Opus review passes over the five `scaffold/*` branches.
 - **Problem it addresses:** judges will attack the trust model and the drift between what we *say* and what the code *does*.
 - **What it is:** findings + the honest line for each + concrete ticket deltas. No code was changed.
