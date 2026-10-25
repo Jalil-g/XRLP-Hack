@@ -33,6 +33,8 @@ import {
   type Verdict,
   type VerifierPort,
   type InspectorAssignment,
+  type LoanSnapshot,
+  type VaultSnapshot,
 } from "@xrlp/shared";
 import { z } from "zod";
 import type { AuditReportInput, CoreApi, DemoParty, DemoSeed, EvidenceUpload, KeeperIssue, KeeperTickResult, ReleaseServicePort, StoredFile } from "./api-surface.ts";
@@ -364,8 +366,31 @@ export class CoreService implements CoreApi {
       const c = d.checks[m.id];
       if (c && c.outcome === "pending" && c.required.length === 0) c.suite = [...this.verifier.policyFor(d.project, m).requiredChecks];
     }
-    const balances = await this.liveBalances(d.project.chain.spv, d.builder.address);
-    return balances ? { ...d, balances } : d;
+    const [balances, live] = await Promise.all([this.liveBalances(d.project.chain.spv, d.builder.address), this.liveSnapshots(d.project)]);
+    const out: ProjectDetail = { ...d, ...(live.vault ? { vault: live.vault } : {}), ...(live.loan ? { loan: live.loan } : {}) };
+    return balances ? { ...out, balances } : out;
+  }
+
+  /**
+   * Live mode: the vault + loan as the ledger reports them. Core's own book (read-models) recognises the loan's full
+   * interest at LoanSet, while an XRPL vault stays at principal until LoanPay lands (decisions.md "Open: simulated NAV").
+   * Best effort like liveBalances: a slow or failing read falls back to the computed snapshot. Fake mode: {}.
+   */
+  private async liveSnapshots(p: Project): Promise<{ vault?: VaultSnapshot; loan?: LoanSnapshot }> {
+    if (this.ledger.mode === "fake") return {};
+    const { vaultId, loanId } = p.chain;
+    if (!vaultId && !loanId) return {};
+    let timer: Parameters<typeof clearTimeout>[0];
+    const timeout = new Promise<{}>((r) => (timer = setTimeout(() => r({}), 2000)));
+    const read = Promise.all([
+      vaultId ? this.ledger.getVaultSnapshot({ vaultId }).catch(() => undefined) : undefined,
+      loanId ? this.ledger.getLoanSnapshot({ loanId }).catch(() => undefined) : undefined,
+    ]).then(([vault, loan]) => ({ ...(vault ? { vault } : {}), ...(loan ? { loan } : {}) }));
+    try {
+      return await Promise.race([read, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** SPV + builder RLUSD, best effort: a slow or failing ledger read never breaks the project page. */
@@ -416,8 +441,25 @@ export class CoreService implements CoreApi {
   inspectorQueue(address: XrplAddress): Promise<InspectorTask[]> {
     return this.read((db) => inspectorQueue(db, address));
   }
-  portfolio(investor: XrplAddress): Promise<PortfolioPosition[]> {
-    return this.read((db) => portfolio(db, investor, this.now()));
+  async portfolio(investor: XrplAddress): Promise<PortfolioPosition[]> {
+    const rows = await this.read((db) =>
+      portfolio(db, investor, this.now()).map((pos) => {
+        const p = getProjectOrThrow(db, pos.projectId);
+        return { pos, p, sharesOutstanding: investorTotals(db, p, investor).sharesOutstanding };
+      }),
+    );
+    // Live mode: value = this investor's pro-rata slice of the ledger's AssetsTotal (see liveSnapshots).
+    return Promise.all(
+      rows.map(async ({ pos, p, sharesOutstanding }) => {
+        const vault = (await this.liveSnapshots({ ...p, chain: { ...p.chain, loanId: undefined } })).vault;
+        if (!vault || sharesOutstanding <= 0n) return pos;
+        try {
+          return { ...pos, value: fromMicro((BigInt(pos.shares) * toMicro(vault.assetsTotal)) / sharesOutstanding) };
+        } catch {
+          return pos; // unparseable ledger amount: keep the computed value
+        }
+      }),
+    );
   }
 
   // ---------- route 3 ----------
