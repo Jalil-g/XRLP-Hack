@@ -190,6 +190,25 @@ export {
   TF_ALL_OR_NOTHING,
 } from "./batch.ts";
 export type { AtomicMilestone, AtomicEscrow, AtomicCloseMode, CloseLoanAtomicParams, CloseLoanAtomicResult, BatchResult, InnerResult, SubmitBatchParams } from "./batch.ts";
+// XRPL-07: finish / cancel / repay / withdraw
+export { builderPayToSpv, tryFinishWithWrongFulfillment } from "./api.ts";
+export {
+  finishEscrow,
+  cancelEscrow,
+  finishWithWrongFulfillment,
+  getEscrowAtLedger,
+  cancelReadiness,
+  escrowAmountFromMeta,
+  wrongFinishBlockers,
+  wrongFulfillmentFor,
+  fetchValidatedTx,
+  FINISH_LLS_MARGIN,
+  WRONG_FINISH_MIN_CANCEL_S,
+} from "./escrow.ts";
+export type { FinishEscrowParams, CancelReadiness, EscrowTiming } from "./escrow.ts";
+export { loanPayMultisig, loanPayFlags, planLoanPayment, ceilMicro, LoanPayAmountError, LSF_LOAN_OVERPAYMENT } from "./loan.ts";
+export type { LoanPayMode, LoanPayPlan } from "./loan.ts";
+export { withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
 // XRPL-11: .data/prestage.json contract (read by core, CORE-07). Preimages live in a separate file, never here.
 export { PRESTAGE_VERSION, PRESTAGE_FILE, PRESTAGE_PREIMAGES_FILE, PRESTAGE_KEYS, parsePrestageFile, prestageVaultDates } from "./prestage-types.ts";
 export type {

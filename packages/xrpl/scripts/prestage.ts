@@ -262,9 +262,9 @@ async function stageC(s: Staged) {
   const short = Math.ceil((due - Number(snap.spvRlusd)) * 100) / 100 + 1;
   if (short > 0) {
     await ensureRlusd(log, "builder", Math.ceil(short) + 1_000);
-    await builderPayToSpv(log, project.chain.spv!, short.toFixed(2));
+    await builderPayToSpv(log, project, short.toFixed(2));
   }
-  for (let i = 1; i <= total; i++) await spvLoanPay(log, project, { label: `repayment ${i} of ${total}` });
+  for (let i = 1; i <= total; i++) await spvLoanPay(log, project, { source: "builder", label: `repayment ${i} of ${total}` });
   const after = await snapshot(project);
   if (!after.loan || after.loan.paymentRemaining !== 0) {
     throw new Error(`C: loan not paid off after LoanPay (paymentRemaining=${after.loan?.paymentRemaining}, totalOutstanding=${after.loan?.totalValueOutstanding})`);

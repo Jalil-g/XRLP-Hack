@@ -1,6 +1,6 @@
 # Idea: Inspector approvals signed on a Ledger device (Ledger $10k bounty)
 
-> **Status 2026-10-24 (direction v2): parked.** No hardware-wallet work this hackathon. `packages/ledger-signer` keeps `SoftwareSigner` for inspector audit attestations (INS-04 v2). Everything below is reference only.
+> **Status 2026-10-24 (direction v2): parked.** No hardware-wallet work this hackathon. `packages/ledger-signer` became `packages/attest-signer` in INS-04: it keeps `SoftwareSigner` for inspector audit attestations, and the device code (`src/ledger.ts`, Speculos smoke) is gone from main but kept in git history. Everything below is reference only.
 
 - **Author / agent:** Sean's Claude (ledger spike, 2026-10-24)
 - **Problem it addresses:** `docs/01-problem.md` — fraud/collusion at draw release. A human inspector is the

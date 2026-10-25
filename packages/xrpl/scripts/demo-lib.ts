@@ -1,17 +1,25 @@
 // XRPL-11: shared building blocks for scripts/demo.ts (CLI backup of the live demo) and scripts/prestage.ts (Projects A/B/C).
 // Script-only code: composes the package API, prints narration + a tx table. Every tx is logged with its explorer link.
 //
-// Call sites that change when XRPL-07 (#125) merges are marked `// after XRPL-07 merge:` and isolated here,
-// so switching is a one-function edit.
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type { ChainEvent, Project } from "@xrlp/shared";
 import { explorerTxUrl } from "@xrlp/shared";
 import { rippleTimeToISOTime, type Wallet } from "xrpl";
-import { closeLoanAndCreateEscrows, releaseMilestone, repayLoan, spvSignersFor, type CloseLoanResult, type MilestoneEscrowInfo, type ProjectChainSetup } from "../src/api.ts";
+import {
+  builderPayToSpv as apiBuilderPayToSpv,
+  closeLoanAndCreateEscrows,
+  releaseMilestone,
+  repayLoan,
+  spvSignersFor,
+  tryFinishWithWrongFulfillment,
+  type CloseLoanResult,
+  type MilestoneEscrowInfo,
+  type ProjectChainSetup,
+} from "../src/api.ts";
 import { prepareAttestTx, sha256Hex, type AttestMemo } from "../src/attest.ts";
-import { ledgerTime, signAndSubmit, XrplTxError, type TxResult } from "../src/client.ts";
+import { ledgerTime, XrplTxError, type TxResult } from "../src/client.ts";
 import { attest, createDomain, grantCredential, payVerificationFee, submitSignedBlob, VERIFICATION_FEE_RLUSD } from "../src/compliance.ts";
 import { conditionFromPreimage, fulfillmentFromPreimage } from "../src/condition.ts";
 import { config, REPO_ROOT } from "../src/config.ts";
@@ -21,7 +29,7 @@ import { COVER_RATE_LIQUIDATION, COVER_RATE_MINIMUM, defaultCoverDeposit, expect
 import { createLoanBroker, depositBrokerCover } from "../src/loan.ts";
 import { preflightFinish, type PreflightResult } from "../src/preflight.ts";
 import { getEscrow, getLoanSnapshot, getVaultSnapshot } from "../src/reads.ts";
-import { payRlusd, rlusdBalance, topUpRlusd } from "../src/rlusd.ts";
+import { rlusdBalance, topUpRlusd } from "../src/rlusd.ts";
 import { createSpvAccount, lockSpv, type SpvSigners } from "../src/spv.ts";
 import { createVault, depositToVaultTx } from "../src/vault.ts";
 import { loadWallets, rememberSpv, type DemoWallets, type WalletRole } from "../src/wallets.ts";
@@ -82,10 +90,10 @@ export class TxLog {
   }
 
   /** Record an on-ledger failure we wanted to show (the ledger says no). */
-  expectedFailure(step: string, txType: string, e: XrplTxError) {
-    const hash = e.hash ?? "";
-    this.rows.push({ beat: this.beat, step, type: txType, result: e.engineResult, url: hash ? explorerTxUrl(hash) : "(not on ledger)", hash, expected: true });
-    console.log(`${this.prefix}  ✗ ${step.padEnd(52)} ${e.engineResult} (expected) ${hash ? explorerTxUrl(hash) : ""}`);
+  expectedFailure(step: string, txType: string, e: XrplTxError | TxResult) {
+    const [result, hash] = e instanceof XrplTxError ? [e.engineResult, e.hash ?? ""] : [e.result, e.hash];
+    this.rows.push({ beat: this.beat, step, type: txType, result, url: hash ? explorerTxUrl(hash) : "(not on ledger)", hash, expected: true });
+    console.log(`${this.prefix}  ✗ ${step.padEnd(52)} ${result} (expected) ${hash ? explorerTxUrl(hash) : ""}`);
   }
 
   asPrestageTxs(): PrestageTx[] {
@@ -462,48 +470,39 @@ export async function releaseWithSuite(
     });
     log.rec(`attest release (releaseService: ${suite.passed.length} checks green)`, rel.tx);
   }
-  // after XRPL-07 merge: releaseMilestone's default submitter is releaseService.
-  const fin = await releaseMilestone({ projectId: project.id, milestoneId: esc.milestoneId, escrow: esc.escrow, fulfillment, amount: esc.amount, submitter: "releaseService" });
+  // Submitted by releaseService (default); preflights again inside (destination pinned to the builder).
+  const fin = await releaseMilestone({ projectId: project.id, milestoneId: esc.milestoneId, escrow: esc.escrow, fulfillment, amount: esc.amount, destination: w.builder.classicAddress });
   log.rec(`EscrowFinish ${esc.milestoneId.split("-").slice(-2).join("-")} ${esc.amount} -> builder`, fin.tx);
   return { preflight: pf, finish: fin.tx, event: fin.event };
 }
 
 /**
- * "Ledger says no": the platform submits EscrowFinish with RANDOM bytes (never reads the preimage store).
- * Expected on-ledger tecCRYPTOCONDITION_ERROR; returns the XrplTxError instead of throwing.
- * after XRPL-07 merge: tryFinishWithWrongFulfillment(...).
+ * "Ledger says no": the platform submits EscrowFinish with RANDOM bytes (XRPL-07 tryFinishWithWrongFulfillment; never
+ * reads the preimage store). Expected on-ledger tecCRYPTOCONDITION_ERROR; throws if anything else happens.
  */
-export async function tryWrongFulfillment(log: TxLog, esc: MilestoneEscrowInfo): Promise<XrplTxError> {
-  const w = loadWallets();
-  const wrong = fulfillmentFromPreimage(randomBytes(32));
-  try {
-    const tx = await signAndSubmit(w.platform, {
-      TransactionType: "EscrowFinish",
-      Account: w.platform.classicAddress,
-      Owner: esc.owner,
-      OfferSequence: esc.offerSequence,
-      Condition: esc.condition,
-      Fulfillment: wrong,
-    });
-    throw new Error(`EscrowFinish with a random fulfillment SUCCEEDED?! ${tx.explorerUrl}`);
-  } catch (e) {
-    if (e instanceof XrplTxError && e.engineResult === "tecCRYPTOCONDITION_ERROR") {
-      log.expectedFailure(`EscrowFinish ${esc.milestoneId.split("-").slice(-2).join("-")} with random bytes (platform key)`, "EscrowFinish", e);
-      return e;
-    }
-    throw e;
-  }
+export async function tryWrongFulfillment(log: TxLog, project: Project, esc: MilestoneEscrowInfo): Promise<TxResult> {
+  const r = await tryFinishWithWrongFulfillment({ projectId: project.id, milestoneId: esc.milestoneId, owner: esc.owner, offerSequence: esc.offerSequence, condition: esc.condition });
+  if (r.tx.result !== "tecCRYPTOCONDITION_ERROR") throw new Error(`EscrowFinish with a random fulfillment returned ${r.tx.result} (expected tecCRYPTOCONDITION_ERROR) ${r.tx.explorerUrl}`);
+  log.expectedFailure(`EscrowFinish ${esc.milestoneId.split("-").slice(-2).join("-")} with random bytes (platform key)`, "EscrowFinish", r.tx);
+  return r.tx;
 }
 
-/** builder -> SPV RLUSD (repayment funds). after XRPL-07 merge: builderPayToSpv(...). */
-export async function builderPayToSpv(log: TxLog, spv: string, amount: string): Promise<TxResult> {
-  const w = loadWallets();
-  return log.rec(`Payment builder -> SPV ${amount} (repayment funds)`, await payRlusd(w.builder, spv, w.issuer.classicAddress, amount))!;
+/** builder -> SPV RLUSD (repayment funds), XRPL-07 builderPayToSpv. */
+export async function builderPayToSpv(log: TxLog, project: Project, amount: string): Promise<TxResult> {
+  const r = await apiBuilderPayToSpv({ projectId: project.id, spv: project.chain.spv!, amount });
+  return log.rec(`Payment builder -> SPV ${amount} (repayment funds)`, r.tx)!;
 }
 
-/** SPV LoanPay (multisig). after XRPL-07 merge: repayLoan({ ..., source }) (source = "escrow_refund" | "builder"). */
-export async function spvLoanPay(log: TxLog, project: Project, o: { amount?: string; mode?: "regular" | "overpayment"; label: string }) {
-  const r = await repayLoan({ projectId: project.id, spv: project.chain.spv!, loanId: project.chain.loanId!, ...(o.amount ? { amount: o.amount } : {}), ...(o.mode ? { mode: o.mode } : {}) });
+/** SPV LoanPay (multisig), XRPL-07 repayLoan. `amount` default = one periodic payment. */
+export async function spvLoanPay(log: TxLog, project: Project, o: { amount?: string; mode?: "regular" | "overpayment"; source: "builder" | "escrow_refund"; label: string }) {
+  const r = await repayLoan({
+    projectId: project.id,
+    spv: project.chain.spv!,
+    loanId: project.chain.loanId!,
+    source: o.source,
+    ...(o.amount ? { amount: o.amount } : {}),
+    ...(o.mode ? { mode: o.mode } : {}),
+  });
   log.rec(`LoanPay ${r.amount} ${r.mode} (${o.label})`, r.tx);
   return r;
 }

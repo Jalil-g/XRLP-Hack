@@ -27,7 +27,7 @@ Port interfaces live in packages/shared/src/ports.ts.
   `unsafe_release` = pre-reveal safety refused to submit a finish (no trust line, escrow gone, past `CancelAfter`).
 - Demo identity: no auth. Requests carry `actor: XrplAddress` where a role matters. Core holds demo keys for platform, releaseService,
   trustee, aiAgent, investors, builder **and the inspectors' software keys** (inspector attestations are signed in the inspector
-  app via `@xrlp/attest-signer` `SoftwareSigner` (package today named `ledger-signer`; INS-04 renames it) when `signedTxBlob` is sent, otherwise core signs with the inspector's demo key).
+  app via `@xrlp/attest-signer` `SoftwareSigner` when `signedTxBlob` is sent, otherwise core signs with the inspector's demo key).
 
 ## 2. HTTP routes
 
