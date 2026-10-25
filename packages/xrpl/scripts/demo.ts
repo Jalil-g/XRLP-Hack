@@ -40,7 +40,6 @@ import {
   type MilestoneCondition,
   type TxResult,
 } from "../src/index.ts";
-import { disableMasterKey } from "../src/spv.ts";
 
 const env = (k: string, d: number) => Number(process.env[k] ?? d);
 const SPV_MODE = (process.env.DEMO_SPV_MODE ?? "multisig") as "multisig" | "single";
@@ -181,8 +180,9 @@ async function main() {
 
   if (SPV_MODE === "single") {
     say("6b. fallback path: lock SPV AFTER loan + escrows");
-    rec("SignerListSet (post-loan)", await lockSpvAccount(setup.spvWallet));
-    rec("AccountSet disableMaster (post-loan)", await disableMasterKey(setup.spvWallet));
+    const lock = await lockSpvAccount(setup.spvWallet);
+    rec("SignerListSet (post-loan)", lock.signerListSet);
+    rec("AccountSet disableMaster (post-loan)", lock.disableMaster);
   }
 
   say("7. milestone 1: AI + inspector + platform attest on-chain, inspector reveals fulfillment, release");

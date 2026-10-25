@@ -9,7 +9,7 @@ import { cancelEscrow, createMilestoneEscrow, finishEscrow } from "./escrow.ts";
 import { toChainEvent } from "./events.ts";
 import { createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet, type LoanPayMode } from "./loan.ts";
 import { configureIssuer, ensureTrustline, topUpRlusd } from "./rlusd.ts";
-import { createSpvAccount, disableMasterKey, setSpvSignerList } from "./spv.ts";
+import { createSpvAccount, lockSpv, type SpvSigners } from "./spv.ts";
 import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx } from "./vault.ts";
 import { ensureFundedWallets, loadWallets, rememberSpv, resolveWallet, RLUSD_HOLDERS, rlusdTopUpPlan, type DemoWallets, type WalletRole } from "./wallets.ts";
 
@@ -75,6 +75,8 @@ export interface SetupProjectOptions {
   coverDeposit?: string;
   /** Lock the SPV (SignerListSet + disable master) now. Default true. */
   lockSpv?: boolean;
+  /** SPV signer addresses. Pass the project's builder + assigned inspector; defaults come from the demo roles (builder, inspector1). */
+  spvSigners?: Partial<SpvSigners>;
 }
 
 export interface ProjectChainSetup {
@@ -105,8 +107,9 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   rememberSpv(project.id, spv);
   if (trustTx) txs.spvTrustSet = trustTx;
   if (opts.lockSpv !== false) {
-    txs.spvSignerListSet = await lockSpvAccount(spv);
-    txs.spvDisableMaster = await disableMasterKey(spv);
+    const lock = await lockSpv(spv, spvSignersFor(opts.spvSigners));
+    txs.spvSignerListSet = lock.signerListSet;
+    txs.spvDisableMaster = lock.disableMaster;
   }
 
   const now = await ledgerTime();
@@ -148,18 +151,29 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   };
 }
 
-/**
- * SignerListSet on the SPV using the demo roles. Still the v1 list shape (inspector1/2 in the old inspectorA/B
- * slots w2, aiAgent w1, platform w1, quorum 3) until XRPL-05 swaps in {platform, builder, inspector, trustee}.
- */
-export async function lockSpvAccount(spv: Wallet): Promise<TxResult> {
+/** v2 SPV signer list with demo-role defaults: platform, builder, inspector1, trustee (override any). */
+export function spvSignersFor(o: Partial<SpvSigners> = {}): SpvSigners {
   const w = loadWallets();
-  return setSpvSignerList(spv, {
-    inspectorA: w.inspector1.classicAddress,
-    inspectorB: w.inspector2.classicAddress,
-    aiAgent: w.aiAgent.classicAddress,
-    platform: w.platform.classicAddress,
-  });
+  return {
+    platform: o.platform ?? w.platform.classicAddress,
+    builder: o.builder ?? w.builder.classicAddress,
+    inspector: o.inspector ?? w.inspector1.classicAddress,
+    trustee: o.trustee ?? w.trustee.classicAddress,
+  };
+}
+
+/**
+ * Default SPV multisig quorum: platform + builder + trustee (3 of 4). Independent of which inspector was assigned,
+ * so it works for every project; pass `spvSigners`/`signers` to use the inspector instead.
+ */
+export function defaultSpvSignerWallets(): Wallet[] {
+  const w = loadWallets();
+  return [w.platform, w.builder, w.trustee];
+}
+
+/** SignerListSet {platform, builder, inspector, trustee} w1 quorum 3 + disable master (fallback path: lock after LoanSet). */
+export async function lockSpvAccount(spv: Wallet, signers: Partial<SpvSigners> = {}): Promise<{ signerListSet: TxResult; disableMaster: TxResult }> {
+  return lockSpv(spv, spvSignersFor(signers));
 }
 
 // ---------------------------------------------------------------- vault
@@ -210,7 +224,7 @@ export interface CloseLoanOptions {
   defaultCancelAfter?: Date;
   /** Wait for the vault to leave Subscription before LoanSet (polls ledger time). Default true. */
   waitForInvestmentPhase?: boolean;
-  /** SPV signers that countersign LoanSet + EscrowCreate. Default platform + inspector1 (weight 3 on the interim list). */
+  /** SPV signers that countersign LoanSet + EscrowCreate (3 of the SPV list). Default platform + builder + trustee. AI is never a signer. */
   spvSigners?: Wallet[];
   /** If the SPV master key is still enabled, countersign with it instead of multisig (fallback path). */
   spvSingleKey?: Wallet;
@@ -263,7 +277,7 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
 
   const paymentTotal = opts.paymentTotal ?? Math.max(1, Math.round(project.terms.termDays / project.terms.paymentIntervalDays));
   const paymentIntervalS = opts.paymentIntervalS ?? project.terms.paymentIntervalDays * DAY;
-  const signers = opts.spvSigners ?? [w.platform, w.inspector1];
+  const signers = opts.spvSigners ?? defaultSpvSignerWallets();
 
   const loan = await loanSet({
     brokerOwner: w.platform,
@@ -404,7 +418,7 @@ export async function repayLoan(p: {
     const now = await ledgerTime();
     mode = loan.NextPaymentDueDate != null && now > loan.NextPaymentDueDate ? "late" : "regular";
   }
-  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount, signers: p.signers ?? [w.platform, w.inspector1], mode });
+  const tx = await loanPayMultisig({ borrower: p.spv, loanId: p.loanId, issuer: w.issuer.classicAddress, amount, signers: p.signers ?? defaultSpvSignerWallets(), mode });
   return { tx, amount, mode, event: toChainEvent(tx, { projectId: p.projectId, kind: "loan_payment", actor: p.spv, amount }) };
 }
 
