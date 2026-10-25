@@ -1,9 +1,10 @@
 # packages/xrpl security + robustness review (2026-10-25)
 
-Reviewer: Jalil's review agent. Scope: all of `packages/xrpl` (`src`, `scripts`, `test`) on `main` @ `b64aaab` (after #137
-XRPL-13b and #132 XRPL-15 merged), the open #136 (XRPL-11) diff read-only, `packages/shared/src/ports.ts`, and how core uses the
+Reviewer: Jalil's review agent. Scope: all of `packages/xrpl` (`src`, `scripts`, `test`) on `main` @ `a01ad92` (after #137
+XRPL-13b and #132 XRPL-15 merged; this commit was `b64aaab` before main's history was rewritten on 2026-10-25 to drop
+commit signatures, same tree `633a236`), then #136 (XRPL-11) once merged, `packages/shared/src/ports.ts`, and how core uses the
 port (`packages/core/src/factory.ts`, `release-service.ts`, `errors.ts`, `http/app.ts`, read-only). Line numbers are for
-`b64aaab`. Severity: **High** = can move money twice, publish a live preimage, or break a stated guarantee in a reachable
+`a01ad92`. Severity: **High** = can move money twice, publish a live preimage, or break a stated guarantee in a reachable
 path; **Medium** = a secret or guarantee depends on input that isn't checked, or a likely footgun; **Low** = hardening /
 narrow trigger.
 
@@ -238,3 +239,21 @@ Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regressio
 - **Locks**: FIFO, re-entrant, released on throw; Batch takes nested locks in sorted order. Locks are per process: two
   processes on one wallets file are safe for different intents (Sequence exclusivity + `tefPAST_SEQ` handling, now also
   after H1), not for the same intent at the same time (e.g. two closes of one project); run one writer per project.
+
+## Verification of the fixes (2026-10-25)
+
+- Offline: `pnpm --filter @xrlp/xrpl test` 228/228 (198 before; +30 regression tests across `submit`, `finish` (new),
+  `config` (new), `condition`, `loan-close`, `spv`, `adapter`, `wallets`, `close-batch`). The new H1/H2 engine tests fail
+  on the pre-fix engine and pass on the fixed one. `pnpm -r typecheck`, `pnpm -r test` green.
+- Devnet (rippled 3.4.1, `network_id` 2 checked live by the new guard):
+  - `spike:escrow` (fresh faucet wallets): finish by releaseService through the new pre-signed path, Fee 36 drops
+    ([02CA064B…](https://devnet.xrpl.org/transactions/02CA064BC57B402E280D106C0E57DA7104732717CBC863E9D0241A3DC98C0001)); wrong
+    fulfillment `tecCRYPTOCONDITION_ERROR` then the right one ([BE3512BD…](https://devnet.xrpl.org/transactions/BE3512BD7EFDEE97DA13419066D323EE17DCEAFF2291BBCC4223311AC88501AA));
+    builder without trust line refused by preflight, nothing submitted; finish after CancelAfter `tecNO_PERMISSION` + cancel.
+  - `stress`: 20 parallel Payments from one account → 20/20 `tesSUCCESS`, Sequences 6395864..6395883 contiguous.
+  - `adapter:e2e` (fresh bootstrap store, written by the new atomic save): every port method green, incl. the close with the new
+    destination / master-key checks ([LoanSet 73390DFC…](https://devnet.xrpl.org/transactions/73390DFC9536CD65715A48EDDD0F25CD2DC79760CD23DD9DF088921A1DAAF09B)),
+    finish ([071D85E9…](https://devnet.xrpl.org/transactions/071D85E95AA6F07D9CDBDC192CC20AA19BDEFED2F2F87E020334BD91E97BF5F3)), a second finish refused
+    (`unsafe_release: escrow_not_found`, nothing submitted), wrong fulfillment ([7914B4E0…](https://devnet.xrpl.org/transactions/7914B4E06C533D413A9C93F3D1CC7D780BD7DF9D6C2A7B6419B42FACF5339EB7)),
+    cancel → refund LoanPay ([DB1C8B3A…](https://devnet.xrpl.org/transactions/DB1C8B3A76574106141D5DF3837AA9490E482C49C27F51345C4AAF9E6588D355)), builder repay
+    ([B021492A…](https://devnet.xrpl.org/transactions/B021492A19DC51C6D708AEE2A2E684239D74EC29E286FF18982646633FD6AF85)).
