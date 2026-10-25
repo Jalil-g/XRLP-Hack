@@ -586,7 +586,7 @@ const routes: Route[] = [
     const p = project(db, id!);
     const m = milestone(p, mid!);
     if (!m.escrow || m.escrow.finishTx || m.escrow.cancelTx) throw fail("invalid_state", `${m.title} has no open escrow to try`, 409);
-    const ev = emit(db, { projectId: p.id, milestoneId: m.id, kind: "release_refused", actor: PLATFORM.address, amount: m.amount });
+    const ev = emit(db, { projectId: p.id, milestoneId: m.id, kind: "release_refused", actor: PLATFORM.address, amount: m.amount, result: "tecCRYPTOCONDITION_ERROR" });
     return { result: "tecCRYPTOCONDITION_ERROR", txHash: ev.txHash, explorerUrl: ev.explorerUrl };
   }],
   // PROPOSED (#53)
