@@ -10,6 +10,9 @@
 //   - closeLoanAtomic({ mode: "full" }): the real atomic close. Outer = platform (broker owner), inners = LoanSet
 //     (Counterparty = SPV, no CounterpartySignature) + EscrowCreate×N from the SPV, BatchSigners = SPV multisig.
 //     Fails with temINVALID_INNER_BATCH until LendingProtocolV1_2 is on the network.
+//   - closeLoanAtomic({ mode: "auto" }): try "full"; if the network refuses LoanSet as an inner tx
+//     (temINVALID_INNER_BATCH: nothing reached the ledger) fall back to "escrows" (`result.fallback` says why).
+//     Picks up the full close by itself once V1_2 is enabled. 8 milestones go straight to "escrows" (no room for LoanSet).
 // XRPL-13b: closeLoanAndCreateEscrows (api.ts) uses createEscrowsAtomic by default for 2..8 milestones. Every escrow
 // goes through validateEscrowSpecs before anything is signed; inner results are looked up in the Batch's own ledger
 // (`searched_all` makes "not applied" provable) and every created escrow is checked against its metadata.
@@ -606,7 +609,23 @@ export function innerLoanSetTx(p: Omit<LoanSetParams, "borrowerSig" | "fee">): L
   };
 }
 
-export type AtomicCloseMode = "full" | "escrows";
+export type AtomicCloseMode = "full" | "escrows" | "auto";
+
+/** Network seam of closeLoanAtomic (tests inject fakes). */
+export interface CloseLoanAtomicDeps {
+  ledgerTime: typeof ledgerTime;
+  loanSet: typeof loanSet;
+  submitBatch: typeof submitBatch;
+}
+
+/**
+ * True when a failed full-close Batch means "this network can't put LoanSet in a Batch": the tem refusal rippled
+ * gives while every Lending type is in `Batch::kDisabledTxTypes` (no LendingProtocolV1_2). A tem never reaches the
+ * ledger (no fee, no Sequence), so falling back to the 2-tx close is safe.
+ */
+export function isInnerLoanSetUnsupported(e: unknown): e is XrplTxError {
+  return e instanceof XrplTxError && e.engineResult === "temINVALID_INNER_BATCH";
+}
 
 export interface CloseLoanAtomicParams {
   /** Same as loan.ts loanSet(), minus the borrower signature (the SPV signs via spvSigners). borrower = SPV. */
@@ -620,12 +639,18 @@ export interface CloseLoanAtomicParams {
   /**
    * "escrows" (default, works on devnet 3.4.1): LoanSet (countersigned) then ONE all-or-nothing Batch of EscrowCreates.
    * "full": LoanSet + EscrowCreates in one Batch. Needs LendingProtocolV1_2; devnet today → temINVALID_INNER_BATCH.
+   * "auto": "full" for 1..7 milestones; on temINVALID_INNER_BATCH fall back to "escrows" (needs 2+ milestones, else
+   * the tem is rethrown). 8 milestones → "escrows" directly.
    */
   mode?: AtomicCloseMode;
+  deps?: Partial<CloseLoanAtomicDeps>;
 }
 
 export interface CloseLoanAtomicResult {
-  mode: AtomicCloseMode;
+  /** The mode that actually ran ("auto" resolves to one of these). */
+  mode: "full" | "escrows";
+  /** Set when "auto" tried the full close and fell back: the network's refusal (nothing reached the ledger). */
+  fallback?: { from: "full"; engineResult: string; message: string };
   loanId: string;
   /** "full": the inner LoanSet. "escrows": the standalone countersigned LoanSet. */
   loanSetTx: { hash: string; explorerUrl: string; result: string; ledgerIndex?: number };
@@ -641,18 +666,31 @@ export interface CloseLoanAtomicResult {
  */
 export async function closeLoanAtomic(p: CloseLoanAtomicParams): Promise<CloseLoanAtomicResult> {
   const mode = p.mode ?? "escrows";
+  if (mode !== "auto") return closeLoanAtomicOnce(p, mode);
+  if (p.milestones.length > BATCH_MAX_INNER - 1) return closeLoanAtomicOnce(p, "escrows");
+  try {
+    return await closeLoanAtomicOnce(p, "full");
+  } catch (e) {
+    if (!isInnerLoanSetUnsupported(e) || p.milestones.length < BATCH_MIN_INNER) throw e;
+    const r = await closeLoanAtomicOnce(p, "escrows");
+    return { ...r, fallback: { from: "full", engineResult: e.engineResult, message: e.message } };
+  }
+}
+
+async function closeLoanAtomicOnce(p: CloseLoanAtomicParams, mode: "full" | "escrows"): Promise<CloseLoanAtomicResult> {
+  const d: CloseLoanAtomicDeps = { ledgerTime, loanSet, submitBatch, ...p.deps };
   const spv = p.loan.borrower;
-  const now = await ledgerTime();
+  const now = await d.ledgerTime();
   const milestones =
     mode === "escrows"
       ? validateEscrowSpecs(p.milestones, { min: BATCH_MIN_INNER, max: BATCH_MAX_INNER, now, what: "closeLoanAtomic" })
       : validateEscrowSpecs(p.milestones, { min: 1, max: BATCH_MAX_INNER - 1, now, what: "closeLoanAtomic full" });
   if (mode === "escrows") {
-    const loan = await loanSet({ ...p.loan, borrowerSig: { multisig: p.spvSigners } });
+    const loan = await d.loanSet({ ...p.loan, borrowerSig: { multisig: p.spvSigners } });
     let prepared: { hash: string; lastLedgerSequence: number } | undefined;
     let r: Awaited<ReturnType<typeof createEscrowsAtomic>>;
     try {
-      r = await createEscrowsAtomic({ spv, builder: p.builder, issuer: p.issuer, milestones, spvSigners: p.spvSigners, onPrepared: (b) => (prepared = b) });
+      r = await createEscrowsAtomic({ spv, builder: p.builder, issuer: p.issuer, milestones, spvSigners: p.spvSigners, onPrepared: (b) => (prepared = b), deps: { submitBatch: d.submitBatch } });
     } catch (failure) {
       const planned: PlannedEscrow[] = milestones.map((m, index) => ({ milestoneId: m.milestoneId, index, amount: m.amount, condition: m.condition, cancelAfter: m.cancelAfter }));
       throw closePartialError({
@@ -681,7 +719,7 @@ export async function closeLoanAtomic(p: CloseLoanAtomicParams): Promise<CloseLo
     };
   }
   const platform = p.loan.brokerOwner;
-  const batch = await submitBatch({
+  const batch = await d.submitBatch({
     account: platform.classicAddress,
     outerSigner: { single: platform },
     inners: [innerLoanSetTx(p.loan), ...milestones.map((m) => escrowCreateTx(spv, p.builder, p.issuer, m))],

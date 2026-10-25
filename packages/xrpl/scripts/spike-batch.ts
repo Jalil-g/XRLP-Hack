@@ -6,7 +6,8 @@
 //   C  atomicity: outer = SPV, 2nd Payment overdraws -> Batch tesSUCCESS, no inner applied (tfAllOrNothing)
 //   F1 full close: outer = platform, LoanSet (Counterparty SPV, no CounterpartySignature) + 2 × EscrowCreate, BatchSigners SPV
 //   F2 full close, borrower-initiated: outer = SPV, LoanSet Account = SPV / Counterparty = platform + 2 × EscrowCreate
-//   E  fallback: countersigned LoanSet, then ONE Batch with 3 × EscrowCreate from the SPV (closeLoanAtomic mode "escrows")
+//   E  closeLoanAtomic mode "auto" with 3 milestones: tries the full close; on temINVALID_INNER_BATCH falls back to the
+//      countersigned LoanSet, then ONE Batch with 3 × EscrowCreate from the SPV (mode "escrows")
 // tem/tef results are not on-ledger: the row records the engine result + rippled's message.
 import { AccountSetAsfFlags } from "xrpl";
 import { explorerTxUrl } from "@xrlp/shared";
@@ -163,10 +164,11 @@ try {
       }),
     );
 
-    // E: the fallback that works today.
+    // E: mode "auto" = full close if the network takes it, else the fallback that works today.
     const spvBefore = await rlusdBalance(spv, issuer);
     const ms = milestones(3, "330");
-    const e = await closeLoanAtomic({ loan, builder, issuer, milestones: ms, spvSigners: quorum, mode: "escrows" });
+    const e = await closeLoanAtomic({ loan, builder, issuer, milestones: ms, spvSigners: quorum, mode: "auto" });
+    spike.note(e.fallback ? `E (auto): full close refused (${e.fallback.engineResult}: ${e.fallback.message}) -> fell back to mode "${e.mode}"` : `E (auto): FULL atomic close worked (mode "${e.mode}")`);
     spike.rows.push({ step: "E1 LoanSet countersigned by SPV multisig (standalone)", result: e.loanSetTx.result, hash: e.loanSetTx.hash });
     spike.rows.push({ step: "E2 Batch outer=SPV (multisig 3/4): 3 × EscrowCreate 330 RLUSD, tfAllOrNothing", result: e.batchTx.result, hash: e.batchTx.hash });
     for (const x of e.escrows) spike.rows.push({ step: `  ↳ inner EscrowCreate ${x.milestoneId} (OfferSequence ${x.offerSequence})`, result: "tesSUCCESS", hash: x.createTx });

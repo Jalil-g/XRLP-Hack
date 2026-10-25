@@ -12,6 +12,7 @@ pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding
 pnpm --filter @xrlp/xrpl spike:broker   # XRPL-04 devnet proof: rates, mandatory cover, origination fee
 pnpm --filter @xrlp/xrpl spike:close    # XRPL-06 devnet proof: LoanSet + 3 escrows, SPV liquid = 0, bad input refused with nothing submitted
 pnpm --filter @xrlp/xrpl spike:default  # XRPL-15 devnet proof: impair / unimpair / default, first-loss cover absorbs DefaultCovered (~5 min)
+pnpm --filter @xrlp/xrpl spike:batch  # XRPL-13 devnet proof: Batch sanity, all-or-nothing rollback, full close (LoanSet inner) probe, closeLoanAtomic "auto" (~3 min; SPIKE_SUBSCRIPTION_S=30 to shorten)
 pnpm --filter @xrlp/xrpl spike:close-batch  # XRPL-13b devnet proof: escrows in ONE all-or-nothing Batch; rollback + partial close → resumeEscrowCreation (~8 min)
 pnpm --filter @xrlp/xrpl compliance     # XRPL-08 devnet proof: credentials x3, domain, private vault, fee, attestations
 pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
@@ -401,6 +402,21 @@ XRPL-06 path); `"batch"` for 1 or 9+ milestones → `CloseValidationError`. Loan
 - Validation through the last escrow holds the SPV's submit lock: a concurrent second close of the same project in this process
   waits, then is refused before any tx (its conditions are on the SPV's escrows).
 
+### Fully atomic close (XRPL-13): `closeLoanAtomic`
+
+`closeLoanAtomic({loan, builder, issuer, milestones, spvSigners, mode?})` → `{mode, loanId, loanSetTx, batchTx, escrows, fallback?}`.
+Not on the core path (that is `closeLoanAndCreateEscrows` above). Modes:
+- `"escrows"` (default): countersigned LoanSet, then one all-or-nothing Batch of 2..8 EscrowCreates (same as the batch escrow mode).
+- `"full"`: **one** Batch, outer = platform (single-sig), inners = LoanSet (`Counterparty` = SPV, no `CounterpartySignature`)
+  + 1..7 EscrowCreates from the SPV, `BatchSigners` = SPV multisig. The SPV never holds liquid principal. Needs
+  `LendingProtocolV1_2`: devnet rippled 3.4.1 refuses it with `temINVALID_INNER_BATCH` (re-checked 2026-10-25 06:05 UTC, §2d).
+- `"auto"`: tries `"full"` for 1..7 milestones. If the network refuses LoanSet as an inner tx (`temINVALID_INNER_BATCH`,
+  `isInnerLoanSetUnsupported(e)`; a tem never reaches the ledger, so no fee and no Sequence are used) it falls back to `"escrows"`
+  and sets `fallback: {from: "full", engineResult, message}`. Any other failure is rethrown with no fallback LoanSet. One
+  milestone can't fall back (a Batch needs 2 inners), so the tem is rethrown. 8 milestones go straight to `"escrows"`. `result.mode`
+  is the mode that ran. Once devnet enables V1_2, `"auto"` does the full close with no code change.
+- `deps?: {ledgerTime, loanSet, submitBatch}` is the offline-test seam.
+
 ### Recovering a partial close (XRPL-13b): `resumeEscrowCreation`
 
 `resumeEscrowCreation(err)` creates **exactly the missing escrows** and returns the completed `CloseLoanResult` plus `resumed`.
@@ -655,7 +671,7 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `spv.ts` | `createSpv`, v2 `SignerListSet`, disable master, `submitMultisigned` (+ local quorum check), `getSpvInfo` |
 | `condition.ts` | PREIMAGE-SHA-256 DER encoding + condition-format check (pure); no generation on the close path |
 | `loan-close.ts` | XRPL-06: pure `planLoanClose` validation, `CloseValidationError`, `CloseLoanPartialError`; XRPL-13b: escrow mode, `validateEscrowSpecs`, partial-close `context`, pure resume planner (`planEscrowResume`) + ledger parsers |
-| `batch.ts` | XRPL-13: XLS-56 Batch build/sign/submit (`submitBatch`, `mergeBatchSigners`), `createEscrowsAtomic`, `closeLoanAtomic`; XRPL-13b: inner lookups pinned to the Batch's ledger (`classifyInnerLookup`, `batchOutcome`), `BatchNotAppliedError`, metadata-checked escrows, `closePartialError` |
+| `batch.ts` | XRPL-13: XLS-56 Batch build/sign/submit (`submitBatch`, `mergeBatchSigners`), `createEscrowsAtomic`, `closeLoanAtomic` (`"full"` / `"escrows"` / `"auto"`, `isInnerLoanSetUnsupported`); XRPL-13b: inner lookups pinned to the Batch's ledger (`classifyInnerLookup`, `batchOutcome`), `BatchNotAppliedError`, metadata-checked escrows, `closePartialError` |
 | `escrow.ts` | IOU `EscrowCreate` (SPV multisig), `EscrowFinish` (preflighted, rebuilt once if retriable), `EscrowCancel` (TooSoon-gated), wrong-fulfillment demo finish |
 | `preflight.ts` | pre-reveal safety: `preflightFinish`, pure `evaluatePreflight`, `unsafe_release` mapping |
 | `attest.ts` | memo attestations encode/decode |
