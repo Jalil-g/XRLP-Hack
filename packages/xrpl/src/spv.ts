@@ -1,7 +1,7 @@
 // Per-project SPV account: borrower of the loan, owner of milestone escrows.
 // After setup: master key disabled, only the SignerList {platform, builder, inspector, trustee} (w1 each, quorum 3)
 // can act for it. The AI key is NOT a signer (it only attests). See docs/03-architecture.md "SPV signer list".
-import { AccountSetAsfFlags, hashes, multisign, Wallet, type SubmittableTransaction } from "xrpl";
+import { AccountSetAsfFlags, hashes, isValidClassicAddress, multisign, Wallet, type SubmittableTransaction } from "xrpl";
 import { getClient, signAndSubmit, submitWithSigner, XrplTxError, type SubmitOptions, type TxResult } from "./client.ts";
 import { fundFromFaucet } from "./wallets.ts";
 import { ensureTrustline } from "./rlusd.ts";
@@ -15,6 +15,42 @@ export interface SpvSigners {
   builder: string;
   inspector: string;
   trustee: string;
+}
+
+/**
+ * Pure (security review M6): why these signers must not go on an SPV list. Each slot must be a classic address, and none
+ * may be a key that must never control the SPV (`forbidden`: role → address, e.g. aiAgent, releaseService, issuer):
+ * the AI only attests, and with platform + trustee also server-held, one more server key would reach quorum alone.
+ */
+export function spvSignerProblems(s: SpvSigners, forbidden: Record<string, string> = {}): string[] {
+  const issues: string[] = [];
+  for (const [slot, address] of Object.entries(s)) {
+    if (typeof address !== "string" || !isValidClassicAddress(address)) {
+      issues.push(`SPV signer ${slot} is not a classic XRPL address`);
+      continue;
+    }
+    const role = Object.entries(forbidden).find(([, a]) => a === address)?.[0];
+    if (role) issues.push(`SPV signer ${slot} ${address} is the ${role} key, which must never be an SPV signer`);
+  }
+  return issues;
+}
+
+/**
+ * Pure: why `signerAddresses` can't countersign for this SPV with its multisig quorum. Adds the master-key check
+ * (security review L3): while the master key is enabled the SPV's own seed controls the principal alone, so the
+ * multisig close path refuses it (the explicit single-key fallback is a separate option).
+ */
+export function spvCountersignProblems(info: Pick<SpvInfo, "signerQuorum" | "signers" | "masterDisabled">, signerAddresses: string[]): string[] {
+  if (info.signerQuorum == null) return ["SPV has no SignerList"];
+  const issues: string[] = [];
+  const q = checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signerAddresses);
+  if (!q.ok) {
+    issues.push(
+      q.unknown.length ? `not on the SPV list: ${q.unknown.join(", ")}` : q.duplicates.length ? `duplicate signers: ${q.duplicates.join(", ")}` : `weight ${q.weight} < quorum ${q.quorum}`,
+    );
+  }
+  if (!info.masterDisabled) issues.push("SPV master key is still enabled (lock the SPV first, or use the single-key fallback explicitly)");
+  return issues;
 }
 
 /** {platform, builder, inspector, trustee} weight 1 each. Throws on duplicates (rippled: temBAD_SIGNER). */

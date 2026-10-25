@@ -61,8 +61,34 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] `generateMilestoneCondition` dropped from the public API (only a `@deprecated` re-export so `scripts/demo.ts` compiles); tests/spikes use `packages/xrpl/test/support/conditions.ts`. Remove the deprecated export once demo.ts and the G-owned spikes switch. (Jalil's agent, XRPL-06)
 - [10-25] Batch atomic close: devnet rippled 3.4.1 rejects LoanSet (all Lending/SAV types) as a Batch inner tx with `temINVALID_INNER_BATCH` until `LendingProtocolV1_2`. So `closeLoanAtomic` defaults to mode "escrows": countersigned LoanSet, then one `tfAllOrNothing` Batch of every milestone EscrowCreate from the SPV (2 txs, SPV liquid ~2 ledgers). Mode "full" (platform outer, LoanSet + escrows, SPV BatchSigner) is implemented and offline-tested for when V1_2 lands. Not wired into `closeLoanAndCreateEscrows` yet (api.ts owned elsewhere). See protocol-notes §2d (Jalil's agent, XRPL-13)
 - [10-25] XRPL-07 money-out defaults: finish/cancel submitted by `releaseService`; EscrowFinish LLS margin 60 ledgers, so preflight wants ≥ 300 s to CancelAfter (real escrows are days away; spikes pass `lastLedgerMargin: 20`); `repayLoan` auto-mode = `late` if past due, `overpayment` only for `source: "escrow_refund"` above one periodic payment, else `regular` (builder repayments never silently prepay principal); amounts are checked client-side (≥ one periodic payment rounded up, ≤ total outstanding) → `LoanPayAmountError` code `validation`, nothing submitted; cancel/withdraw timing is checked against validated-ledger close time → shared `TooSoonError` before submitting; `builderPayToSpv` returns no ChainEvent until shared has a kind for it; the wrong-fulfillment demo refuses a missing/expired escrow so a demo click can't waste the beat on `tecNO_PERMISSION` — why: a failed finish leaks the preimage and a rejected LoanPay/withdraw costs a demo minute, so refuse early with a typed error (Jalil's agent, XRPL-07)
+- [10-25] **Escrows are created atomically in the main close path.** `closeLoanAndCreateEscrows` defaults to `escrowMode: "batch"` for 2..8 milestones: countersigned LoanSet, then ONE `tfAllOrNothing` Batch of every EscrowCreate via `createEscrowsAtomic` (`escrows[i].createTx` = the inner tx, `batchTx` = the outer); 1 or 9+ milestones (XLS-56 limit) stay sequential, and `"sequential"` stays selectable. Every escrow passes `planLoanClose`, then `validateEscrowSpecs` right before signing (also in `createEscrowsAtomic` / `closeLoanAtomic`, the latter before its LoanSet). A Batch is judged by its inner txs looked up in its own ledger (`ParentBatchID` + `searched_all`), never by the outer result (always `tesSUCCESS`): a rollback → `CloseLoanPartialError` with every milestone pending. Validation through the last escrow holds the SPV submit lock (in-process re-run guard). — why: one all-or-nothing step instead of N keeps the SPV liquid ≤ 2 ledgers and makes "some escrows exist" impossible (Jalil's agent, XRPL-13b)
+- [10-25] **Partial-close recovery = `resumeEscrowCreation(err | {project, loanId, created, pending, conditions, cancelAfters})`.** Idempotent by re-reading the SPV first: open escrows matched by condition, plus EscrowCreates in its `account_tx`; an escrow whose condition was used and is gone (finished/cancelled) is never re-created, since a published fulfillment would pay twice. It waits out a tx whose outcome was unknown (until its LastLedgerSequence), and checks the Loan (borrower = SPV; the real maturity bounds new CancelAfters) and the SPV's RLUSD before any submit. Core/the adapter can call it on `CloseLoanPartialError`; no contract change (Jalil's agent, XRPL-13b)
+- [10-25] `generateMilestoneCondition` has one user left (today's `scripts/demo.ts`; the XRPL-11 rewrite doesn't use it): delete the deprecated export once XRPL-11 merges. Spikes, tests and fixture capture use `test/support/conditions.ts` (Jalil's agent, XRPL-13b)
 - [10-25] Merged `main` @ e67052a verified on devnet end-to-end (bootstrap ×2 idempotent, demo, 5 spikes, compliance, stress, withdraw) — all green, proof in `docs/proof-devnet-2026-10-25-v2.md`. Gaps: demo still uses v1 `attestApproval`; `setupProjectOnChain` creates public vaults (no DomainID); `finishEscrow` always uses the 120 s preflight margin; submit lock ≈ 6.6 s/tx/account (Jalil's agent, devnet verification)
 - [10-25] `XrplLedgerAdapter` (shared `LedgerPort`, `packages/xrpl/src/adapter.ts`): phase gates are **pre-checked on ledger time** (close before SubscriptionDate, withdraw before RedemptionDate, cancel before CancelAfter → `TooSoonError`, nothing submitted, no fee burnt); `not_found`/`validation` ride on `XrplLedgerError.apiCode` because shared `LedgerError.code` only has 3 values (asked on #53); SPV multisig signers are chosen from the **on-ledger SignerList** among keys in the wallet store (builder/platform/trustee first); vaults are private (platform KYC_INVESTOR domain) with non-transferable shares; `issueCredential` returns `[]` when already accepted. On merge with XRPL-06/07 (M3 integration): close inputs are validated only by `planLoanClose` (the adapter's own copy was dropped), repay mode/amount only by `planLoanPayment` (checked before the builder's Payment, so a refused LoanPay never strands it), error mapping is built on errors.ts `toLedgerError`/`toErrorCode` (`toAdapterError`; `CloseValidationError`/`LoanPayAmountError` → `validation`, `CloseLoanPartialError` passes through as `ledger_error`), and `preflightFinish` uses the same LLS margin as `finishEscrow` (60 ledgers, ≥ 300 s before CancelAfter; `finishMargins` option) so a preflight ok is not refused by the finish (Jalil's agent, XRPL-10)
+- [10-25] Loan default (`src/default.ts`): `defaultLoan` / `impairLoan` / `unimpairLoan` = `LoanManage` by the platform (broker owner). A pure guard (`checkLoanManage`) mirrors rippled 3.4.1's checks in its order, and it runs on one validated ledger under the platform account lock, so nothing is submitted that the ledger would refuse. Devnet has fixCleanup3_4_0, so both boundaries are exclusive: default only when ledger time > `NextPaymentDueDate + GracePeriod`, impair only when > `NextPaymentDueDate`. A timing refusal throws `LoanManageTooSoonError`, a shared `TooSoonError` that adds `allowedAfter` for the keeper's retry; anything else throws `LoanManageRefusedError` (`ledger_error`). `defaultLoan` is idempotent: on an already-defaulted loan it returns the original tx via `Loan.PreviousTxnID` and submits nothing. The `loan_default` amount is DefaultAmount. Impair/unimpair emit **no** ChainEvent: shared has no impairment kind, and `loan_default` would claim a default that hasn't happened (`loan_impaired` proposed on #53, with `LedgerPort.defaultLoan`). (Jalil's agent, XRPL-15)
+- [10-25] Devnet vaults are **cash basis** (`Vault.LEVersion 1`, LendingProtocolV1_1; the patch is reserved as XLS-66.1.1 and unpublished). A default writes off `PrincipalOutstanding` only, `DebtTotal` is principal only, and with our 10% / 100% rates **DefaultCovered = 10% of DebtTotal at default time**. Devnet run: 1000 defaulted, cover returned 100 (= `expectedDefaultCovered`), vault loss 900, share price 1 → 0.1; the leftover cover (10.000043) stays with the platform. With 600 repaid first: 400.00019 defaulted, cover 40.000019025767 (rounded up at LoanScale, = expected), share price 1 → 0.64. The stall path holds: refunds are repaid first, then the cover pays, then investors absorb the rest. Note that repaying first also shrinks the cover the default can draw. Protocol-notes §3c (Jalil's agent, XRPL-15)
+- [10-25] **xrpl security review** (`docs/reviews/xrpl-security-review-2026-10-25.md`), calls made while fixing it: (1) the retry
+  engine tracks every blob of an intent that may have reached a server and settles them before a fresh-Sequence re-sign or
+  any give-up; `retriable: true` now strictly means "nothing can still apply", an unknown outcome is non-retriable
+  `connection_lost` / `unknown_outcome`. (2) `finishEscrow` signs one blob per preflight and submits it pre-signed (never
+  re-signed by the engine); `unsafe_release` from a finish means the fulfillment never left the process, a refusal after a
+  submit is `preflight_refused_after_submit`. (3) Mainnet guard = URL/label denylist + `server_info.network_id === 2` on
+  connect (`XRPL_NETWORK_ID` for another custom net, never 0/1). (4) Adapter keys are bound to roles per input
+  (`SIGNING_ROLES`); aiAgent / releaseService / issuer can't be SPV signers. (5) Before LoanSet the escrow destination must
+  exist, be on the SPV's signer list and not be another role's key; the multisig path refuses an SPV whose master key is
+  still enabled. (6) `resumeEscrowCreation({ project, ... })` requires `builderAddress` and waits one LLS margin by default.
+  (7) In-repo `WALLETS_FILE` / `DATA_DIR` must be git-ignored; the wallet store is written atomically, 0600. (8) Validation
+  errors never echo a would-be condition. Deferred with reasons in the review doc; core items in the linked issue. (Jalil's agent, security review)
+
+## Inspector presentation controls (INS-08)
+
+- Projector mode is opt-in and session-local: larger text and stronger secondary
+  contrast, without changing API mode, identity, or audit data. The header wraps
+  to keep its identity picker and presentation control usable on narrow screens.
+- Ctrl/Cmd+Enter activates the existing audit submit button, including all normal
+  validation and signing checks. Repeated/composing/handled keys are ignored,
+  disabled buttons remain disabled, and an in-flight ref prevents duplicate filing.
 
 ## Inspector lane (Roro's agent, challenge freely)
 
@@ -95,6 +121,81 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   blob leaves. No key → the audit is filed unsigned and core signs with the demo key (05-api §1), labelled as such in the UI.
   Seeds are never put in `NEXT_PUBLIC_*` env (they would ship in the JS bundle). Autofill uses `XRPL_WS_URL`, `LastLedgerSequence` +75.
 - [10-25] `@xrlp/attest-signer` tests run with `node --import tsx` (like core/verifier) because the parity test imports `@xrlp/xrpl`.
+- [10-25] Submission package `docs/submission/` cites only tx hashes already published in our docs or PR bodies: the v2 proof (#126) first,
+  then Batch from protocol-notes §2d / §2e, LoanManage from §3c, the CLI demo's batch close from `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`,
+  and the platform try-steal / inspector-app signer / adapter private vault from #125 / #128 / #121.
+  `node docs/submission/check-links.mjs --devnet` re-checks every link (published, validated, result = link text): 64/64 green on 10-25,
+  80/80 after XRPL-13b / XRPL-15 / XRPL-11 merged. (Jalil's agent, PITCH-04)
+- [10-25] PITCH-04 wording calls: `LoanManage` moved from "not used" into the primitives table once XRPL-15 (#132) proved it on devnet;
+  the v2 run's `demo.ts` attestation rows aren't cited (deprecated `xrlp/attestation/v1` memo); the v2 demo's `EscrowFinish` isn't called a suite-gated release
+  (it was sent from `platform`, before #125 made `releaseService` the default). (Jalil's agent, PITCH-04)
+
+- [10-25] Prestage (XRPL-11) = three fresh projects per run, pipelined C → B → A (C first: it must wait for its RedemptionDate). A: 6 × 30-day loan, escrow CancelAfter +30/60/90 d. B: M1 released, **M2 (12k) is the stall escrow** (CancelAfter past before the file is written), 12 × 30-day loan so the refund LoanPay is on time and ≥ one periodic payment. C: 2 × 240 s loan (XRPL-06 needs PaymentTotal ≥ 2 and CancelAfter < maturity: C's escrows cancel at +360 s), all escrows released, builder → SPV → two LoanPays pay it off, then wait for RedemptionDate. `--only A,B` re-stages a subset and keeps the rest of `prestage.json` (a rehearsal consumes A's M1/M2 and B's expired escrow; C stays valid). (Jalil's agent, XRPL-11)
+- [10-25] `.data/prestage.json` shape = `PrestageFile` in `packages/xrpl/src/prestage-types.ts` (exported, with `parsePrestageFile`); preimages only in `.data/prestage-preimages.json` / `.data/demo-preimages.json` (mode 600, never printed, old entries kept); the writer validates that the file has no preimage/fulfillment/seed field. (Jalil's agent, XRPL-11)
+- [10-25] Scripts make every project vault **private** (tfVaultPrivate + platform DomainID + non-transferable shares) by composing `setupProjectOnChain`'s steps in `scripts/demo-lib.ts` (`setupProjectOnChain` got `domainId` / `nonTransferableShares` in XRPL-10, but it fixes SubscriptionDate before the SPV's txs, which would eat the scripts' 60 s deposit window; switch once it can anchor on ledger time at VaultCreate). The CLI demo dropped the `DEMO_SPV_MODE=single` master-key fallback (XRPL-01 proved multisig LoanSet). Scripts delete an old investor3 `KYC_INVESTOR` credential so the `tecNO_AUTH` beat works with v1 wallet files. (Jalil's agent, XRPL-11)
+- [10-25] On merging XRPL-11 with XRPL-13b/15: the demo/prestage close uses the default batch mode (one `tfAllOrNothing` Batch row in the tx table, then each milestone's inner EscrowCreate), and the deprecated `generateMilestoneCondition` / `MilestoneCondition` exports are removed from `@xrlp/xrpl` (no users left; core has its own `packages/core/src/conditions.ts`) (Jalil's agent M5, integration)
+- [10-25] **Stage check = read-only GO / WARN / NO-GO per beat** (`pnpm --filter @xrlp/xrpl stage:check`, D1–D6 + C withdraw). It submits nothing, reads one validated ledger (every read pinned to its index, time = its `close_time`), and judges with the package's own rules rather than restating them: `evaluatePreflight` at the release margin (300 s), `wrongFinishBlockers`, `cancelReadiness`, `planLoanPayment`, `vaultPhase`, `lockTermsCover` (= XRPL-04 cover sizing). Every time gate must hold until ledger now + window (default 60 min); a gate that holds only now is a WARN. Exit 0 = no NO-GO. A check that gates no beat is advisory and can only WARN, so it never blocks the slot. Fixes merge into one `bootstrap` + one `prestage --only <union>` carrying the caller's `WALLETS_FILE`. — why: the operator gets one command to run, and the check can't drift from what release / cancel / repay will actually accept (Jalil's agent, XRPL-16)
+- [10-25] Stage check: the B refund counts as on time only while ledger time ≤ `NextPaymentDueDate` (`planLoanPayment`'s rule), **with no grace credit**. #138's "NextPaymentDueDate + grace" would pass a refund the ledger refuses: from `fixCleanup3_4_0` (on devnet), a LoanPay without `tfLoanLatePayment` after the due date is `tecEXPIRED` (XLS-66 §3.11.4.2 #11), and `GracePeriod` only gates `LoanManage` default. Severity calls: NO-GO = a beat would fail or tell a false story (incl. platform RLUSD < a live lock-terms' cover on A's terms = 3395.58, and investor3 holding KYC); WARN = preimages file not mode 600, a preimage missing for an escrow the demo doesn't release (only A m1 is NO-GO), faucet down, rippled ≠ 3.4.1, `prestage.json` > 60 min old (the ledger checks are authoritative), trustee unfunded (multisig signers need no account), a role under bootstrap's 30 XRP. NO-GO below 2 XRP spendable (balance − reserve). Secrets: preimages are reduced to conditions inside `summarizePreimages`, the wallet file to addresses, and parse errors of both files are reported content-free (Jalil's agent, XRPL-16)
+- [10-25] INS-07 re-audit: a new audit **replaces only that inspector's earlier audit** for the milestone (other inspectors' audits stay;
+  earlier attestations stay on the ledger) and the milestone's checks go back to `pending` — a suite that evaluated the old report must
+  not be shown as certifying or rejecting the new one. The form shows the failed/warn checks from route 2 before the checklist, the
+  inspector's previous report, and whether the builder evidence bundle changed; the checklist starts empty (no copied answers).
+  Core's CORE-03 branch currently appends re-audits and keeps the old verdict: flagged on #53.
+
+- [10-25] INS-05 history discovers assigned projects through route 18 (including `needs: none`) and reads audits, latest checks,
+  and release transactions from route 2, polling every 5s. Results are explicitly **latest per milestone**, not attributed to an
+  individual audit revision: the contract has no audit-to-verdict reference. A verdict older than a report is labelled as awaiting
+  a new run. Only reports returned by core are shown; superseded reports removed by core cannot be reconstructed. No contract change.
+  Added a completed Oak Ave mock project for Dana's pass/release history and aligned the reused Maple M2 photo's GPS with Oak Ave. (Roro's agent)
+- [10-25] INS-06 site visit built **mock-only against the area:inspector proposal on #53** (no answer yet), every piece marked
+  TODO(#53): `InspectorSiteVisit` (3 questions yes/no/unable_to_confirm + note, photos, notes), `POST /api/projects/:id/site-visit`
+  (multipart like route 10), attestation = 1-drop Payment inspector → **platform** (no SPV before lock-terms) with memo
+  `{v:1, kind:"site_visit", projectId, hash}` built in the app (not attest-signer: not an XRPL-08 kind). Hash = canonical JSON like
+  `auditHash`. http mode posts to the proposed route and shows "core does not support site visits yet" on 404. Draft PR.
+
+## Web action feedback (WEB-12)
+
+- Every shared API error code has presentation copy and a recovery step. Transport
+  and ledger failures tell users to inspect the current state before repeating a
+  write: a failed response does not prove the preceding transaction never landed.
+- Passing checks alone is not a release confirmation. Action toasts distinguish
+  confirmed release/refund from pending results; keeper messages describe recorded
+  updates rather than promising every expired escrow has already been repaid.
+- The demo page hides missing-project 404s only; service errors reach the normal
+  error boundary. Web tests use the workspace's existing tsx runner, now declared
+  as a web development dependency, with no new top-level tool.
+- Projector mode is an opt-in layout control: 20px root text and stronger secondary
+  contrast, without changing identity or actions. It survives client navigation,
+  resets on a hard reload, and keeps tables in labeled keyboard-scrollable regions.
+- Account-directory requests retain an explicit unavailable flag. A failed lookup
+  warns in the header and cannot become a "no investor accounts" empty state.
+
+## Pitch review (Jalil's agent, PITCH-09)
+
+- [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected
+  07 fact (name decided; slide 8 says the verification fee scales with project size). Factual errors in the demo beats (08 §3,
+  `docs/04-demo-script.md`) and positioning changes (hook "impossible", D5 "us trying to release it anyway") go to their owners on #72,
+  not edited here. (Jalil's agent, PITCH-09)
+- [10-25] Treated as facts, not positioning: "AI judgement can only turn a green into `needs_human`" was wrong (a red required AI check fails
+  the milestone: verifier `decide()`, 03 §Release), and so was "`AssetsMaximum` mitigates under-funding" (it only caps over-funding). Left as
+  suggestions: "funding-portal status" (funding portals are Reg CF only; counsel words it), "most fraud" (unsourced), inspection pass-through
+  counted as revenue in the business illustration. (Jalil's agent, PITCH-09)
+- [10-25] New disclosure in `docs/pitch-qa.md` Q2: the platform, as vault owner = loan broker, picks the `LoanSet` borrower, and nothing
+  on-ledger binds a vault to its project account. The answer is visibility (SPV + signer list exist from lock-terms, any other counterparty is
+  public at once) until a broker co-signed by the trustee exists. Proposed slide-6 row on #72, not applied. (Jalil's agent, PITCH-09)
+- [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
+  lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
+  confirms on #72. (Jalil's agent, PITCH-09)
+
+## Core store hardening (CORE-08)
+
+- FileStore writers acquire an exclusive filesystem lock, shared across instances
+  and processes, before loading state. Lock waits are bounded at five seconds;
+  abandoned locks require stopping all writers before manual removal. No age-based
+  lock stealing, which could allow two live writers to overwrite each other.
+- Atomic writes flush a private temporary file before rename and clean it on
+  ordinary failures. Evidence IDs cannot traverse directories. This does not
+  change the workflow contracts, ledger-event deduplication, or release vault.
 
 ## Open
 

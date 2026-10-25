@@ -8,7 +8,7 @@
 //     (finishEscrow throws UnsafeReleaseError without submitting), then EscrowCancel after CancelAfter
 // Env: SPIKE_MARGIN_S=60 (preflight margin for escrow B), SPIKE_LLS_OFFSET=10.
 import { disconnect, getClient, ledgerTime, waitForLedgerTimeAfter } from "../src/client.ts";
-import { generateMilestoneCondition } from "../src/condition.ts";
+import { testConditionPair } from "../test/support/conditions.ts";
 import { cancelEscrow, createMilestoneEscrow, finishEscrow } from "../src/escrow.ts";
 import { preflightFinish, UnsafeReleaseError, type PreflightRequest, type PreflightResult } from "../src/preflight.ts";
 import { configureIssuer, ensureTrustline, issueRlusd, rlusdBalance } from "../src/rlusd.ts";
@@ -56,8 +56,8 @@ try {
   await spike.ok("RLUSD -> source 500", () => issueRlusd(w.issuer, w.source.classicAddress, "500"));
 
   // Two conditional RLUSD escrows to a builder that has NO trust line yet.
-  const a = generateMilestoneCondition();
-  const b = generateMilestoneCondition();
+  const a = testConditionPair();
+  const b = testConditionPair();
   const t0 = await ledgerTime();
   const cancelA = t0 + 900;
   const cancelB = t0 + MARGIN_S + 75;

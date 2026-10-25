@@ -5,7 +5,9 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button, type ButtonVariant } from "@/components/ui/button";
-import { API_MODE, ApiError, api } from "@/lib/api";
+import { API_MODE, api } from "@/lib/api";
+import { errorDescription, errorFeedback } from "@/lib/error-feedback";
+import { cancelFeedback, checksFeedback, decisionFeedback } from "@/lib/action-feedback";
 import type { ChainEvent, Rlusd, XrplAddress } from "@/lib/contract";
 import { shortHash } from "@/lib/utils";
 
@@ -26,7 +28,7 @@ export type Action =
   | { kind: "keeperTick" }
   | { kind: "tryStealDemo"; projectId: string; milestoneId: string };
 
-type Outcome = { message: string; events: ChainEvent[]; tone?: "success" | "error" };
+type Outcome = { message: string; events: ChainEvent[]; tone?: "success" | "error" | "info" };
 
 async function perform(a: Action): Promise<Outcome> {
   switch (a.kind) {
@@ -53,18 +55,15 @@ async function perform(a: Action): Promise<Outcome> {
     }
     case "runChecks": {
       const r = await api.runChecks(a.projectId, a.milestoneId);
-      const d = r.verdict.decision;
-      const failed = r.verdict.checks.filter((c) => c.result === "fail").length;
-      const message = d === "pass" ? "All checks passed; escrow released" : d === "fail" ? `${failed} check${failed === 1 ? "" : "s"} failed; money stays locked` : "Needs review by the platform operator";
-      return { message, events: r.events, tone: d === "pass" ? "success" : "error" };
+      return { ...checksFeedback(r), events: r.events };
     }
     case "decide": {
       const r = await api.decide(a.projectId, a.milestoneId, { actor: a.actor, decision: a.decision, reason: a.reason });
-      return { message: a.decision === "approve" ? "Approved; escrow released" : "Rejected; money stays locked", events: r.events };
+      return { ...decisionFeedback(a.decision, r.milestone), events: r.events };
     }
     case "cancelMilestone": {
       const r = await api.cancelMilestone(a.projectId, a.milestoneId);
-      return { message: "Escrow cancelled and repaid to the vault", events: r.events };
+      return { ...cancelFeedback(r.milestone), events: r.events };
     }
     case "repay": {
       const r = await api.repay(a.projectId, a.amount);
@@ -84,7 +83,7 @@ async function perform(a: Action): Promise<Outcome> {
     }
     case "keeperTick": {
       const r = await api.keeperTick();
-      return { message: r.events.length ? "Expired escrows cancelled and repaid" : "Nothing has expired", events: r.events };
+      return { message: r.events.length ? "Keeper updates recorded; check the project timeline" : "No keeper updates recorded", events: r.events, tone: "info" };
     }
     case "tryStealDemo": {
       const r = await api.tryStealDemo(a.projectId, a.milestoneId);
@@ -95,13 +94,6 @@ async function perform(a: Action): Promise<Outcome> {
       };
     }
   }
-}
-
-function errorMessage(err: unknown): { title: string; description?: string } {
-  if (err instanceof ApiError) {
-    return { title: err.message, description: err.txResult ? `${err.txResult}${err.txHash ? ` · ${shortHash(err.txHash)}` : ""}` : undefined };
-  }
-  return { title: err instanceof Error ? err.message : "Something went wrong" };
 }
 
 export function ActionButton({
@@ -136,12 +128,13 @@ export function ActionButton({
         action: last && API_MODE === "http" ? { label: "Explorer", onClick: () => window.open(last.explorerUrl, "_blank", "noreferrer") } : undefined,
       };
       if (out.tone === "error") toast.error(out.message, opts);
+      else if (out.tone === "info") toast.info(out.message, opts);
       else toast.success(out.message, opts);
       if (afterHref) router.replace(afterHref, { scroll: false });
       router.refresh();
     } catch (err) {
-      const { title, description } = errorMessage(err);
-      toast.error(title, { description });
+      const feedback = errorFeedback(err);
+      toast.error(feedback.title, { description: errorDescription(feedback), duration: 10_000 });
     } finally {
       setBusy(false);
     }

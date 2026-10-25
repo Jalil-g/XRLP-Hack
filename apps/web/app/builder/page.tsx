@@ -4,11 +4,13 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { EvidenceUploader } from "@/components/builder/evidence-uploader";
 import { TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
+import { buttonClass } from "@/components/ui/button";
 import { Empty, PageHeader, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
-import type { CheckResult, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, checkLabel, sovLinesFor } from "@/lib/display";
+import type { Milestone, ProjectDetail } from "@/lib/contract";
+import { PROJECT_STATUS, sovLinesFor } from "@/lib/display";
+import { MAPLE_FIXTURE_SETS } from "@/lib/fixture-files";
 import { getSession } from "@/lib/session";
 import { formatAmount, toCents } from "@/lib/utils";
 
@@ -26,6 +28,11 @@ export default async function BuilderPage() {
     <div className="space-y-14">
       <AutoRefresh ms={4000} />
       <PageHeader
+        action={
+          <Link href="/builder/new" className={buttonClass("secondary")}>
+            New project
+          </Link>
+        }
         title={builder.name}
         meta={builder.verified ? <Tag tone="pass">Verified builder</Tag> : <Tag>Not verified yet</Tag>}
         description={
@@ -90,36 +97,115 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
       )}
       {p.status === "verified" && <p className="text-body text-ink-2">Verified. The platform locks terms and assigns your inspector next.</p>}
 
-      {d.verification && ["verifying", "verified", "rejected"].includes(p.status) && <VerificationReport v={d.verification} />}
-
-      {current && (
-        <div className="space-y-8">
-          <h3 className="text-body font-semibold">
-            Milestone {current.index + 1}: {current.title} · {formatAmount(current.amount)} RLUSD
-          </h3>
-          {["escrowed", "evidence_submitted", "failed"].includes(current.status) && (
-            <EvidenceUploader
-              projectId={p.id}
-              milestoneId={current.id}
-              milestoneTitle={current.title}
-              requirements={sovLinesFor(p, current).flatMap((l) => l.evidence)}
-            />
-          )}
-          <ChecksPanel
-            milestone={current}
-            status={d.checks[current.id] ?? { required: [], optional: [], outcome: "pending" }}
-            audits={d.audits[current.id] ?? []}
-            attestations={d.attestations[current.id] ?? []}
-            builderName={builder.name}
-            action={
-              ["evidence_submitted", "audited", "failed"].includes(current.status) ? (
-                <ActionButton action={{ kind: "runChecks", projectId: p.id, milestoneId: current.id }}>Run checks</ActionButton>
-              ) : undefined
-            }
-          />
-        </div>
+      {d.verification && (
+        <p className="mb-6 flex flex-wrap items-center gap-3 text-small">
+          <Tag tone={d.verification.decision === "pass" ? "pass" : d.verification.decision === "fail" ? "fail" : "review"}>
+            {d.verification.decision === "pass" ? "Verified" : d.verification.decision === "fail" ? "Rejected" : "Needs an inspector visit"}
+          </Tag>
+          <span className="text-ink-2">Identity, feasibility and capability checked</span>
+          <Link href={`/projects/${p.id}/verification`} className="text-link hover:underline">
+            Verification report
+          </Link>
+        </p>
       )}
+
+      {current && <CurrentMilestone d={d} m={current} />}
+      <Payouts d={d} />
     </Section>
+  );
+}
+
+function Payouts({ d }: { d: ProjectDetail }) {
+  const paid = d.project.milestones.filter((m) => m.status === "released");
+  if (!paid.length) return null;
+  return (
+    <div className="mt-8">
+      <h4 className="mb-2 text-small font-semibold">Paid to you</h4>
+      <ul className="divide-y divide-line border-y border-line">
+        {paid.map((m) => (
+          <li key={m.id} className="flex items-center justify-between gap-4 py-2.5 text-small">
+            <span>
+              {m.index + 1}. {m.title}
+            </span>
+            <span className="flex items-center gap-4">
+              <span className="tabular font-medium text-pass">+{formatAmount(m.amount)} RLUSD</span>
+              {m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} label="EscrowFinish" />}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+const STEP: Partial<Record<Milestone["status"], string>> = {
+  escrowed: "Upload the evidence below. Next, the assigned inspector audits the site, then the checks run.",
+  evidence_submitted: "Evidence received. The assigned inspector audits it and signs; then run the checks. Without a signed audit the inspector check fails.",
+  audited: "The inspector signed the audit. Run the checks: if every one passes, the escrow pays you in seconds.",
+  needs_human: "The checks passed below the confidence this milestone needs. The platform operator is reviewing.",
+  verified: "All checks passed. The release service is finishing the escrow.",
+  expired: "This escrow expired. The money goes back to the project account and is repaid to the vault.",
+};
+
+function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
+  const { project: p, builder } = d;
+  const checks = d.checks[m.id] ?? { required: [], optional: [], outcome: "pending" as const };
+  const failed = [...checks.required, ...checks.optional].filter((c) => c.result === "fail");
+  const flaggedNames = new Set((d.evidence?.[m.id] ?? []).filter((e) => failed.some((c) => c.evidenceIds.includes(e.id))).map((e) => e.filename));
+  const set = /maple/i.test(p.name) ? MAPLE_FIXTURE_SETS[m.index] : undefined;
+  const fixture = set && {
+    label: m.status === "failed" ? "Load Maple St fixture without the flagged photo" : "Load Maple St fixture",
+    files: set.filter((f) => !flaggedNames.has(f.path.split("/").pop()!)),
+  };
+  const uploader = ["escrowed", "evidence_submitted", "failed"].includes(m.status) && (
+    <EvidenceUploader
+      projectId={p.id}
+      milestoneId={m.id}
+      milestoneTitle={m.title}
+      requirements={sovLinesFor(p, m).flatMap((l) => l.evidence)}
+      submitLabel={m.status === "failed" ? "Resubmit" : "Upload"}
+      fixture={fixture}
+    />
+  );
+  const panel = (
+    <ChecksPanel
+      key={m.id}
+      milestone={m}
+      status={checks}
+      audits={d.audits[m.id] ?? []}
+      attestations={d.attestations[m.id] ?? []}
+      builderName={builder.name}
+      builderBalance={d.balances?.builder}
+      evidence={d.evidence?.[m.id]}
+      names={Object.fromEntries(d.inspectors.map((i) => [i.address, i.name]))}
+      run={{ projectId: p.id }}
+    />
+  );
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-body font-semibold">
+          Milestone {m.index + 1}: {m.title} · {formatAmount(m.amount)} RLUSD
+        </h3>
+        <p className="mt-1 max-w-[72ch] text-small text-ink-2">
+          {m.status === "failed"
+            ? `${failed.length === 1 ? "A check" : `${failed.length} checks`} failed, so the money stays locked. Fix what the red row says, then resubmit: the checks run again on the new evidence.`
+            : STEP[m.status]}
+        </p>
+      </div>
+      {m.status === "failed" ? (
+        <>
+          {panel}
+          <h4 className="pt-2 text-body font-semibold">Resubmit evidence</h4>
+          {uploader}
+        </>
+      ) : (
+        <>
+          {uploader}
+          {panel}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -131,32 +217,6 @@ function NextStep({ title, body, action }: { title: string; body: string; action
         <p className="mt-1 text-small text-ink-2">{body}</p>
       </div>
       {action}
-    </div>
-  );
-}
-
-function VerificationReport({ v }: { v: NonNullable<ProjectDetail["verification"]> }) {
-  const groups: [string, CheckResult[]][] = [
-    ["Identity", v.identity],
-    ["Feasibility", v.feasibility],
-    ["Capability", v.capability],
-  ];
-  return (
-    <div className="mt-6 grid gap-8 md:grid-cols-3">
-      {groups.map(([name, checks]) => (
-        <div key={name}>
-          <h4 className="text-small font-semibold">{name}</h4>
-          <ul className="mt-2 space-y-2">
-            {checks.map((c) => (
-              <li key={c.check} className="text-small">
-                <span className={c.result === "pass" ? "text-pass" : c.result === "fail" ? "text-fail" : "text-review"}>{c.result === "pass" ? "Pass" : c.result === "fail" ? "Fail" : "Review"}</span>{" "}
-                <span className="font-medium">{checkLabel(c)}</span>
-                <span className="block text-caption text-ink-2">{c.reason}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
     </div>
   );
 }

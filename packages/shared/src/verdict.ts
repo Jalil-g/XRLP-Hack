@@ -74,6 +74,10 @@ export const Attestation = z.object({
   notes: z.string().default(""),
   txHash: z.string().optional(), // on-chain memo attestation
   at: z.string().datetime(),
+  /** Memo kind of the attestation tx, so each check row can link its own proof (web PROPOSED on #53). */
+  kind: z.enum(["audit", "verdict", "decision", "release"]).optional(),
+  /** The attested hash (audit hash, verdictHash, decision reason hash). */
+  hash: z.string().optional(),
 });
 export type Attestation = z.infer<typeof Attestation>;
 
@@ -133,5 +137,7 @@ export const ChecksStatus = z.object({
   optional: z.array(CheckResult),
   verdict: Verdict.optional(),
   outcome: z.enum(["pending", "pass", "fail", "needs_human"]),
+  /** Required check ids from the milestone's release policy, so the panel lists queued checks before the first run. */
+  suite: z.array(z.string()).optional(),
 });
 export type ChecksStatus = z.infer<typeof ChecksStatus>;

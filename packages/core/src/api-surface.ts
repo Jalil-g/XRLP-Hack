@@ -52,6 +52,21 @@ export interface DemoParty {
   kyc?: boolean;
 }
 
+/** One step the keeper tried and could not finish this tick; it retries the same step on the next tick. */
+export interface KeeperIssue {
+  projectId: string;
+  milestoneId: string;
+  step: "cancel" | "refund" | "release";
+  code: string;
+  message: string;
+}
+
+/** Route 22. `issues` is empty when every due step went through. */
+export interface KeeperTickResult {
+  events: ChainEvent[];
+  issues: KeeperIssue[];
+}
+
 export interface CoreApi {
   listDemoParties(): Promise<DemoParty[]>;
   listProjects(q?: { status?: ProjectStatus }): Promise<ProjectSummary[]>; // 1
@@ -91,7 +106,7 @@ export interface CoreApi {
   kycInvestor(address: XrplAddress): Promise<{ events: ChainEvent[] }>; // 19
   portfolio(investor: XrplAddress): Promise<PortfolioPosition[]>; // 20
   resetDemo(body: { seed?: "maple-st" }): Promise<{ ok: true }>; // 21
-  keeperTick(): Promise<{ events: ChainEvent[] }>; // 22
+  keeperTick(): Promise<KeeperTickResult>; // 22
   tryStealDemo(id: string, mid: string): Promise<TryStealResult>; // 23
 }
 

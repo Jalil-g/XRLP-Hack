@@ -12,6 +12,7 @@ export * from "./file-store.ts";
 export * from "./service.ts";
 export * from "./read-models.ts";
 export * from "./factory.ts";
+export * from "./keeper.ts";
 export { FakeLedger, type FakeLedgerOptions } from "./fakes/fake-ledger.ts";
 export { FakeVerifier, haversineM } from "./fakes/fake-verifier.ts";
 export { fakeAddress, fakeHash, sha256Hex, canonicalJson } from "./ids.ts";

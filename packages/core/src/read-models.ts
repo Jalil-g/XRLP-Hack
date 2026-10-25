@@ -168,6 +168,9 @@ export function projectSummary(db: DbState, p: Project): ProjectSummary {
     builderName: builder?.name ?? p.builderId,
     fundingDeadline: p.terms.fundingDeadline,
     verified: !["draft", "verifying", "rejected"].includes(p.status),
+    interestRateBps: p.terms.interestRateBps,
+    builderId: p.builderId,
+    builderVerified: builder?.verified ?? false,
   };
 }
 
@@ -187,7 +190,9 @@ export function projectDetail(db: DbState, p: Project, now: Date): ProjectDetail
   const checks: Record<string, ChecksStatus> = {};
   const audits: Record<string, InspectorAudit[]> = {};
   const attestations: Record<string, Attestation[]> = {};
+  const evidence: Record<string, Evidence[]> = {};
   for (const m of p.milestones) {
+    evidence[m.id] = roundEvidence(db, m.id, currentRound(db, m.id)).map(({ projectId: _p, milestoneId: _m, round: _r, ...e }) => e);
     checks[m.id] = checksFor(db, p, m);
     audits[m.id] = db.audits.filter((a) => a.milestoneId === m.id).map(stripRecord);
     attestations[m.id] = db.attestations.filter((a) => a.milestoneId === m.id).map(stripRecord);
@@ -209,6 +214,7 @@ export function projectDetail(db: DbState, p: Project, now: Date): ProjectDetail
     attestations,
     vault: vaultSnapshot(db, p, now),
     loan: loanSnapshot(db, p),
+    evidence,
   };
 }
 

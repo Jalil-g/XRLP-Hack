@@ -34,7 +34,7 @@ import {
   type InspectorAssignment,
 } from "@xrlp/shared";
 import { z } from "zod";
-import type { AuditReportInput, CoreApi, DemoParty, EvidenceUpload, ReleaseServicePort, StoredFile } from "./api-surface.ts";
+import type { AuditReportInput, CoreApi, DemoParty, EvidenceUpload, KeeperIssue, KeeperTickResult, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
 import { DomainError } from "./errors.ts";
@@ -321,8 +321,31 @@ export class CoreService implements CoreApi {
   listProjects(q: { status?: ProjectStatus } = {}): Promise<ProjectSummary[]> {
     return this.read((db) => db.projects.filter((p) => !q.status || p.status === q.status).map((p) => projectSummary(db, p)));
   }
-  getProject(id: string): Promise<ProjectDetail> {
-    return this.read((db) => projectDetail(db, getProjectOrThrow(db, id), this.now()));
+  async getProject(id: string): Promise<ProjectDetail> {
+    const d = await this.read((db) => projectDetail(db, getProjectOrThrow(db, id), this.now()));
+    // Queued checks before the first run: the policy's required check ids.
+    for (const m of d.project.milestones) {
+      const c = d.checks[m.id];
+      if (c && c.outcome === "pending" && c.required.length === 0) c.suite = [...this.verifier.policyFor(d.project, m).requiredChecks];
+    }
+    const balances = await this.liveBalances(d.project.chain.spv, d.builder.address);
+    return balances ? { ...d, balances } : d;
+  }
+
+  /** SPV + builder RLUSD, best effort: a slow or failing ledger read never breaks the project page. */
+  private async liveBalances(spv: XrplAddress | undefined, builder: XrplAddress): Promise<ProjectDetail["balances"]> {
+    if (!spv) return undefined;
+    let timer: Parameters<typeof clearTimeout>[0];
+    const timeout = new Promise<undefined>((r) => (timer = setTimeout(r, 2000)));
+    const read = Promise.all([this.ledger.getBalance(spv, "RLUSD"), this.ledger.getBalance(builder, "RLUSD")]).then(
+      ([s, b]) => ({ spv: s, builder: b }),
+      () => undefined,
+    );
+    try {
+      return await Promise.race([read, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   listEvents(id: string): Promise<ChainEvent[]> {
     return this.read((db) => {
@@ -740,7 +763,7 @@ export class CoreService implements CoreApi {
         if (m.status !== "audited") this.setMilestoneStatus(m, "audited");
         const rec: AuditRecord = { ...audit, projectId: id, round };
         db.audits.push(rec);
-        db.attestations.push({ milestoneId: mid, role: "inspector", signer: inspector, decision: allDone ? "approve" : "reject", notes: audit.notes, txHash: tx.hash, at, projectId: id, round });
+        db.attestations.push({ milestoneId: mid, role: "inspector", signer: inspector, decision: allDone ? "approve" : "reject", notes: audit.notes, txHash: tx.hash, at, projectId: id, round, kind: "audit", hash: auditHash });
         db.chainEvents.push(...events);
         return { milestone: m, audit, events };
       });
@@ -800,6 +823,8 @@ export class CoreService implements CoreApi {
           decision: evaluation.outcome === "pass" ? "approve" : "reject",
           notes: verdict.summary,
           txHash: tx.hash,
+          kind: "verdict",
+          hash: verdictHash,
           at: this.nowIso(),
           projectId: id,
           round,
@@ -843,6 +868,7 @@ export class CoreService implements CoreApi {
       db.attestations.push({
         milestoneId: mid,
         role: "release_service",
+        kind: "release",
         signer: this.releaseServiceAddress,
         decision: "approve",
         notes: "test suite green; escrow finished",
@@ -892,7 +918,7 @@ export class CoreService implements CoreApi {
         const p = this.projectIn(db, id);
         const m = getMilestoneOrThrow(p, mid);
         db.decisions.push({ projectId: id, milestoneId: mid, round: ctx.round, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
-        db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round });
+        db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round, kind: "decision", hash: sha256Hex(reason) });
         this.applyOutcome(m, evaluation);
         db.chainEvents.push(...events);
         return m;
@@ -910,26 +936,26 @@ export class CoreService implements CoreApi {
     return this.locks.run(id, () => this.cancelExpiredLocked(id, mid));
   }
 
-  private async cancelExpiredLocked(id: string, mid: string): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
+  /** `events` collects each committed step's events, so a caller still sees the cancel when the refund then throws. */
+  private async cancelExpiredLocked(id: string, mid: string, events: ChainEvent[] = []): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
     const { p, m } = await this.read((db) => {
       const p = this.projectIn(db, id);
       return { p, m: getMilestoneOrThrow(p, mid) };
     });
     if (!m.escrow) throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} has no escrow`);
-    const events: ChainEvent[] = [];
     if (m.status !== "expired") {
       // The ledger lets anyone cancel any open escrow after CancelAfter, whatever our workflow state says.
       if (!isLocked(m.status)) throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} is ${m.status}; its escrow is not open`);
       if (!m.cancelAfter || this.now() < new Date(m.cancelAfter))
         throw new DomainError("TOO_SOON", `Escrow for ${mid} can be cancelled after ${m.cancelAfter}`, undefined, { txResult: "tecNO_PERMISSION" });
-      const tx = await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner: m.escrow!.owner, offerSequence: m.escrow!.offerSequence }));
-      const evs = this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.platformAddress, amount: m.amount });
+      const tx = await this.cancelOrConfirmGone(m);
+      const evs = tx ? this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.platformAddress, amount: m.amount }) : [];
       events.push(...evs);
       await this.store.write((db) => {
         const p = this.projectIn(db, id);
         const m = getMilestoneOrThrow(p, mid);
         m.status = "expired"; // forced: ledger reality (cancel succeeded) wins over workflow state
-        if (m.escrow) m.escrow.cancelTx = tx.hash;
+        if (m.escrow && tx) m.escrow.cancelTx = tx.hash;
         if (canProjectTransition(p.status, "stalled")) {
           p.status = "stalled";
           this.meta(db, id).stalledAt = this.nowIso();
@@ -951,6 +977,25 @@ export class CoreService implements CoreApi {
       return m;
     });
     return { milestone, events };
+  }
+
+  /**
+   * EscrowCancel, or null when the escrow is already gone from the ledger (cancelled out of band: anyone may cancel
+   * after CancelAfter, or our commit was lost after a successful cancel). A `verified` milestone whose escrow is gone
+   * may have been finished, so that case is left for a human instead of refunding.
+   */
+  private async cancelOrConfirmGone(m: Milestone): Promise<TxResult | null> {
+    const { owner, offerSequence } = m.escrow!;
+    try {
+      return await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner, offerSequence }));
+    } catch (e) {
+      if (!(e instanceof DomainError) || e.code !== "LEDGER_ERROR") throw e;
+      const onLedger = await this.ledger.getEscrow(owner, offerSequence).catch(() => undefined);
+      if (onLedger !== null) throw e; // still there (or unknown): the cancel really failed
+      if (m.status === "verified")
+        throw new DomainError("LEDGER_ERROR", `Escrow for ${m.id} is gone from the ledger but the milestone is verified; check for a finish before refunding`, e);
+      return null;
+    }
   }
 
   // ---------- route 14 ----------
@@ -1023,8 +1068,12 @@ export class CoreService implements CoreApi {
 
   // ---------- route 22 ----------
 
-  /** Cancels every expired open escrow (+ refund LoanPay), retries pending refunds and pending releases. Idempotent. */
-  async keeperTick(): Promise<{ events: ChainEvent[] }> {
+  /**
+   * Cancels every expired open escrow (+ refund LoanPay), retries pending refunds and pending releases. Idempotent per
+   * step: cancel and LoanPay commit separately, so a failed refund is retried without a second cancel. Failures stay
+   * on the milestone for the next tick and are reported in `issues`.
+   */
+  async keeperTick(): Promise<KeeperTickResult> {
     const todo = await this.read((db) =>
       db.projects.flatMap((p) =>
         p.milestones
@@ -1033,20 +1082,28 @@ export class CoreService implements CoreApi {
       ),
     );
     const events: ChainEvent[] = [];
+    const issues: KeeperIssue[] = [];
     const now = this.now();
     for (const t of todo) {
       const expired = !!t.cancelAfter && now >= new Date(t.cancelAfter);
+      const cancelPath = t.status === "expired" || (expired && isLocked(t.status));
+      if (!cancelPath && !(t.status === "verified" && !expired)) continue;
       try {
-        if (t.status === "expired" || (expired && isLocked(t.status))) {
-          events.push(...(await this.cancelExpired(t.pid, t.mid)).events);
-        } else if (t.status === "verified" && !expired) {
-          events.push(...(await this.locks.run(t.pid, () => this.releaseVerifiedLocked(t.pid, t.mid))).events);
-        }
-      } catch {
-        // leave for the next tick; the error is visible on the milestone's next manual action
+        if (cancelPath) await this.locks.run(t.pid, () => this.cancelExpiredLocked(t.pid, t.mid, events));
+        else events.push(...(await this.locks.run(t.pid, () => this.releaseVerifiedLocked(t.pid, t.mid))).events);
+      } catch (e) {
+        const after = await this.read((db) => db.projects.find((p) => p.id === t.pid)?.milestones.find((m) => m.id === t.mid)?.status);
+        const step = !cancelPath ? "release" : after === "expired" ? "refund" : "cancel";
+        issues.push({
+          projectId: t.pid,
+          milestoneId: t.mid,
+          step,
+          code: e instanceof DomainError ? e.code : "INTERNAL",
+          message: (e as Error).message,
+        });
       }
     }
-    return { events };
+    return { events, issues };
   }
 
   // ---------- route 23 ----------
