@@ -40,10 +40,6 @@ export {
   normalizeCondition,
   PREIMAGE_CONDITION_RE,
 } from "./condition.ts";
-/** @deprecated — core's release service generates conditions (CORE-12). Kept only so scripts/demo.ts compiles; tests/spikes use test/support/conditions.ts. */
-export { generateMilestoneCondition } from "./condition.ts";
-/** @deprecated — see generateMilestoneCondition. */
-export type { MilestoneCondition } from "./condition.ts";
 // XRPL-06: close validation (pure) + typed close errors
 export { planLoanClose, CloseValidationError, CloseLoanPartialError, MIN_ESCROW_LIFETIME_S, MIN_PAYMENT_INTERVAL_S, MAX_INTEREST_RATE } from "./loan-close.ts";
 export type { ClosePlan, ClosePlanInput, PlannedEscrow, CloseConditions, CreatedEscrowRef } from "./loan-close.ts";
