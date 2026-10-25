@@ -1,4 +1,6 @@
 // @xrlp/verifier — AI + deterministic evidence verification. See ../API.md.
+export { ClaudeVerifierAdapter } from "./adapter.ts";
+export type { AdapterOptions } from "./adapter.ts";
 export { verifyProject } from "./verifyProject.ts";
 export type { VerifyProjectInput, ProjectHistory, ProjectVerificationResult } from "./verifyProject.ts";
 export { canonicalJson, verdictHash } from "./hash.ts";
