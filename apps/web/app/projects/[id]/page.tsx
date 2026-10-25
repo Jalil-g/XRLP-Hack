@@ -189,7 +189,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
               { label: "Signers", value: <Val main="3 of 4 needed" note="Platform, builder, inspector, trustee" /> },
               {
                 label: "Inspector",
-                value: d.inspectors.length ? <Val main={d.inspectors.map((i) => i.name).join(", ")} note="Assigned by the AI when terms locked" /> : <Val main="Not assigned yet" note="The AI assigns one when terms lock" />,
+                value: d.inspectors.length ? <Val main={d.inspectors.map((i) => i.name).join(", ")} note="Assigned from the verified panel when terms locked" /> : <Val main="Not assigned yet" note="Assigned from the verified panel when terms lock" />,
               },
               { label: "Releases", value: <Val main="Decided by the checks" note="Escrows pay the builder or go back" /> },
             ]}
