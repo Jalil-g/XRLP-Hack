@@ -1,43 +1,47 @@
-// Wiring. The web app should create ONE core per process:  `const core = createCore()`.
-import { systemClock, type Clock } from "./clock.ts";
+// Wiring. One core per process: `const core = createCore()`. Fake mode by default (LEDGER_MODE=fake, CORE_VERIFIER=fake).
+import { join } from "node:path";
+import type { LedgerPort, VerifierPort } from "@xrlp/shared";
+import type { ReleaseServicePort } from "./api-surface.ts";
+import { FakeClock, systemClock, type Clock } from "./clock.ts";
+import { DEMO_ADDRESSES, demoCancelAfter, seedDemo, SEED_BACKDATE_MS } from "./demo/scenario.ts";
 import { FakeLedger } from "./fakes/fake-ledger.ts";
 import { FakeVerifier } from "./fakes/fake-verifier.ts";
 import { FileStore, resolveDataDir } from "./file-store.ts";
-import type { LedgerPort, VerifierPort } from "./ports.ts";
-import { ReadModels } from "./read-models.ts";
+import { FilePreimageVault, MemoryPreimageVault, ReleaseService } from "./release-service.ts";
 import { CoreService, type CoreServiceOptions } from "./service.ts";
 import { MemoryStore, type Store } from "./store.ts";
 
 export interface Core {
   service: CoreService;
-  read: ReadModels;
   store: Store;
   ledger: LedgerPort;
   verifier: VerifierPort;
+  release: ReleaseServicePort;
   clock: Clock;
   /** undefined for in-memory cores. */
   dataDir?: string;
 }
 
 export interface CreateCoreOptions extends Partial<CoreServiceOptions> {
-  /** Use an in-memory store (tests / simulate). Default false -> FileStore under DATA_DIR. */
+  /** In-memory store, ledger state and preimage vault (tests / simulate). Default false -> files under DATA_DIR. */
   inMemory?: boolean;
   dataDir?: string;
   env?: Record<string, string | undefined>;
 }
 
-function ledgerFromEnv(env: Record<string, string | undefined>, clock: Clock): LedgerPort {
+function ledgerFromEnv(env: Record<string, string | undefined>, clock: Clock, dataDir?: string): LedgerPort {
   const mode = env.LEDGER_MODE ?? "fake";
-  if (mode === "fake") return new FakeLedger({ clock });
-  // TODO(adapters): LEDGER_MODE=devnet -> new XrplLedger(...) from src/adapters/xrpl-ledger.ts (@xrlp/xrpl).
-  throw new Error(`LEDGER_MODE=${mode} not wired yet (only "fake"). See TODO in packages/core/src/ports.ts`);
+  if (mode === "fake")
+    return new FakeLedger({ clock, platformAddress: DEMO_ADDRESSES.platform, stateFile: dataDir ? join(dataDir, "fake-ledger.json") : undefined });
+  // TODO(adapters): LEDGER_MODE=devnet -> packages/xrpl/src/adapter.ts (@Jalil-g, XRPL lane).
+  throw new Error(`LEDGER_MODE=${mode} not wired yet (only "fake")`);
 }
 
 function verifierFromEnv(env: Record<string, string | undefined>, clock: Clock): VerifierPort {
   const mode = env.CORE_VERIFIER ?? "fake";
   if (mode === "fake") return new FakeVerifier(clock);
-  // TODO(adapters): CORE_VERIFIER=verifier -> adapter over @xrlp/verifier (which itself honours VERIFIER_MODE=mock|live).
-  throw new Error(`CORE_VERIFIER=${mode} not wired yet (only "fake"). See TODO in packages/core/src/ports.ts`);
+  // TODO(adapters): CORE_VERIFIER=verifier -> packages/verifier/src/adapter.ts (@elmir132).
+  throw new Error(`CORE_VERIFIER=${mode} not wired yet (only "fake")`);
 }
 
 export function createCore(opts: CreateCoreOptions = {}): Core {
@@ -45,8 +49,36 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const clock = opts.clock ?? systemClock;
   const dataDir = opts.inMemory ? undefined : (opts.dataDir ?? resolveDataDir(env));
   const store = opts.store ?? (dataDir ? new FileStore(dataDir) : new MemoryStore());
-  const ledger = opts.ledger ?? ledgerFromEnv(env, clock);
+  const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir);
   const verifier = opts.verifier ?? verifierFromEnv(env, clock);
-  const service = new CoreService({ ...opts, store, ledger, verifier, clock });
-  return { service, read: new ReadModels(store), store, ledger, verifier, clock, dataDir };
+  const release =
+    opts.release ?? new ReleaseService({ ledger, vault: dataDir ? new FilePreimageVault(dataDir) : new MemoryPreimageVault(), now: () => clock.now() });
+
+  // Route 21 seeding (fake ledger with files only): replay the demo story on a back-dated clock through a twin core
+  // that shares this store, the fake ledger's state file and the preimage vault.
+  const canSeed = !opts.seed && dataDir && ledger instanceof FakeLedger && !opts.ledger;
+  const seed: CoreServiceOptions["seed"] =
+    opts.seed ??
+    (canSeed
+      ? async () => {
+          const twinClock = new FakeClock(new Date(clock.now().getTime() - SEED_BACKDATE_MS));
+          const twin = createCore({ dataDir, env, store, clock: twinClock, cancelAfterFor: demoCancelAfter, seed: async () => {}, resetLedger: () => {} });
+          await seedDemo(twin.service, twinClock);
+        }
+      : undefined);
+
+  const service = new CoreService({
+    platformAddress: DEMO_ADDRESSES.platform,
+    aiAgentAddress: DEMO_ADDRESSES.aiAgent,
+    releaseServiceAddress: DEMO_ADDRESSES.releaseService,
+    ...opts,
+    store,
+    ledger,
+    verifier,
+    release,
+    clock,
+    seed,
+    resetLedger: opts.resetLedger ?? (ledger instanceof FakeLedger ? () => ledger.reset() : undefined),
+  });
+  return { service, store, ledger, verifier, release, clock, dataDir };
 }

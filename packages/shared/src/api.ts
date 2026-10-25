@@ -87,6 +87,10 @@ export type ProjectSummary = Pick<Project, "id" | "name" | "type" | "status" | "
   builderName: string;
   fundingDeadline: string;
   verified: boolean;
+  interestRateBps?: number;
+  builderId?: string;
+  /** Builder holds the platform's verified-builder credential. */
+  builderVerified?: boolean;
 };
 
 /** Route 2. Record keys are milestone ids. */
@@ -102,6 +106,10 @@ export interface ProjectDetail {
   attestations: Record<string, Attestation[]>;
   vault?: VaultSnapshot;
   loan?: LoanSnapshot;
+  /** Builder evidence of each milestone's current round (check rows show thumbnails; CheckResult only carries ids). */
+  evidence?: Record<string, Evidence[]>;
+  /** Live RLUSD balances (money map, "builder balance ticks"). Absent before the SPV exists or if the ledger read fails. */
+  balances?: { spv: Rlusd; builder: Rlusd };
 }
 
 /** Route 18. */
