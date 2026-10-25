@@ -2,12 +2,13 @@
 // gated by a PREIMAGE-SHA-256 condition, refundable to the SPV after CancelAfter.
 import { randomBytes } from "node:crypto";
 import { explorerTxUrl, TooSoonError } from "@xrlp/shared";
-import type { Wallet } from "xrpl";
-import { getClient, isNotFound, signAndSubmit, XrplTxError, type TxResult } from "./client.ts";
+import type { EscrowFinish, Wallet } from "xrpl";
+import { getClient, isNotFound, signAndSubmit, submitBlob, withAccountLock, XrplTxError, type TxResult } from "./client.ts";
 import { assertPreimageSha256Condition, fulfillmentFromPreimage, fulfillmentMatches } from "./condition.ts";
 import { assertPreflightOk, preflightFinish, UnsafeReleaseError, type LedgerNow, type PreflightReason, type PreflightResult } from "./preflight.ts";
 import { rlusdAmount } from "./rlusd.ts";
 import { multisignAndSubmit } from "./spv.ts";
+import { assertLlsMargin } from "./submit.ts";
 
 export interface CreateEscrowParams {
   spv: string;
@@ -67,48 +68,85 @@ export interface FinishEscrowParams {
   marginS?: number;
 }
 
+/** Network seams of finishEscrow (tests inject fakes; defaults are the real devnet calls). */
+export interface FinishEscrowDeps {
+  preflightFinish: typeof preflightFinish;
+  /** Fill Sequence (and LastLedgerSequence = validated + margin when the tx has none) for the submitter. */
+  prepare(tx: EscrowFinish, lastLedgerMargin: number): Promise<EscrowFinish>;
+  /** Submit a pre-signed blob: resubmits that exact blob on transient failures, never re-signs it. */
+  submitBlob(blob: string, txType: string): Promise<TxResult>;
+}
+
+const realFinishDeps: FinishEscrowDeps = {
+  preflightFinish,
+  async prepare(tx, lastLedgerMargin) {
+    const client = await getClient();
+    const withLls = tx.LastLedgerSequence === undefined ? { ...tx, LastLedgerSequence: (await client.getLedgerIndex()) + lastLedgerMargin } : tx;
+    return client.autofill(withLls);
+  },
+  submitBlob: (blob, txType) => submitBlob(blob, txType),
+};
+
 /**
  * EscrowFinish — anyone may submit; the fulfillment is the gate. `submitter` (releaseService) pays the fee.
  * Runs preflightFinish first (throws UnsafeReleaseError, nothing submitted) unless `skipPreflight`, and uses its Fee
- * (sized for the fulfillment) and LastLedgerSequence. If the submit fails `retriable` (nothing applied), preflight is
- * re-run and the finish rebuilt once.
+ * (sized for the fulfillment) and LastLedgerSequence.
+ * Every blob that carries the fulfillment is signed right after its own preflight, under the submitter's account lock,
+ * and submitted pre-signed: the retry engine may resubmit that exact blob (same hash, applies at most once) but never
+ * re-signs it, since a re-signed finish would outlive the preflight that allowed it (security review H3). If that blob
+ * provably can't apply (`retriable`), preflight is re-run and the finish rebuilt once.
+ * Errors: `UnsafeReleaseError` (`unsafe_release`) only when the fulfillment never left this process; a refusal on the
+ * rebuild's preflight is `XrplTxError("preflight_refused_after_submit")`, because the first blob may have been broadcast.
  */
-export async function finishEscrow(p: FinishEscrowParams): Promise<TxResult> {
+export async function finishEscrow(p: FinishEscrowParams, deps: Partial<FinishEscrowDeps> = {}): Promise<TxResult> {
   if (!fulfillmentMatches(p.condition, p.fulfillment)) throw new Error("fulfillment does not match escrow condition");
-  const margin = p.lastLedgerMargin ?? FINISH_LLS_MARGIN;
-  const attempt = async () => {
-    const pf = p.skipPreflight
-      ? undefined
-      : await preflightFinish({
-          owner: p.owner,
-          offerSequence: p.offerSequence,
-          condition: p.condition,
-          fulfillment: p.fulfillment,
-          submitter: p.submitter.classicAddress,
-          lastLedgerOffset: margin,
-          ...(p.destination ? { destination: p.destination } : {}),
-          ...(p.marginS !== undefined ? { marginS: p.marginS } : {}),
-        });
-    if (pf) assertPreflightOk(pf);
-    return signAndSubmit(
-      p.submitter,
-      {
-        ...(pf ? { Fee: pf.details.recommendedFee, LastLedgerSequence: pf.details.lastLedgerSequence } : {}),
-        TransactionType: "EscrowFinish",
-        Account: p.submitter.classicAddress,
-        Owner: p.owner,
-        OfferSequence: p.offerSequence,
-        Condition: p.condition,
-        Fulfillment: p.fulfillment,
-      },
-      { lastLedgerMargin: margin },
-    );
-  };
+  const d: FinishEscrowDeps = { ...realFinishDeps, ...deps };
+  const margin = assertLlsMargin(p.lastLedgerMargin ?? FINISH_LLS_MARGIN, "EscrowFinish lastLedgerMargin");
+  const account = p.submitter.classicAddress;
+  const attempt = () =>
+    withAccountLock(account, async () => {
+      const pf = p.skipPreflight
+        ? undefined
+        : await d.preflightFinish({
+            owner: p.owner,
+            offerSequence: p.offerSequence,
+            condition: p.condition,
+            fulfillment: p.fulfillment,
+            submitter: account,
+            lastLedgerOffset: margin,
+            ...(p.destination ? { destination: p.destination } : {}),
+            ...(p.marginS !== undefined ? { marginS: p.marginS } : {}),
+          });
+      if (pf) assertPreflightOk(pf);
+      const prepared = await d.prepare(
+        {
+          ...(pf ? { Fee: pf.details.recommendedFee, LastLedgerSequence: pf.details.lastLedgerSequence } : {}),
+          TransactionType: "EscrowFinish",
+          Account: account,
+          Owner: p.owner,
+          OfferSequence: p.offerSequence,
+          Condition: p.condition,
+          Fulfillment: p.fulfillment,
+        },
+        margin,
+      );
+      return d.submitBlob(p.submitter.sign(prepared).tx_blob, "EscrowFinish");
+    });
+  let first: XrplTxError;
   try {
     return await attempt();
   } catch (e) {
     if (!(e instanceof XrplTxError) || !e.retriable) throw e;
-    return attempt();
+    first = e;
+  }
+  try {
+    return await attempt();
+  } catch (e) {
+    if (!(e instanceof UnsafeReleaseError)) throw e;
+    throw new XrplTxError("EscrowFinish", "preflight_refused_after_submit", undefined, {
+      detail: `${e.reason}: ${e.result.message}; the first finish (${first.engineResult}) provably did not apply, but it may have been broadcast`,
+      cause: e,
+    });
   }
 }
 

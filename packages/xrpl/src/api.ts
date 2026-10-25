@@ -31,6 +31,7 @@ import {
   conditionsByIndex,
   defaultEscrowMode,
   escrowCreatesFromHistory,
+  escrowDestinationProblems,
   historyTxs,
   ledgerEscrowsFromNodes,
   loanMaturity,
@@ -48,22 +49,24 @@ import {
   type ResumeEscrowRef,
   type ResumeMilestone,
 } from "./loan-close.ts";
-import { checkSignerQuorum, createSpvAccount, getSpvInfo, lockSpv, type SpvSigners } from "./spv.ts";
+import { createSpvAccount, getSpvInfo, lockSpv, spvCountersignProblems, spvSignerProblems, type SpvSigners } from "./spv.ts";
 import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
 import {
   credentialPlan,
   ensureFundedWallets,
+  loadWalletFile,
   loadWallets,
   NO_KYC_ROLES,
   rememberSpv,
   resolveWallet,
   RLUSD_HOLDERS,
   rlusdTopUpPlan,
+  walletsFromFile,
   type DemoWallets,
   type WalletRole,
 } from "./wallets.ts";
 import { closePartialError, createEscrowsAtomic, type AtomicEscrow } from "./batch.ts";
-import { fetchLedgerNow } from "./reads.ts";
+import { fetchAccountRoot, fetchLedgerNow } from "./reads.ts";
 import type { LoanEntry } from "./loan.ts";
 
 /** Role name ("investor1"), a demo-wallet address (r...), or a Wallet. */
@@ -239,22 +242,25 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   }
   const platformRlusd = await rlusdBalance(w.platform.classicAddress, issuer);
   if (Number(platformRlusd) < Number(coverAmount)) throw new Error(`platform holds ${platformRlusd} RLUSD < cover deposit ${coverAmount}; top it up (bootstrapWallets platformRlusd)`);
-
-  const { wallet: spv, trustTx } = await createSpvAccount(issuer);
-  rememberSpv(project.id, spv);
-  if (trustTx) txs.spvTrustSet = trustTx;
-  if (opts.lockSpv !== false) {
-    const lock = await lockSpv(spv, spvSignersFor(opts.spvSigners));
-    txs.spvSignerListSet = lock.signerListSet;
-    txs.spvDisableMaster = lock.disableMaster;
-  }
-
+  // Signers and dates are checked before the SPV is funded (security review L4, M6).
+  const spvSigners = opts.lockSpv !== false ? spvSignersFor(opts.spvSigners) : undefined;
   const now = await ledgerTime();
   const subEnd = opts.subscriptionEndsAt ? isoTimeToRippleTime(opts.subscriptionEndsAt.toISOString()) : isoTimeToRippleTime(project.terms.fundingDeadline);
   const redemption = opts.redemptionAt
     ? isoTimeToRippleTime(opts.redemptionAt.toISOString())
     : vaultDatesFor({ subscriptionDate: subEnd, ...schedule }).redemptionDate;
   if (subEnd <= now) throw new Error(`subscription end ${rippleTimeToISOTime(subEnd)} is not in the future (ledger now ${rippleTimeToISOTime(now)})`);
+
+  const { wallet: spv, trustTx } = await createSpvAccount(issuer);
+  rememberSpv(project.id, spv);
+  if (trustTx) txs.spvTrustSet = trustTx;
+  if (spvSigners) {
+    const lock = await lockSpv(spv, spvSigners);
+    txs.spvSignerListSet = lock.signerListSet;
+    txs.spvDisableMaster = lock.disableMaster;
+  }
+  const beforeVault = await ledgerTime();
+  if (subEnd <= beforeVault) throw new Error(`subscription end ${rippleTimeToISOTime(subEnd)} is not in the future (ledger now ${rippleTimeToISOTime(beforeVault)})`);
 
   const vault = await createVault({
     owner: w.platform,
@@ -299,15 +305,27 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   };
 }
 
-/** v2 SPV signer list with demo-role defaults: platform, builder, inspector1, trustee (override any). */
+/** Demo keys that must never be SPV signers (security review M6): the AI only attests, releaseService only finishes. */
+export function forbiddenSpvSigners(w: DemoWallets): Record<string, string> {
+  return { aiAgent: w.aiAgent.classicAddress, releaseService: w.releaseService.classicAddress, issuer: w.issuer.classicAddress };
+}
+
+/**
+ * v2 SPV signer list with demo-role defaults: platform, builder, inspector1, trustee (override any). Refuses
+ * (CloseValidationError, before any tx) a slot that isn't a classic address or holds the aiAgent / releaseService /
+ * issuer key.
+ */
 export function spvSignersFor(o: Partial<SpvSigners> = {}): SpvSigners {
   const w = loadWallets();
-  return {
+  const s: SpvSigners = {
     platform: o.platform ?? w.platform.classicAddress,
     builder: o.builder ?? w.builder.classicAddress,
     inspector: o.inspector ?? w.inspector1.classicAddress,
     trustee: o.trustee ?? w.trustee.classicAddress,
   };
+  const issues = spvSignerProblems(s, forbiddenSpvSigners(w));
+  if (issues.length) throw new CloseValidationError(issues, "SPV signers");
+  return s;
 }
 
 /**
@@ -537,13 +555,21 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
       ...(vault.RedemptionDate != null ? { redemptionDate: vault.RedemptionDate } : {}),
       existingConditions: existing.flatMap((e) => (e.Condition ? [e.Condition] : [])),
     });
-    if (!opts.spvSingleKey) {
-      const info = await getSpvInfo(spv);
-      const q = info.signerQuorum == null ? undefined : checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signers.map((s) => s.classicAddress));
-      if (!q?.ok) {
-        const why = !q ? "SPV has no SignerList" : q.unknown.length ? `not on the SPV list: ${q.unknown.join(", ")}` : q.duplicates.length ? `duplicate signers: ${q.duplicates.join(", ")}` : `weight ${q.weight} < quorum ${q.quorum}`;
-        throw new CloseValidationError([`SPV signers cannot countersign: ${why}`]);
-      }
+    // The escrow destination is fixed at EscrowCreate and every release pays it: check it before the LoanSet (M5).
+    const builder = opts.builderAddress ?? w.builder.classicAddress;
+    const info = opts.spvSingleKey ? undefined : await getSpvInfo(spv);
+    const destinationIssues = escrowDestinationProblems({
+      destination: builder,
+      spv,
+      issuer,
+      otherRoles: nonBuilderRoles(w),
+      ...(info ? { spvSigners: info.signers.map((s) => s.account) } : {}),
+      exists: isValidClassicAddress(builder) ? (await fetchAccountRoot(builder)) !== null : true,
+    });
+    if (destinationIssues.length) throw new CloseValidationError(destinationIssues);
+    if (info) {
+      const why = spvCountersignProblems(info, signers.map((s) => s.classicAddress));
+      if (why.length) throw new CloseValidationError(why.map((m) => `SPV signers cannot countersign: ${m}`));
     }
 
     const originationFee = opts.originationFee ?? originationFeeFor(project.terms.principal);
@@ -591,7 +617,6 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
     const txs: TxResult[] = [loan.tx];
 
     // From here on the loan exists: every failure is a CloseLoanPartialError (the SPV holds what isn't escrowed yet).
-    const builder = opts.builderAddress ?? w.builder.classicAddress;
     const escrows: MilestoneEscrowInfo[] = [];
     const context = { projectId: project.id, spv, builder, issuer, escrowMode: plan.escrowMode, planned: plan.escrows, maturity: plan.maturity, originationFee };
     const partial = (failure: unknown, extra: { prepared?: { hash: string; lastLedgerSequence: number }; uncertain?: boolean } = {}) =>
@@ -668,6 +693,11 @@ export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoa
   });
 }
 
+/** Every demo role's address except the builder's: none of them may receive milestone escrows (M5). */
+function nonBuilderRoles(w: DemoWallets): Record<string, string> {
+  return Object.fromEntries(Object.entries(w).flatMap(([role, wallet]) => (role === "builder" ? [] : [[role, wallet.classicAddress]])));
+}
+
 /** `{ at }` for toChainEvent: the tx's ledger close time when known (else toChainEvent uses now). */
 function atOf(t: TxResult): { at?: string } {
   const at = txTime(t);
@@ -701,13 +731,17 @@ export interface ResumeEscrowOptions {
   /** SPV quorum for the EscrowCreates. Default platform + builder + trustee. */
   spvSigners?: Wallet[];
   spvSingleKey?: Wallet;
-  /** Escrow destination for the `{ project, ... }` form (a CloseLoanPartialError carries its own). Default: demo builder. */
+  /**
+   * Escrow destination. **Required** for the `{ project, ... }` form (checked like the close: a classic address, not the
+   * SPV / issuer / another demo role); a CloseLoanPartialError carries its own and must match it.
+   */
   builderAddress?: string;
   /** RLUSD issuer for the `{ project, ... }` form (a CloseLoanPartialError carries its own). Default: the demo issuer. */
   issuer?: string;
   /**
    * When the failed close's last submit had an unknown outcome (`context.uncertain`), wait until that tx can no longer
-   * validate (its LastLedgerSequence, else one DEFAULT_LLS_MARGIN) before reading the ledger. Default true.
+   * validate (its LastLedgerSequence, else one DEFAULT_LLS_MARGIN) before reading the ledger. The `{ project, ... }` form
+   * (e.g. after a restart) always counts as unknown and waits one DEFAULT_LLS_MARGIN. Default true; false skips the wait.
    */
   waitForInFlight?: boolean;
   onWait?: (ledgersRemaining: number) => void;
@@ -828,16 +862,25 @@ function resumeSourceOf(input: CloseLoanPartialError | ResumeEscrowInput, opts: 
     if (!ids.has(id)) issues.push(`pending: unknown milestone ${id}`);
     if (created.some((c) => c.milestoneId === id)) issues.push(`milestone ${id} is both created and pending`);
   }
+  // No error object = no record of the close's escrow destination: it must be given, and is checked like the close does
+  // (security review M8). Never default it to the demo builder: with every milestone pending nothing would cross-check it.
+  if (!opts.builderAddress) issues.push("builderAddress is required with the { project, ... } form (the escrow destination of the failed close)");
+  else if (spv) {
+    const f = loadWalletFile();
+    issues.push(...escrowDestinationProblems({ destination: opts.builderAddress, spv, ...(opts.issuer ? { issuer: opts.issuer } : {}), ...(f ? { otherRoles: nonBuilderRoles(walletsFromFile(f)) } : {}) }));
+  }
   if (issues.length) throw new CloseValidationError(issues, what);
   return {
     projectId: project.id,
     spv: spv!,
-    builder: opts.builderAddress ?? loadWallets().builder.classicAddress,
+    builder: opts.builderAddress!,
     ...(opts.issuer ? { issuer: opts.issuer } : {}),
     loanId: input.loanId,
     ...(input.loanSetTx ? { loanSetTx: input.loanSetTx } : {}),
     created,
-    uncertain: false,
+    // After a restart the last tx of the failed close may still be in flight: wait one LastLedgerSequence margin before
+    // reading the ledger (waitForInFlight: false skips it), so an in-flight EscrowCreate is never created twice.
+    uncertain: true,
     milestones: (maturity, interval) =>
       project.milestones.map((m, index) => {
         const cancelAfter = explicit[index] ?? (maturity != null && interval != null ? maturity - interval : undefined);

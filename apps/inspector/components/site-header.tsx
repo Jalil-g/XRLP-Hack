@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { useIdentity } from "@/components/identity";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
@@ -52,6 +53,7 @@ function IdentityPicker() {
 }
 
 export function SiteHeader() {
+  const pathname = usePathname();
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/85 backdrop-blur supports-[backdrop-filter]:bg-surface/75">
       <div className="mx-auto flex min-h-14 max-w-6xl flex-wrap items-center gap-3 px-4 py-2 sm:px-6">
@@ -66,6 +68,14 @@ export function SiteHeader() {
           <ProjectorToggle />
         </div>
       </div>
+      <nav aria-label="Inspector navigation" className="mx-auto flex max-w-6xl gap-5 px-4 sm:px-6">
+        {[{ href: "/", label: "Assigned audits" }, { href: "/history", label: "Audit history" }].map(({ href, label }) => (
+          <Link key={href} href={href} aria-current={pathname === href ? "page" : undefined}
+            className={`border-b-2 py-2 text-sm font-medium ${pathname === href ? "border-brand text-brand" : "border-transparent text-muted hover:text-ink"}`}>
+            {label}
+          </Link>
+        ))}
+      </nav>
     </header>
   );
 }

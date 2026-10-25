@@ -111,11 +111,9 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
             audits={d.audits[current.id] ?? []}
             attestations={d.attestations[current.id] ?? []}
             builderName={builder.name}
-            action={
-              ["evidence_submitted", "audited", "failed"].includes(current.status) ? (
-                <ActionButton action={{ kind: "runChecks", projectId: p.id, milestoneId: current.id }}>Run checks</ActionButton>
-              ) : undefined
-            }
+            evidence={d.evidence?.[current.id]}
+            names={Object.fromEntries(d.inspectors.map((i) => [i.address, i.name]))}
+            run={{ projectId: p.id }}
           />
         </div>
       )}
