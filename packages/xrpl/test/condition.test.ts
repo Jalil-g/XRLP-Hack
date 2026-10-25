@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   assertPreimageSha256Condition,
   conditionFromPreimage,
+  describeConditionInput,
   fulfillmentFromPreimage,
   fulfillmentMatches,
   isPreimageSha256Condition,
@@ -53,4 +54,20 @@ test("condition format: only 32-byte PREIMAGE-SHA-256 (78 hex chars), case-insen
   assert.equal(isPreimageSha256Condition(condition.replace(/^A0/, "A1")), false);
   assert.equal(isPreimageSha256Condition(condition.slice(0, 10) + "ZZ" + condition.slice(12)), false);
   assert.throws(() => assertPreimageSha256Condition("ABCD", "m1"), /m1: not a 32-byte PREIMAGE-SHA-256 condition/);
+});
+
+test("M2: a bad condition is described, never echoed (a fulfillment or raw preimage passed by mistake stays secret)", () => {
+  const { fulfillment, condition } = generateMilestoneCondition();
+  const preimage = fulfillment.slice(8);
+  for (const raw of [fulfillment, fulfillment.toLowerCase(), preimage, `${condition}00`, `  ${fulfillment}  `]) {
+    assert.throws(
+      () => assertPreimageSha256Condition(raw, "EscrowCreate.Condition"),
+      (e: unknown) => e instanceof Error && !e.message.toUpperCase().includes(preimage.toUpperCase()) && /value not echoed/.test(e.message),
+    );
+  }
+  assert.match(describeConditionInput(fulfillment), /FULFILLMENT, which is the secret/);
+  assert.match(describeConditionInput(preimage), /64 hex chars, a raw preimage or a hash/);
+  assert.equal(describeConditionInput(`${condition}00`), "80 chars, starting A0258020 (value not echoed)");
+  assert.equal(describeConditionInput("deadbeef"), "8 chars (value not echoed)");
+  assert.equal(describeConditionInput(42), "a number");
 });

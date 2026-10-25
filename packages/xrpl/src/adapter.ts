@@ -5,12 +5,13 @@
 import { isAbsolute, resolve } from "node:path";
 import { TooSoonError, type CloseResult, type LedgerPort, type Project, type ProjectChainSetup, type TxResult as PortTxResult } from "@xrlp/shared";
 import type { Wallet } from "xrpl";
-import { apiCodeOf, pickQuorumSigners, toAdapterError, toPortTx, XrplLedgerError } from "./adapter-map.ts";
+import { apiCodeOf, keyForRole, pickQuorumSigners, SIGNING_ROLES, spvSignerCandidates, toAdapterError, toPortTx, XrplLedgerError } from "./adapter-map.ts";
 import {
   builderPayToSpv,
   cancelExpiredMilestone,
   closeLoanAndCreateEscrows as closeLoanApi,
   depositToVault,
+  forbiddenSpvSigners,
   PLATFORM_SCOPE,
   releaseMilestone,
   repayLoan as repayLoanApi,
@@ -20,12 +21,12 @@ import {
 } from "./api.ts";
 import { ledgerTime, type TxResult } from "./client.ts";
 import { attest, ATTEST_EVENT_KIND, createDomain, grantCredential, payVerificationFee, submitSignedBlob } from "./compliance.ts";
-import { config, REPO_ROOT } from "./config.ts";
+import { assertSecretPath, config, REPO_ROOT } from "./config.ts";
 import { FINISH_LLS_MARGIN } from "./escrow.ts";
 import { getLoan, planLoanPayment } from "./loan.ts";
 import { preflightFinish } from "./preflight.ts";
 import { getBalance, getEscrowSnapshot, getLoanSnapshot, getVaultSnapshot, listEscrowsParsed } from "./reads.ts";
-import { getSpvInfo } from "./spv.ts";
+import { getSpvInfo, spvSignerProblems } from "./spv.ts";
 import { loadWallets, type DemoWallets } from "./wallets.ts";
 
 export { XrplLedgerError, apiCodeOf, toAdapterError } from "./adapter-map.ts";
@@ -56,7 +57,7 @@ export class XrplLedgerAdapter implements LedgerPort {
   private readonly builders = new Map<string, string>();
 
   constructor(opts: XrplLedgerAdapterOptions = {}) {
-    if (opts.walletsFile) config.walletsFile = isAbsolute(opts.walletsFile) ? opts.walletsFile : resolve(REPO_ROOT, opts.walletsFile);
+    if (opts.walletsFile) config.walletsFile = assertSecretPath(isAbsolute(opts.walletsFile) ? opts.walletsFile : resolve(REPO_ROOT, opts.walletsFile), "file", "walletsFile");
     this.log = opts.log ?? (() => {});
     this.privateVault = opts.privateVault ?? true;
     this.finishMargins = {
@@ -69,7 +70,7 @@ export class XrplLedgerAdapter implements LedgerPort {
 
   payVerificationFee(p: Arg<"payVerificationFee">): Promise<PortTxResult> {
     return this.run("payVerificationFee", async () => {
-      const { tx } = await payVerificationFee({ builder: this.key(p.builder, "builder"), amount: p.amount });
+      const { tx } = await payVerificationFee({ builder: this.key(p.builder, "builder", SIGNING_ROLES.builder), amount: p.amount });
       return this.tx("verification fee", tx, "verification_fee_paid");
     });
   }
@@ -77,7 +78,7 @@ export class XrplLedgerAdapter implements LedgerPort {
   /** Idempotent: an already issued + accepted credential returns `[]` (nothing submitted). */
   issueCredential(p: Arg<"issueCredential">): Promise<PortTxResult[]> {
     return this.run("issueCredential", async () => {
-      const r = await grantCredential({ subject: this.key(p.subject, "credential subject"), type: p.type });
+      const r = await grantCredential({ subject: this.key(p.subject, `${p.type} subject`, SIGNING_ROLES[p.type]), type: p.type });
       const out: PortTxResult[] = [];
       if (r.createTx) out.push(this.tx(`CredentialCreate ${p.type}`, r.createTx, "credential_issued"));
       if (r.acceptTx) out.push(this.tx(`CredentialAccept ${p.type}`, r.acceptTx, "credential_accepted"));
@@ -95,6 +96,9 @@ export class XrplLedgerAdapter implements LedgerPort {
       if (!inspector) throw new XrplLedgerError("validation", "setupProjectOnChain: no inspector assigned (SPV signer list needs builder + inspector)");
       const slots = [w.platform.classicAddress, p.builder.address, inspector, w.trustee.classicAddress];
       if (new Set(slots).size !== slots.length) throw new XrplLedgerError("validation", `setupProjectOnChain: SPV signers must be 4 distinct accounts (platform, builder, inspector, trustee), got ${slots.join(", ")}`);
+      // Before any tx (the domain below included): no AI / releaseService / issuer key on the SPV list (M6).
+      const signerIssues = spvSignerProblems({ platform: slots[0]!, builder: slots[1]!, inspector, trustee: slots[3]! }, forbiddenSpvSigners(w));
+      if (signerIssues.length) throw new XrplLedgerError("validation", `setupProjectOnChain: ${signerIssues.join("; ")}`);
 
       const txs: PortTxResult[] = [];
       let domainId: string | undefined;
@@ -137,7 +141,7 @@ export class XrplLedgerAdapter implements LedgerPort {
 
   deposit(p: Arg<"deposit">): Promise<PortTxResult> {
     return this.run("deposit", async () => {
-      const { tx } = await depositToVault({ projectId: p.project.id, vaultId: chain(p.project, "vaultId"), investor: this.key(p.investor, "investor"), amount: p.amount });
+      const { tx } = await depositToVault({ projectId: p.project.id, vaultId: chain(p.project, "vaultId"), investor: this.key(p.investor, "investor", SIGNING_ROLES.investor), amount: p.amount });
       return this.tx(`VaultDeposit ${p.amount}`, tx, "vault_deposit");
     });
   }
@@ -151,7 +155,7 @@ export class XrplLedgerAdapter implements LedgerPort {
       // Port contract: TooSoonError before RedemptionDate. withdrawFromVault only refuses the Investment phase (the ledger
       // allows Subscription-phase withdrawals), so this stricter check stays.
       if (snap.phase !== "redemption") throw new TooSoonError(`withdrawals open at RedemptionDate ${snap.redemptionDate} (vault is in ${snap.phase})`);
-      const { tx } = await withdrawFromVault({ projectId: p.project.id, vaultId, investor: this.key(p.investor, "investor"), amount: p.amount });
+      const { tx } = await withdrawFromVault({ projectId: p.project.id, vaultId, investor: this.key(p.investor, "investor", SIGNING_ROLES.investor), amount: p.amount });
       return this.tx(`VaultWithdraw ${p.amount}`, tx, "vault_withdraw");
     });
   }
@@ -174,7 +178,7 @@ export class XrplLedgerAdapter implements LedgerPort {
         conditions: p.conditions,
         cancelAfters: p.cancelAfters,
         builderAddress: p.builder.address,
-        ...(this.held(p.builder.address) ? { originationFeePayer: p.builder.address } : {}),
+        ...(this.held(p.builder.address, SIGNING_ROLES.builder) ? { originationFeePayer: p.builder.address } : {}),
         spvSigners: signers,
         waitForInvestmentPhase: false,
       });
@@ -271,7 +275,7 @@ export class XrplLedgerAdapter implements LedgerPort {
       const builder = await this.builderOf(p.project);
       const signers = await this.spvQuorum(spv, [builder, w.platform.classicAddress, w.trustee.classicAddress]);
       if (p.source === "builder") {
-        const pay = await builderPayToSpv({ projectId: p.project.id, spv, amount: p.amount, builder: this.key(builder, "builder") });
+        const pay = await builderPayToSpv({ projectId: p.project.id, spv, amount: p.amount, builder: this.key(builder, "builder", SIGNING_ROLES.builder) });
         this.tx(`builder -> SPV ${p.amount} RLUSD`, pay.tx);
       }
       const r = await repayLoanApi({ projectId: p.project.id, spv, loanId, amount: p.amount, source: p.source, signers });
@@ -281,6 +285,9 @@ export class XrplLedgerAdapter implements LedgerPort {
 
   attest(p: Arg<"attest">): Promise<PortTxResult> {
     return this.run("attest", async () => {
+      if (!(SIGNING_ROLES.attest as readonly string[]).includes(p.signer)) {
+        throw new XrplLedgerError("validation", `attest: signer must be one of ${SIGNING_ROLES.attest.join(", ")} (value not echoed)`);
+      }
       const { tx } = await attest({ signer: p.signer, spv: p.spv, memo: p.memo });
       return this.tx(`attest ${p.memo.kind} (${p.signer})`, tx, ATTEST_EVENT_KIND[p.memo.kind]);
     });
@@ -326,22 +333,22 @@ export class XrplLedgerAdapter implements LedgerPort {
     return loadWallets();
   }
 
-  /** Wallet for `address` from the store, if we hold its key. */
-  private held(address: string): Wallet | undefined {
-    return Object.values(this.wallets()).find((w) => w.classicAddress === address);
+  /** Wallet for `address` among the `roles` keys of the store, if it is one. */
+  private held(address: string, roles: readonly string[]): Wallet | undefined {
+    const w = this.wallets() as Record<string, Wallet>;
+    return roles.map((r) => w[r]).find((x) => x?.classicAddress === address);
   }
 
-  private key(address: string, role: string): Wallet {
-    const w = this.held(address);
-    if (!w) throw new XrplLedgerError("validation", `no key for ${role} ${address} in ${config.walletsFile} (devnet demo: every signing account must be a bootstrapped wallet)`);
-    return w;
+  /** The key for `address`, which must belong to one of `roles` (security review M4); else `validation`, nothing signed. */
+  private key(address: string, label: string, roles: readonly string[]): Wallet {
+    return keyForRole(this.wallets(), address, roles, label, config.walletsFile);
   }
 
   /** Signers for the SPV's on-ledger list (quorum 3) whose keys we hold, preferred ones first. */
   private async spvQuorum(spv: string, prefer: string[]): Promise<Wallet[]> {
     const info = await getSpvInfo(spv);
     if (info.signerQuorum == null) throw new XrplLedgerError("validation", `SPV ${spv} has no signer list`);
-    const all = Object.values(this.wallets());
+    const all = spvSignerCandidates(this.wallets());
     return pickQuorumSigners({ quorum: info.signerQuorum, signers: info.signers }, (a) => all.find((w) => w.classicAddress === a), prefer);
   }
 

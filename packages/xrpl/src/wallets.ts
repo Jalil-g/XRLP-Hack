@@ -1,5 +1,6 @@
 // Demo wallet store (.data/wallets.json, gitignored). Devnet seeds only — never commit.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { Wallet } from "xrpl";
 import { config } from "./config.ts";
@@ -58,9 +59,24 @@ export function loadWalletFile(): WalletFile | undefined {
   return JSON.parse(readFileSync(config.walletsFile, "utf8")) as WalletFile;
 }
 
+/**
+ * Write the store atomically (temp file + rename), owner-only (0600 also when the file already existed). Readers
+ * (core's adapter reads it on every call) never see a half-written file, and a crash mid-write can't truncate it.
+ * The temp name ends in `.seed` so .gitignore covers it wherever the store lives. Read-modify-write is not locked across
+ * processes: run one writer (bootstrap / prestage / setupProjectOnChain) at a time.
+ */
 export function saveWalletFile(f: WalletFile): void {
-  mkdirSync(dirname(config.walletsFile), { recursive: true });
-  writeFileSync(config.walletsFile, JSON.stringify(f, null, 2) + "\n", { mode: 0o600 });
+  const path = config.walletsFile;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tmp = `${path}.${process.pid}-${randomBytes(4).toString("hex")}.tmp.seed`;
+  try {
+    writeFileSync(tmp, JSON.stringify(f, null, 2) + "\n", { mode: 0o600 });
+    renameSync(tmp, path);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+  chmodSync(path, 0o600);
 }
 
 // ---------------------------------------------------------------- pure wallet-file logic (offline, unit-tested)
