@@ -5,11 +5,21 @@
 // Safety rules:
 //  - Resubmitting the SAME signed blob is always safe (same hash can apply at most once).
 //  - A NEW blob is only built when the previous one provably cannot apply:
-//      tel* (not applied, not relayed) or LastLedgerSequence passed with no hit in a fully-searched range
+//      tel* (not applied, not relayed, not retried: client.ts submits with fail_hard, without which rippled HOLDS such a
+//        blob and re-applies it at later ledgers) or LastLedgerSequence passed with no hit in a fully-searched range
 //        → re-sign with the SAME Sequence (mutually exclusive with the old blob, so never a double-apply);
 //      tefPAST_SEQ on a blob that never reached the ledger → re-sign with a fresh Sequence, but only once every
 //        other blob of this intent that may have reached a server is settled (validated or provably expired).
+//        "Never reached": for a blob signed in this call, not tracked as maybe-applied and its lookup isn't validated
+//        (rippled's cache answers "not validated" for the refused blob itself); for a pre-signed blob, which may have
+//        an earlier history, proven from account state (who used the Sequence), never from a `tx` lookup.
 //  - tec* / tem* / other tef* are final; never retried.
+//  - tec* under fail_hard: rippled answers the tec but applies NOTHING (no fee, Sequence untouched, not relayed, not
+//    held), so an intended on-ledger failure (wrong fulfillment, tecNO_AUTH deposit, tecTOO_SOON) would never land.
+//    The SAME blob is resubmitted at once without fail_hard (`softResubmit`): same hash → it applies at most once, and
+//    its Sequence S is still free (the tec answer proves it), so it's the only blob of the intent that can take S.
+//    From then on rippled may hold/relay it: it is tracked as possibly applied until validated or provably expired,
+//    whatever that second answer is, and nothing with a fresh Sequence is signed meanwhile.
 //  - `retriable: true` only when no blob of the intent can still apply. Anything else whose outcome isn't known is
 //    `unknown_outcome` / `connection_lost` (non-retriable): the caller must look the hash up, not re-run.
 // Opt-in pipelined mode (XRPL-17, bottom of this file): the lock covers only prepare→sign→submit, up to `window`
@@ -86,7 +96,8 @@ export function lockedAccounts(): string[] {
 
 /**
  * What to do with a preliminary `submit` engine result:
- *  - pending   wait for the validated outcome (tesSUCCESS, terQUEUED, tefALREADY, other ter*, tec*)
+ *  - pending   wait for the validated outcome (tesSUCCESS, terQUEUED, tefALREADY, other ter*, tec*; a tec* from a
+ *              fail_hard submit is first resubmitted without fail_hard, see isDiscardedTec)
  *  - resubmit  transient, not applied: back off and resubmit (telINSUF_FEE_P, telCAN_NOT_QUEUE*)
  *  - past_seq  tefPAST_SEQ: sequence consumed (maybe by this very tx on an earlier submit)
  *  - expired   tefMAX_LEDGER: LastLedgerSequence already passed, not applied
@@ -149,9 +160,34 @@ export type Lookup =
   | { status: "pending" }
   | { status: "missing"; searchedAll: boolean };
 
+/** Options of one `submit`. */
+export interface SubmitCallOptions {
+  /** Default true (security review H1b). false only for `softResubmit` of a blob whose fail_hard answer was tec*. */
+  failHard?: boolean;
+}
+
+/**
+ * The provisional result of a fail_hard submit says "this tx would fail with a tec" but rippled applied nothing
+ * (TapFAIL_HARD: the tec is discarded, no fee claimed, Sequence not consumed, not relayed, not held).
+ */
+export function isDiscardedTec(engineResult: string): boolean {
+  return engineResult.startsWith("tec");
+}
+
+/**
+ * How to read the answer to a resubmit WITHOUT fail_hard (after a discarded tec). Without fail_hard rippled holds
+ * ter* / tel* / tef* (except tefPAST_SEQ) and may relay a local tx, so anything it may have taken is "pending" (may apply);
+ * only tefMAX_LEDGER (LastLedgerSequence passed: can't apply anywhere) and tem* (malformed: never applies) are not.
+ */
+export function classifySoftResubmit(engineResult: string): PreliminaryClass {
+  if (engineResult === "tefMAX_LEDGER") return "expired";
+  if (engineResult.startsWith("tem")) return "fatal";
+  return "pending";
+}
+
 /** The ledger operations the engine needs. Real implementation: client.ts `realLedgerIo`. */
 export interface LedgerIo {
-  submit(blob: string): Promise<{ engineResult: string; message?: string }>;
+  submit(blob: string, opts?: SubmitCallOptions): Promise<{ engineResult: string; message?: string }>;
   /** `tx` by hash; when `range` is given rippled reports whether it searched all of it. */
   lookup(hash: string, range?: { min: number; max: number }): Promise<Lookup>;
   validatedLedgerIndex(): Promise<number>;
@@ -182,6 +218,23 @@ export interface RetryPolicy {
   onRetry?: (e: RetryEvent) => void;
 }
 
+/** submitReliably-only options. */
+export interface ReliableOptions extends RetryPolicy {
+  resign?: Resign;
+  /**
+   * `first` was signed for this call and never submitted before (submitWithSigner). Then a `tefPAST_SEQ` on a blob of
+   * this call that was never tracked as maybe-applied proves it dead at once (under fail_hard nothing is held).
+   * Unset (pre-signed blobs, submitBlob): `first` may have an earlier history (an earlier call, another process), so
+   * "known, not validated" may be a provisional apply in an open ledger, and account state decides (see pastSeqOwner).
+   */
+  freshFirst?: boolean;
+}
+
+/** The optional account-state reads (PipelineIo) the locked engine uses for pre-signed `tefPAST_SEQ` proofs. */
+type AccountStateIo = Pick<PipelineIo, "sequenceAt" | "txWithSequence">;
+const hasAccountState = (io: LedgerIo): io is LedgerIo & AccountStateIo =>
+  typeof (io as Partial<AccountStateIo>).sequenceAt === "function" && typeof (io as Partial<AccountStateIo>).txWithSequence === "function";
+
 /** Final validated `tx` result (has `meta.TransactionResult`, `hash`, `ledger_index`, `tx_json`). */
 export type ValidatedTx = Record<string, unknown> & { hash?: string };
 
@@ -206,7 +259,7 @@ function finalResult(r: Record<string, unknown>): string {
  * only signed, and a retriable or definite failure only thrown, once all of them are settled (security review H1/H2).
  * Without `resign` (pre-signed blobs) only same-blob resubmits are possible; anything needing a new blob throws retriable.
  */
-export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: RetryPolicy & { resign?: Resign } = {}): Promise<ValidatedTx> {
+export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: ReliableOptions = {}): Promise<ValidatedTx> {
   const maxAttempts = opts.maxAttempts ?? 5;
   const pollMs = opts.pollMs ?? 1000;
   const backoff0 = opts.backoffMs ?? 500;
@@ -228,9 +281,18 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
       ...(opt.cause !== undefined ? { cause: redactedCause(opt.cause) } : {}),
     });
 
+  /** Hashes of this intent that may still apply, oldest first (for "check the hash" messages). */
+  const unsettled = () => [...new Set([...live.keys(), cur.hash])];
+  const lost = (e: unknown) => fail("connection_lost", false, { hash: cur.hash, detail: `outcome unknown; check ${unsettled().join(", ")}`, cause: e });
+
   const onConnError = async (e: unknown) => {
-    if (++connErrors > MAX_CONN_ERRORS) throw fail("connection_lost", false, { hash: cur.hash, detail: "outcome unknown; check the hash", cause: e });
-    await io.reconnect();
+    if (++connErrors > MAX_CONN_ERRORS) throw lost(e);
+    try {
+      await io.reconnect();
+    } catch (re) {
+      // A failed reconnect is one more connection error, never a raw throw that loses the hash.
+      if (++connErrors > MAX_CONN_ERRORS) throw lost(re);
+    }
   };
 
   /** Wait until `blob` is validated (→ result) or provably expired (→ "expired"). */
@@ -238,19 +300,31 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
     const started = Date.now();
     let incomplete = 0;
     let busy = 0;
+    let lastValidated = -1;
+    let progressAt = started;
     for (;;) {
       try {
         const v = await io.validatedLedgerIndex();
+        if (v > lastValidated) {
+          lastValidated = v;
+          progressAt = Date.now();
+        } else if (Date.now() - progressAt > maxWaitMs) {
+          throw fail("unknown_outcome", false, { hash: blob.hash, detail: `no new validated ledger for ${Math.round(maxWaitMs / 1000)}s; check the hash` });
+        }
         const lls = blob.lastLedgerSequence;
         const closedOut = lls !== undefined && v >= lls;
         const range = closedOut ? { min: Math.max(minLedger, lls - MAX_LOOKUP_SPAN), max: lls } : undefined;
         const lk = await io.lookup(blob.hash, range);
         if (lk.status === "validated") return lk.result;
-        if (closedOut && lk.status === "missing") {
+        if (closedOut) {
           // Proof only if the searched range starts where the tx could first have landed (L1: margins > 999 ledgers).
-          if (lk.searchedAll && range!.min <= minLedger) return "expired";
-          if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS)
-            throw fail("unknown_outcome", false, { hash: blob.hash, detail: "server history incomplete; check the hash" });
+          if (lk.status === "missing" && lk.searchedAll && range!.min <= minLedger) return "expired";
+          // Missing without a full search, or "known, not validated" past LastLedgerSequence (rippled answers a
+          // never-included tx from its cache): neither is proof. Bounded, then unknown_outcome (review finding 2).
+          if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS) {
+            const why = lk.status === "pending" ? "still known but not validated past its LastLedgerSequence (server cache)" : "server history incomplete";
+            throw fail("unknown_outcome", false, { hash: blob.hash, detail: `${why}; check the hash` });
+          }
         }
         if (lls === undefined && Date.now() - started > maxWaitMs)
           throw fail("unknown_outcome", false, { hash: blob.hash, detail: "no LastLedgerSequence; gave up waiting" });
@@ -265,6 +339,58 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
   };
 
   const waitFor = (b: SignedBlob) => waitFinal(b, Math.min(firstLedger.get(b.hash) ?? 1, b.lastLedgerSequence ?? Infinity));
+
+  /** One unranged lookup: "missing" only when the server says txnNotFound; any error counts as "maybe applied". */
+  const peek = async (hash: string): Promise<Lookup["status"]> => {
+    try {
+      return (await io.lookup(hash)).status;
+    } catch {
+      return "pending";
+    }
+  };
+
+  /**
+   * tefPAST_SEQ on a blob that may have been submitted before this call (pre-signed): did IT take its Sequence S?
+   * A `tx` lookup can't tell (rippled answers "known, not validated" for any cached blob, and also for one sitting
+   * provisionally applied in an open ledger), so account state decides, as in pipelined R5: S used in a validated
+   * ledger → `account_tx` names the taker (ours → that's the result; another tx → ours can never apply); the account's
+   * Sequence at our LastLedgerSequence L still ≤ S → nothing used S by L, and the blob can't apply after L → dead.
+   * undefined: this io can't read account state → the caller waits for the blob instead (safe, slower).
+   */
+  const pastSeqOwner = async (b: SignedBlob): Promise<ValidatedTx | "dead" | undefined> => {
+    const S = b.sequence;
+    if (!hasAccountState(io) || !S) return undefined; // Sequence 0 = a Ticket: not a Sequence question
+    const L = b.lastLedgerSequence;
+    const started = Date.now();
+    let incomplete = 0;
+    let busy = 0;
+    for (;;) {
+      try {
+        const v = await io.validatedLedgerIndex();
+        const lk = await io.lookup(b.hash);
+        if (lk.status === "validated") return lk.result;
+        const at = L !== undefined && v >= L ? L : v;
+        const seqAt = await io.sequenceAt(b.account, at);
+        if (seqAt !== undefined && seqAt > S) {
+          const taker = await io.txWithSequence(b.account, S, { min: Math.max(1, at - MAX_LOOKUP_SPAN), max: at });
+          if (taker) return taker.hash === b.hash ? taker : "dead";
+          if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS) throw fail("unknown_outcome", false, { hash: b.hash, detail: "tefPAST_SEQ: Sequence used, but the tx that used it isn't in the account history; check the hash" });
+        } else if (seqAt !== undefined) {
+          if (at === L) return "dead"; // S still unused in ledger L: the blob never applied and can't any more
+          // S is only used in the open ledger so far: wait for the ledger that validates it
+        } else if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS) {
+          throw fail("unknown_outcome", false, { hash: b.hash, detail: "tefPAST_SEQ: the server can't show the account's past state; check the hash" });
+        }
+        if (L === undefined && Date.now() - started > maxWaitMs) throw fail("unknown_outcome", false, { hash: b.hash, detail: "tefPAST_SEQ, no LastLedgerSequence; gave up waiting; check the hash" });
+      } catch (e) {
+        if (e instanceof XrplTxError) throw e;
+        if (isConnectionError(e)) await onConnError(e);
+        else if (!(isTransientRpcError(e) && ++busy <= MAX_BUSY_POLLS))
+          throw fail("unknown_outcome", false, { hash: b.hash, detail: "could not read the account state; check the hash", cause: e });
+      }
+      await io.sleep(pollMs);
+    }
+  };
 
   /**
    * Wait until every live blob (except `skip`) has validated or provably expired. A validated one decides the intent:
@@ -283,35 +409,54 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
     return undefined;
   };
 
+  /** A pre-signed `first` may have been submitted before this call; every other blob was signed here. */
+  const mayHaveHistory = (b: SignedBlob) => !opts.freshFirst && b.hash === first.hash;
+
   for (let attempt = 1; ; attempt++) {
     let prelim: string;
     let detail: string | undefined;
     let sending = false;
+    /** The tec* a fail_hard submit answered (discarded by rippled) before this attempt's soft resubmit. */
+    let discardedTec: string | undefined;
     try {
       const minLedger = (await io.validatedLedgerIndex()) + 1;
       if (!firstLedger.has(cur.hash)) firstLedger.set(cur.hash, minLedger);
       sending = true; // from here on the blob may reach a server
-      const r = await io.submit(cur.blob);
+      let r = await io.submit(cur.blob);
+      if (isDiscardedTec(r.engineResult)) {
+        // Nothing applied (see the header): send the SAME blob again without fail_hard so the tec lands on-ledger.
+        // Still inside the account lock and the same attempt, so nothing of ours can take S in between.
+        discardedTec = r.engineResult;
+        r = await io.submit(cur.blob, { failHard: false });
+      }
       prelim = r.engineResult;
       detail = r.message;
     } catch (e) {
       if (isConnectionError(e)) {
-        if (sending) live.set(cur.hash, cur);
+        if (sending) live.set(cur.hash, cur); // incl. a soft resubmit: the server may hold/relay it
         await onConnError(e);
         prelim = "connection_lost";
       } else if (isTransientRpcError(e)) {
-        prelim = String((e as { data: { error: string } }).data.error);
+        prelim = String((e as { data: { error: string } }).data.error); // not processed (also for a soft resubmit)
       } else {
         // Refused by the RPC layer. An earlier attempt of this intent may still apply: settle it before saying "failed".
         const won = await settle();
         if (won) return won;
-        throw fail(String((e as { data?: { error?: string } })?.data?.error ?? (e instanceof Error ? e.message : e)), false, { cause: e });
+        const code = String((e as { data?: { error?: string } })?.data?.error ?? (e instanceof Error ? e.message : e));
+        if (discardedTec) {
+          // The tx fails with this tec; it just isn't on the ledger. Keep the tec so callers map it (TooSoonError, …).
+          throw fail(discardedTec, false, { detail: `not applied: rippled discarded the provisional ${discardedTec} under fail_hard and refused the resubmit without it (${code})`, cause: e });
+        }
+        throw fail(code, false, { cause: e });
       }
     }
 
     let next: RetryEvent["action"];
-    const cls: PreliminaryClass | "conn" | "busy" =
+    let cls: PreliminaryClass | "conn" | "busy" =
       prelim === "connection_lost" ? "conn" : isTransientRpcError({ data: { error: prelim } }) ? "busy" : classifyPreliminary(prelim);
+    // An answer to the soft resubmit: rippled may hold or relay it, so whatever it says (tel*, tef*, even tefPAST_SEQ:
+    // relayed while the server isn't synced) it may still apply → wait for it like any pending blob.
+    if (discardedTec && cls !== "conn" && cls !== "busy") cls = classifySoftResubmit(prelim);
 
     if (cls === "fatal") {
       const won = await settle(); // this blob was refused; an earlier one may still apply
@@ -319,7 +464,29 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
       throw fail(prelim, false, detail ? { detail } : {});
     }
 
-    if (cls === "pending" || (cls === "past_seq" && live.has(cur.hash))) {
+    // tefPAST_SEQ on a blob not tracked as maybe-applied: did this very blob take the Sequence?
+    //  - Signed in this call: every submit that could have left it alive (provisional apply, soft resubmit, lost
+    //    socket) put it in `live`, and under fail_hard nothing else is held or relayed, so only "validated" can be
+    //    ours; "known, not validated" is just rippled's cache of the refused blob (review issue 2).
+    //  - Pre-signed (may have an earlier history): "not validated" may be a provisional apply in an open ledger, so
+    //    account state decides (pastSeqOwner); an io without account reads waits for the blob (never retriable early).
+    let pastSeq: "wait" | "dead" | undefined;
+    if (cls === "past_seq" && !live.has(cur.hash)) {
+      const own = await peek(cur.hash);
+      if (own === "validated") pastSeq = "wait";
+      else if (own === "missing" || !mayHaveHistory(cur)) pastSeq = "dead";
+      else {
+        const owner = await pastSeqOwner(cur);
+        if (owner === undefined) pastSeq = "wait";
+        else if (owner === "dead") pastSeq = "dead";
+        else {
+          const res = finalResult(owner);
+          if (res === "tesSUCCESS") return owner;
+          throw fail(res, false, { hash: String(owner.hash ?? cur.hash) });
+        }
+      }
+    }
+    if (cls === "pending" || (cls === "past_seq" && pastSeq !== "dead")) {
       // Possibly applied: only the ledger can tell. Never build a new blob until this one is provably dead.
       live.set(cur.hash, cur);
       const out = await waitFor(cur);
@@ -379,7 +546,11 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
 //  R1  Sequences are assigned and submitted under the mutex, in arrival order. The local counter only advances when the
 //      server took the blob (tesSUCCESS, terQUEUED, tec*, tefALREADY, other ter*). A tem/tef/tel at submit therefore
 //      never leaves a gap: nothing later has been signed yet, and the next tx reuses that Sequence.
-//  R2  tec* (Sequence consumed, later txs unaffected) and tem* are final and never retried.
+//  R2  tec* (Sequence consumed, later txs unaffected) and tem* are final and never retried. Under fail_hard rippled
+//      DISCARDS a tec (no fee, Sequence not consumed, not relayed, not held), so the same blob is resubmitted once
+//      without fail_hard, still under the mutex (nothing later is signed yet; S is free, the tec answer proves it):
+//      same hash → applies at most once, and it is then the tx that takes S. That blob counts as sent whatever the
+//      second answer is (rippled may hold or relay it), so only R5 can call it dead.
 //  R3  Every blob a ticket may have sent carries ONE Sequence. Same-Sequence re-signs (tel*, tefMAX_LEDGER at submit)
 //      are always safe: at most one of them can apply. A tel* blob still counts as sent: rippled may hold it and apply
 //      it later (xrpl.org: tel results are provisional). A ticket only gets a different Sequence once every blob it may
@@ -688,6 +859,7 @@ async function issue(p: AccountPipe, t: Ticket): Promise<void> {
     let detail: string | undefined;
     let firstLedger = 0;
     let preparing = fresh;
+    let discardedTec: string | undefined;
     try {
       if (fresh) {
         if (p.nextSeq === undefined) p.nextSeq = await io.nextSequence(req.account);
@@ -702,7 +874,13 @@ async function issue(p: AccountPipe, t: Ticket): Promise<void> {
       preparing = false;
       firstLedger = t.cur!.minLedger ?? (await io.validatedLedgerIndex()) + 1; // any index seen before submit is a safe floor
       try {
-        const r = await io.submit(t.cur!.blob);
+        let r = await io.submit(t.cur!.blob);
+        if (isDiscardedTec(r.engineResult)) {
+          // R2: fail_hard discarded the tec; the same blob again without it, still under the mutex (nothing later is
+          // signed yet, and S is still free: the tec answer proves it).
+          discardedTec = r.engineResult;
+          r = await io.submit(t.cur!.blob, { failHard: false });
+        }
         prelim = r.engineResult;
         detail = r.message;
       } catch (e) {
@@ -725,15 +903,27 @@ async function issue(p: AccountPipe, t: Ticket): Promise<void> {
         prelim = String((e as { data: { error: string } }).data.error);
       } else {
         if (preparing && !t.sent.length) throw e; // e.g. actNotFound from account_info: raw, as locked mode's autofill
-        const err = fail(String((e as { data?: { error?: string } })?.data?.error ?? (e instanceof Error ? e.message : e)), false, { cause: e });
+        const code = String((e as { data?: { error?: string } })?.data?.error ?? (e instanceof Error ? e.message : e));
+        const err = discardedTec
+          ? fail(discardedTec, false, { detail: `not applied: rippled discarded the provisional ${discardedTec} under fail_hard and refused the resubmit without it (${code})`, cause: e })
+          : fail(code, false, { cause: e });
         if (t.sent.length) return inFlight(err);
         throw err;
       }
     }
     t.reason = prelim;
 
-    const cls: PreliminaryClass | "conn" | "busy" =
+    let cls: PreliminaryClass | "conn" | "busy" =
       prelim === "connection_lost" ? "conn" : isTransientRpcError({ data: { error: prelim } }) ? "busy" : classifyPreliminary(prelim);
+    if (discardedTec && cls !== "conn" && cls !== "busy") {
+      // R2/R3: the soft resubmit may be held or relayed, so it counts as sent whatever it answered; only account state
+      // can call it dead (R5). A tel* keeps its same-Sequence re-sign path; everything else waits.
+      const soft = classifySoftResubmit(prelim);
+      if (soft === "pending") {
+        markSent(firstLedger);
+        if (cls !== "resubmit") cls = "pending";
+      } else cls = soft;
+    }
     if (cls === "pending") {
       markSent(firstLedger);
       inFlight("park");

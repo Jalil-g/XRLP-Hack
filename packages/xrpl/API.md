@@ -19,6 +19,7 @@ pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one 
 pnpm --filter @xrlp/xrpl stress --pipeline  # XRPL-17 devnet: same burst locked vs pipelined (speedup); --multisig --foreign --held --window=N
 pnpm --filter @xrlp/xrpl spike:release  # XRPL-07 devnet proof: finish, wrong fulfillment, repay, cancel+refund, withdraw (~7 min)
 pnpm --filter @xrlp/xrpl adapter:e2e    # XRPL-10 devnet: XrplLedgerAdapter through the whole LedgerPort flow (~7 min)
+pnpm --filter @xrlp/xrpl spike:fail-hard  # security review H1b devnet proof: a held terPRE_SEQ tx applies later unless fail_hard (~1 min)
 pnpm --filter @xrlp/xrpl typecheck
 ```
 
@@ -63,17 +64,26 @@ Every submit goes through `src/submit.ts` (pure retry engine, offline-tested) vi
   `XRPL_LLS_MARGIN`). Pass `{ lastLedgerMargin: 60 }` for txs that may take longer (EscrowFinish). Margins must be an
   integer in 1..500 (`MAX_LLS_MARGIN`, `assertLlsMargin`; a bad `XRPL_LLS_MARGIN` refuses to load): "provably not applied"
   is a ranged `tx` lookup, and rippled searches at most 1000 ledgers at once.
+- **`fail_hard: true` on every submit** (`submitRequest`). Without it rippled holds a locally submitted tx whose
+  provisional result is `ter*` / `tel*` / `tef*` (except `tefPAST_SEQ`) and re-applies it at later ledgers, so a "refused"
+  blob could still apply after a re-sign (security review H1b; devnet proof `pnpm --filter @xrlp/xrpl spike:fail-hard`).
+  One exception: under `fail_hard` rippled answers a `tec*` but **discards** it (no fee, Sequence untouched, not relayed),
+  so an intended on-ledger failure (wrong fulfillment, `tecNO_AUTH` deposit, `tecTOO_SOON`) would never land. The engine
+  resubmits that **same blob** once without `fail_hard` (same hash, so it applies at most once; still under the account
+  lock / pipeline mutex) and from then on tracks it as maybe-applied whatever the answer (it may now be held or relayed).
+  If that resubmit is refused by the RPC layer, the error keeps the `tec*` code (`onLedger: false`, non-retriable).
 - **Retries are bounded** (`maxAttempts` default 5, exponential backoff 0.5s → 4s):
 
   | Preliminary / error | Action |
   |---|---|
-  | `tesSUCCESS`, `terQUEUED`, `tefALREADY`, other `ter*`, `tec*` | wait for the validated result (`tec*` final → throw, never retried) |
+  | `tesSUCCESS`, `terQUEUED`, `tefALREADY`, other `ter*`, `tec*` | wait for the validated result (`tec*` final → throw, never retried; a `tec*` from the `fail_hard` submit is first resubmitted as the same blob without `fail_hard`, see above) |
   | `telINSUF_FEE_P`, `telCAN_NOT_QUEUE*`, RPC `tooBusy`/`noNetwork`/`noCurrent`/`slowDown` | back off, re-sign with the **same Sequence** and a fresh Fee (pre-signed blob: resubmit the same blob) |
   | websocket disconnect / timeout | reconnect the shared client, resubmit the **same blob** (same hash, so it's idempotent) |
   | `LastLedgerSequence` passed and `tx` reports `searched_all` with no hit | provably not applied → re-sign with the same Sequence (pre-signed: throw `retriable`) |
-  | `tefPAST_SEQ` | if this hash may have been sent earlier, wait and look it up (an earlier submit probably applied it); otherwise wait out every **earlier** blob of this intent that may have been sent (one of them may hold the Sequence), then re-autofill a fresh Sequence |
+  | `tefPAST_SEQ` | if this hash may have been sent earlier in this call, wait for it. Otherwise look its own hash up: validated → that is the result. Not validated (rippled's cache answers "known, not validated" for the refused blob itself): a blob the engine signed in this call (`submitWithSigner`) is dead at once; a pre-signed blob (`submitBlob`, may have an earlier history) is decided from account state (who used the Sequence: ours → its result; another tx → dead). Then wait out every **earlier** blob of this intent that may have been sent, and re-autofill a fresh Sequence (pre-signed: throw `retriable`) |
   | `tem*`, other `tef*`/`tel*` | throw, never retried (after waiting out earlier blobs of the intent that may still apply) |
   | `tx` lookup fails while waiting (not a connection error) | `tooBusy`-style errors are polled through; anything else → `unknown_outcome` |
+  | past `LastLedgerSequence` the lookup says "known, not validated" (rippled's cache), or no new validated ledger for `maxWaitMs` | bounded, then `unknown_outcome` (never an unbounded wait under the account lock) |
 
   A new blob is only signed after the old one provably **cannot** apply. Same-Sequence re-signs are mutually exclusive
   with the original, so there is no double spend. A validated hash is never resubmitted. Every blob that may have reached a
@@ -126,7 +136,9 @@ Txs already in flight finish the way they started.
   `CHAOS_SEEDS=2000` soaks 6 000, which passed):
   - The counter only advances when the server took the blob. A `tem`/`tef`/`tel` at submit leaves no gap: the next tx
     reuses that Sequence.
-  - `tec*` (Sequence consumed, later txs unaffected) and `tem*` are final, never retried.
+  - `tec*` (Sequence consumed, later txs unaffected) and `tem*` are final, never retried. A `tec*` discarded by
+    `fail_hard` is resubmitted as the same blob without it while the mutex is still held (nothing later signed yet), and
+    then counts as sent whatever it answered; only account state can call it dead.
   - Same-Sequence re-signs (`tel*`, expiry at submit) are always safe. A tx gets a **different** Sequence only after
     every blob it may have sent is provably dead. A `tel*` blob counts as sent: rippled may hold and retry it until
     its `LastLedgerSequence` (xrpl.org: tel results are provisional).
