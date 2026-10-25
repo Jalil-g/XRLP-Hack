@@ -17,6 +17,8 @@ import {
 } from "./types.ts";
 
 export type ApiMode = "mock" | "http";
+/** Core's upload URLs (packages/core/src/http/files.ts). Anything else falls back to /api/files/<evidence id>. */
+const CORE_FILE_URI = /^\/api\/files\/[A-Za-z0-9._-]+$/;
 export const API_MODE: ApiMode = process.env.NEXT_PUBLIC_API_MODE === "http" ? "http" : "mock";
 
 /** Multipart field names for route 10. Not pinned by 05-api; proposed on #53. */
@@ -45,7 +47,7 @@ export type SubmitAuditInput = {
   report: InspectorAudit;
   /** Photo files, same order as `report.photos`. */
   photos: Blob[];
-  /** Attestation tx signed in this app with the inspector's software key (INS-04). Omitted → core signs with the demo key. */
+  /** Attestation tx signed in this app with the inspector's software key (INS-04). Omitted → core attests on the inspector's behalf. */
   signedTxBlob?: string;
 };
 
@@ -145,6 +147,16 @@ export const api = {
 
   /** Where to load an evidence / audit file: core's `/api/files/:fileId`, or the fixture's data: URL in mock mode. */
   fileUrl(evidence: Pick<Evidence, "id" | "uri">): string {
-    return API_MODE === "mock" ? evidence.uri : `${baseUrl()}/api/files/${enc(evidence.id)}`;
+    if (API_MODE === "mock") return evidence.uri;
+    // Core serves an upload at the evidence's own `uri` (/api/files/<fileId>); its evidence `id` (ev_…) is a different key.
+    if (CORE_FILE_URI.test(evidence.uri)) return `${baseUrl()}${evidence.uri}`;
+    return `${baseUrl()}/api/files/${enc(evidence.id)}`;
+  },
+
+  /** The file's bytes (for reading EXIF in the browser when core's record has none). */
+  async fileBytes(evidence: Pick<Evidence, "id" | "uri">): Promise<ArrayBuffer> {
+    const res = await fetch(api.fileUrl(evidence), { cache: "force-cache" });
+    if (!res.ok) throw new ApiError(res.status === 404 ? "not_found" : "network", `File ${evidence.id}: HTTP ${res.status}`, res.status);
+    return res.arrayBuffer();
   },
 };

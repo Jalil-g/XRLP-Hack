@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, SectionLabel } from "@/components/ui/card";
 import { ApiError, api } from "@/lib/api";
-import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, type AuditDraft } from "@/lib/audit";
+import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, withBrowserExif, type AuditDraft } from "@/lib/audit";
 import { evidenceStatus } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
 import type { ChecksStatus, Inspector, InspectorTask, SubmitAuditResult } from "@/lib/types";
@@ -50,6 +50,7 @@ function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspect
   const [task, setTask] = useState<AuditTask | null>();
   const [loadError, setLoadError] = useState<string>();
   const [reloads, setReloads] = useState(0);
+  const [browserExif, setBrowserExif] = useState<ReadonlySet<string>>(new Set());
 
   // One-shot load, not polled: the evidence must not change under the inspector while they review it.
   useEffect(() => {
@@ -57,6 +58,7 @@ function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspect
     let live = true;
     setTask(undefined);
     setChecks(undefined);
+    setBrowserExif(new Set());
     setLoadError(undefined);
     api
       .getAuditReview(inspector.address, projectId, milestoneId)
@@ -64,6 +66,14 @@ function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspect
         if (!live) return;
         setTask(review?.task.milestone ? (review.task as AuditTask) : null);
         setChecks(review?.checks);
+        // Fill in EXIF core's record lacks without holding up the form (sha256s, so the bundle hash, are unchanged).
+        if (review?.task.milestone) {
+          void withBrowserExif(review.task.evidence, (e) => api.fileBytes(e)).then(({ evidence, browserRead }) => {
+            if (!live || browserRead.size === 0) return;
+            setTask((t) => (t ? { ...t, evidence } : t));
+            setBrowserExif(browserRead);
+          });
+        }
       })
       .catch((err: Error) => live && setLoadError(err.message));
     return () => {
@@ -88,7 +98,7 @@ function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspect
   }
   if (task.needs !== "audit" && task.needs !== "re_audit") return <Shell back={back}><p className="text-sm text-muted">No audit is due from you for this milestone. Return to the queue for your current assignments.</p></Shell>;
   // Keyed so a reload (after the builder changed evidence) starts a clean draft bound to the new bundle.
-  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} checks={checks} inspector={inspector.address} back={back} onReload={() => setReloads((n) => n + 1)} />;
+  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} checks={checks} browserExif={browserExif} inspector={inspector.address} back={back} onReload={() => setReloads((n) => n + 1)} />;
 }
 
 function Shell({ back, children }: { back: React.ReactNode; children: React.ReactNode }) {
@@ -100,7 +110,21 @@ function Shell({ back, children }: { back: React.ReactNode; children: React.Reac
   );
 }
 
-function AuditForm({ task, checks, inspector, back, onReload }: { task: AuditTask; checks?: ChecksStatus; inspector: string; back: React.ReactNode; onReload(): void }) {
+function AuditForm({
+  task,
+  checks,
+  browserExif,
+  inspector,
+  back,
+  onReload,
+}: {
+  task: AuditTask;
+  checks?: ChecksStatus;
+  browserExif: ReadonlySet<string>;
+  inspector: string;
+  back: React.ReactNode;
+  onReload(): void;
+}) {
   const m = task.milestone;
   const [draft, setDraft] = useState<AuditDraft>(() => emptyDraft(task));
   const [showErrors, setShowErrors] = useState(false);
@@ -147,7 +171,7 @@ function AuditForm({ task, checks, inspector, back, onReload }: { task: AuditTas
     [],
   );
 
-  /** `sign`: attestation signed here with the inspector's key. Otherwise core signs it with the inspector's demo key. */
+  /** `sign`: attestation signed here with the inspector's key. Otherwise core attests it on the inspector's behalf (05-api: their demo key; CORE-03 today: the platform key). */
   async function submit(sign: boolean) {
     setShowErrors(true);
     setSubmitError(undefined);
@@ -221,7 +245,7 @@ function AuditForm({ task, checks, inspector, back, onReload }: { task: AuditTas
               </div>
             </CardHeader>
             <CardContent>
-              <EvidenceGallery evidence={task.evidence} site={task.siteGeo} />
+              <EvidenceGallery evidence={task.evidence} site={task.siteGeo} browserExif={browserExif} />
             </CardContent>
           </Card>
           <Card>
@@ -354,7 +378,7 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
                 </Row>
               </>
             ) : (
-              <Row label="Signed by">core, with your demo key (no key loaded in this browser)</Row>
+              <Row label="Signed by">core, on your behalf (no key loaded in this browser)</Row>
             )}
           </dl>
           <div className="flex flex-wrap justify-center gap-2">
