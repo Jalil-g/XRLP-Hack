@@ -1,4 +1,6 @@
 // @xrlp/verifier — AI + deterministic evidence verification. See ../API.md.
+export { verifyProject } from "./verifyProject.ts";
+export type { VerifyProjectInput, ProjectHistory, ProjectVerificationResult } from "./verifyProject.ts";
 export { canonicalJson, verdictHash } from "./hash.ts";
 export { assignInspector } from "./assignInspector.ts";
 export type { AssignInspectorInput, InspectorAvailability } from "./assignInspector.ts";
