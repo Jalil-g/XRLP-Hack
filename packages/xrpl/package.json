@@ -24,6 +24,7 @@
     "spike:batch": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-batch.ts",
     "spike:release": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-release.ts",
     "spike:default": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-default.ts",
+    "spike:fail-hard": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-fail-hard.ts",
     "adapter:e2e": "NODE_USE_ENV_PROXY=1 tsx scripts/adapter-e2e.ts",
     "stage:check": "NODE_USE_ENV_PROXY=1 tsx scripts/stage-check.ts",
     "test": "tsx --test test/*.test.ts"

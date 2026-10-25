@@ -93,11 +93,22 @@ export async function reconnect(): Promise<Client> {
 
 const rpcError = (e: unknown) => (e as { data?: { error?: string; searched_all?: boolean } })?.data;
 
+/**
+ * The `submit` request for a signed blob. Always `fail_hard: true`: without it rippled HOLDS a locally submitted tx whose
+ * provisional result is ter* / tel* / tef* (except tefPAST_SEQ), re-applies it at later ledgers and relays it once it
+ * passes, so a "refused" blob could still apply after the retry engine re-signed (security review H1b; devnet proof:
+ * `pnpm --filter @xrlp/xrpl spike:fail-hard`). With fail_hard such a result is final at that server, which is what
+ * submit.ts's classification assumes.
+ */
+export function submitRequest(blob: string): { command: "submit"; tx_blob: string; fail_hard: true } {
+  return { command: "submit", tx_blob: blob, fail_hard: true };
+}
+
 /** The real `LedgerIo` for submit.ts: shared client, re-fetched per call so a reconnect is picked up. */
 export const realLedgerIo: LedgerIo = {
   async submit(blob) {
     const client = await getClient();
-    const res = await client.request({ command: "submit", tx_blob: blob });
+    const res = await client.request(submitRequest(blob));
     return { engineResult: res.result.engine_result, message: res.result.engine_result_message };
   },
   async lookup(hash, range): Promise<Lookup> {

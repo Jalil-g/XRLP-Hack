@@ -5,7 +5,8 @@
 // Safety rules:
 //  - Resubmitting the SAME signed blob is always safe (same hash can apply at most once).
 //  - A NEW blob is only built when the previous one provably cannot apply:
-//      tel* (not applied, not relayed) or LastLedgerSequence passed with no hit in a fully-searched range
+//      tel* (not applied, not relayed, not retried: client.ts submits with fail_hard, without which rippled HOLDS such a
+//        blob and re-applies it at later ledgers) or LastLedgerSequence passed with no hit in a fully-searched range
 //        → re-sign with the SAME Sequence (mutually exclusive with the old blob, so never a double-apply);
 //      tefPAST_SEQ on a blob that never reached the ledger → re-sign with a fresh Sequence, but only once every
 //        other blob of this intent that may have reached a server is settled (validated or provably expired).
@@ -206,9 +207,18 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
       ...(opt.cause !== undefined ? { cause: redactedCause(opt.cause) } : {}),
     });
 
+  /** Hashes of this intent that may still apply, oldest first (for "check the hash" messages). */
+  const unsettled = () => [...new Set([...live.keys(), cur.hash])];
+  const lost = (e: unknown) => fail("connection_lost", false, { hash: cur.hash, detail: `outcome unknown; check ${unsettled().join(", ")}`, cause: e });
+
   const onConnError = async (e: unknown) => {
-    if (++connErrors > MAX_CONN_ERRORS) throw fail("connection_lost", false, { hash: cur.hash, detail: "outcome unknown; check the hash", cause: e });
-    await io.reconnect();
+    if (++connErrors > MAX_CONN_ERRORS) throw lost(e);
+    try {
+      await io.reconnect();
+    } catch (re) {
+      // A failed reconnect is one more connection error, never a raw throw that loses the hash.
+      if (++connErrors > MAX_CONN_ERRORS) throw lost(re);
+    }
   };
 
   /** Wait until `blob` is validated (→ result) or provably expired (→ "expired"). */
@@ -216,19 +226,31 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
     const started = Date.now();
     let incomplete = 0;
     let busy = 0;
+    let lastValidated = -1;
+    let progressAt = started;
     for (;;) {
       try {
         const v = await io.validatedLedgerIndex();
+        if (v > lastValidated) {
+          lastValidated = v;
+          progressAt = Date.now();
+        } else if (Date.now() - progressAt > maxWaitMs) {
+          throw fail("unknown_outcome", false, { hash: blob.hash, detail: `no new validated ledger for ${Math.round(maxWaitMs / 1000)}s; check the hash` });
+        }
         const lls = blob.lastLedgerSequence;
         const closedOut = lls !== undefined && v >= lls;
         const range = closedOut ? { min: Math.max(minLedger, lls - MAX_LOOKUP_SPAN), max: lls } : undefined;
         const lk = await io.lookup(blob.hash, range);
         if (lk.status === "validated") return lk.result;
-        if (closedOut && lk.status === "missing") {
+        if (closedOut) {
           // Proof only if the searched range starts where the tx could first have landed (L1: margins > 999 ledgers).
-          if (lk.searchedAll && range!.min <= minLedger) return "expired";
-          if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS)
-            throw fail("unknown_outcome", false, { hash: blob.hash, detail: "server history incomplete; check the hash" });
+          if (lk.status === "missing" && lk.searchedAll && range!.min <= minLedger) return "expired";
+          // Missing without a full search, or "known, not validated" past LastLedgerSequence (rippled answers a
+          // never-included tx from its cache): neither is proof. Bounded, then unknown_outcome (review finding 2).
+          if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS) {
+            const why = lk.status === "pending" ? "still known but not validated past its LastLedgerSequence (server cache)" : "server history incomplete";
+            throw fail("unknown_outcome", false, { hash: blob.hash, detail: `${why}; check the hash` });
+          }
         }
         if (lls === undefined && Date.now() - started > maxWaitMs)
           throw fail("unknown_outcome", false, { hash: blob.hash, detail: "no LastLedgerSequence; gave up waiting" });
@@ -243,6 +265,15 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
   };
 
   const waitFor = (b: SignedBlob) => waitFinal(b, Math.min(firstLedger.get(b.hash) ?? 1, b.lastLedgerSequence ?? Infinity));
+
+  /** One unranged lookup: "missing" only when the server says txnNotFound; any error counts as "maybe applied". */
+  const peek = async (hash: string): Promise<Lookup["status"]> => {
+    try {
+      return (await io.lookup(hash)).status;
+    } catch {
+      return "pending";
+    }
+  };
 
   /**
    * Wait until every live blob (except `skip`) has validated or provably expired. A validated one decides the intent:
@@ -297,7 +328,9 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
       throw fail(prelim, false, detail ? { detail } : {});
     }
 
-    if (cls === "pending" || (cls === "past_seq" && live.has(cur.hash))) {
+    // tefPAST_SEQ: maybe this very blob took the Sequence (an earlier call submitted it, or a server held it). Ask first.
+    const own = cls === "past_seq" && !live.has(cur.hash) ? await peek(cur.hash) : undefined;
+    if (cls === "pending" || (cls === "past_seq" && (live.has(cur.hash) || own !== "missing"))) {
       // Possibly applied: only the ledger can tell. Never build a new blob until this one is provably dead.
       live.set(cur.hash, cur);
       const out = await waitFor(cur);

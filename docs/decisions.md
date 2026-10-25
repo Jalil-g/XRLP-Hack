@@ -71,7 +71,8 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] **xrpl security review** (`docs/reviews/xrpl-security-review-2026-10-25.md`), calls made while fixing it: (1) the retry
   engine tracks every blob of an intent that may have reached a server and settles them before a fresh-Sequence re-sign or
   any give-up; `retriable: true` now strictly means "nothing can still apply", an unknown outcome is non-retriable
-  `connection_lost` / `unknown_outcome`. (2) `finishEscrow` signs one blob per preflight and submits it pre-signed (never
+  `connection_lost` / `unknown_outcome`; every submit sets `fail_hard` (devnet showed rippled otherwise holds a refused
+  provisional tx and applies it later, `spike:fail-hard`), and waits are bounded. (2) `finishEscrow` signs one blob per preflight and submits it pre-signed (never
   re-signed by the engine); `unsafe_release` from a finish means the fulfillment never left the process, a refusal after a
   submit is `preflight_refused_after_submit`. (3) Mainnet guard = URL/label denylist + `server_info.network_id === 2` on
   connect (`XRPL_NETWORK_ID` for another custom net, never 0/1). (4) Adapter keys are bound to roles per input

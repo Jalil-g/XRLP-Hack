@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { inspect } from "node:util";
 import { DisconnectedError, TimeoutError } from "xrpl";
 import { XrplTxError, redactedCause, redactSecrets, toErrorCode, toLedgerError } from "../src/errors.ts";
+import { submitRequest } from "../src/client.ts";
 import {
   assertLlsMargin,
   classifyPreliminary,
@@ -521,4 +522,60 @@ test("L1: LastLedgerSequence margins are bounded; a lookup that can't cover the 
   const r = resigner();
   await assert.rejects(submitReliably(blob("A", 1_600), io, { pollMs: 0, resign: r.resign }), (e: unknown) => e instanceof XrplTxError && e.engineResult === "unknown_outcome");
   assert.deepEqual(r.calls, [], "never re-signed on a non-proof");
+});
+
+// ── independent review pass: H1b (held blobs), waits, reconnect ───────────────────────────
+
+test("H1b: every submit sets fail_hard, so a provisional tel*/tef*/ter* answer is final at that server (rippled holds it otherwise)", () => {
+  assert.deepEqual(submitRequest("ABCD"), { command: "submit", tx_blob: "ABCD", fail_hard: true });
+});
+
+test("H1b: tefPAST_SEQ on a blob that already applied (an earlier call submitted it) → its own validated result, never a fresh Sequence", async () => {
+  for (const withResign of [false, true]) {
+    const io = new FakeLedger(["tefPAST_SEQ"]);
+    io.applyQuietly("A");
+    io.validated++; // A validated a ledger ago
+    const r = resigner();
+    const out = await submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0, ...(withResign ? { resign: r.resign } : {}) });
+    assert.equal(out.hash, "A", withResign ? "re-sign path" : "pre-signed path: not a retriable error");
+    assert.deepEqual(r.calls, []);
+  }
+});
+
+test("finding 2: past LastLedgerSequence, a 'known but not validated' answer (rippled's cache) is bounded → unknown_outcome", async () => {
+  const io = new FakeLedger(["tesSUCCESS"]);
+  io.lookup = async () => ({ status: "pending" });
+  const r = resigner();
+  await assert.rejects(submitReliably(blob("A", 103), io, { pollMs: 0, resign: r.resign }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "unknown_outcome" && !e.retriable && e.hash === "A");
+    assert.match(e.message, /still known but not validated past its LastLedgerSequence/);
+    return true;
+  });
+  assert.deepEqual(r.calls, [], "no proof of expiry → never re-signed");
+});
+
+test("finding 2: no new validated ledger for maxWaitMs → unknown_outcome instead of waiting forever", async () => {
+  const io: LedgerIo = {
+    submit: async () => ({ engineResult: "tesSUCCESS" }),
+    lookup: async () => ({ status: "missing", searchedAll: true }),
+    validatedLedgerIndex: async () => 100, // the network stopped validating
+    reconnect: async () => {},
+    sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
+  };
+  await assert.rejects(submitReliably(blob("A", 150), io, { pollMs: 2, maxWaitMs: 20 }), (e: unknown) => e instanceof XrplTxError && e.engineResult === "unknown_outcome" && /no new validated ledger/.test(e.message) && e.hash === "A");
+});
+
+test("findings 3+4: a failed reconnect is connection_lost (with every unsettled hash), never a raw error", async () => {
+  // A maybe-sent, telINSUF_FEE_P → same-Sequence B1, then the socket stays down and every reconnect fails.
+  const down = () => new DisconnectedError("websocket closed");
+  const io = new FakeLedger([down(), "telINSUF_FEE_P", down(), down()]);
+  io.reconnect = async () => Promise.reject(new Error("connect ECONNREFUSED 1.2.3.4:51233"));
+  const r = resigner();
+  await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0, resign: r.resign }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError, `got ${String(e)}`);
+    assert.equal(e.engineResult, "connection_lost");
+    assert.equal(e.retriable, false);
+    assert.match(e.message, /check A, B1/, "the maybe-sent A and the re-signed B1 are both listed");
+    return true;
+  });
 });
