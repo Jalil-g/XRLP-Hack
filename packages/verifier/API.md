@@ -11,6 +11,8 @@ pnpm --filter @xrlp/verifier typecheck
 pnpm --filter @xrlp/verifier test
 VERIFIER_MODE=mock pnpm --filter @xrlp/verifier demo
 pnpm --filter @xrlp/verifier fixtures
+pnpm --filter @xrlp/verifier eval --mode mock --repeat 3
+pnpm --filter @xrlp/verifier eval --mode live --repeat 3 --output .data/live-eval.json
 ```
 
 Mock mode is deterministic and needs no API key. Its judgement reasons are labeled [mock]; stage
@@ -119,7 +121,14 @@ The default licence/insurance registry, NYC residential cost proportions and fix
 MOCK. They do not prove real-world licensing, entity/sanctions status, site existence, permit
 authenticity, construction quality or quantities. Live mode adds bounded structured Claude judgement
 (20 seconds, no retries); unavailable/refused/low-confidence review requires a human, and cannot
-override deterministic contradictions. Project manifest: fixtures/project-manifest.json.
+override deterministic contradictions. Project manifest: fixtures/projects/manifest.json.
+
+The eval harness recursively discovers fixtures/**/manifest.json for milestone and project cases.
+It checks expected decisions AND every declared failing/warning check, serially. Live mode disables
+the review cache; three repetitions must independently match before claiming stability. Missing keys,
+unknown fixture builders, exceptions and mismatches cannot score green. Exit codes: 0 matched,
+1 mismatch, 2 configuration/unavailable. Reports contain results/timings/hashes, never credentials.
+Mock validation completed 24/24 scenario runs; no real live evaluation has been measured here.
 
 ## Inspector assignment
 
