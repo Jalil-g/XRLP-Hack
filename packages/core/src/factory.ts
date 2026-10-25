@@ -1,6 +1,13 @@
 // Wiring. One core per process: `const core = createCore()`. Fake mode by default (LEDGER_MODE=fake, CORE_VERIFIER=fake).
-import { join } from "node:path";
+// LEDGER_MODE=devnet -> @xrlp/xrpl XrplLedgerAdapter + WALLETS_FILE identities; VERIFIER_MODE=live (or CORE_VERIFIER=verifier)
+// -> @xrlp/verifier ClaudeVerifierAdapter (CORE-05).
+import { existsSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import type { LedgerPort, VerifierPort } from "@xrlp/shared";
+import { assertNotMainnet, REPO_ROOT as XRPL_REPO_ROOT, config as xrplConfig, XrplLedgerAdapter } from "@xrlp/xrpl";
+import { DevnetConfigError, loadDevnetIdentities, seedDevnetParticipants, type DevnetIdentities } from "./adapters/devnet-identities.ts";
+import { UploadedEvidenceMeta } from "./adapters/evidence-meta.ts";
+import { CoreVerifierAdapter } from "./adapters/verifier.ts";
 import type { ReleaseServicePort } from "./api-surface.ts";
 import { FakeClock, systemClock, type Clock } from "./clock.ts";
 import { prestageSeedOptions } from "./demo/prestage-seed.ts";
@@ -31,19 +38,52 @@ export interface CreateCoreOptions extends Partial<CoreServiceOptions> {
   env?: Record<string, string | undefined>;
 }
 
-function ledgerFromEnv(env: Record<string, string | undefined>, clock: Clock, dataDir?: string): LedgerPort {
+type Env = Record<string, string | undefined>;
+
+/** LEDGER_MODE=devnet preconditions: devnet endpoint (xrpl's mainnet guard + XRPL_NETWORK), a bootstrapped WALLETS_FILE. */
+export function devnetConfigFromEnv(env: Env): { walletsFile: string; identities: DevnetIdentities } {
+  const network = env.XRPL_NETWORK ?? xrplConfig.network;
+  const wsUrl = env.XRPL_WS_URL ?? xrplConfig.wsUrl;
+  assertNotMainnet(wsUrl, network);
+  if (network !== "devnet") throw new DevnetConfigError(`LEDGER_MODE=devnet needs XRPL_NETWORK=devnet, got "${network}" (Vault/Loan are devnet-only)`);
+  const raw = env.WALLETS_FILE ?? xrplConfig.walletsFile;
+  const walletsFile = isAbsolute(raw) ? raw : resolve(XRPL_REPO_ROOT, raw); // same rule as @xrlp/xrpl: relative to the repo root
+  if (!existsSync(walletsFile)) throw new DevnetConfigError(`LEDGER_MODE=devnet: WALLETS_FILE ${walletsFile} not found. Run: WALLETS_FILE=${walletsFile} pnpm --filter @xrlp/xrpl bootstrap`);
+  return { walletsFile, identities: loadDevnetIdentities(walletsFile) };
+}
+
+/** First-loss cover on devnet, bps of principal (see createCore). */
+export const DEVNET_COVER_BPS = 1100;
+
+/** DEMO_CANCEL_AFTER_S="1500,1800,420": CancelAfter = close + N s for milestone i (short devnet runs). Unset -> default. */
+export function cancelAfterFromEnv(env: Env): CoreServiceOptions["cancelAfterFor"] {
+  const raw = env.DEMO_CANCEL_AFTER_S?.trim();
+  if (!raw) return undefined;
+  const secs = raw.split(",").map((x) => Number(x.trim()));
+  if (secs.some((n) => !Number.isInteger(n) || n <= 0)) throw new Error(`DEMO_CANCEL_AFTER_S must be comma-separated positive integers (seconds), got "${raw}"`);
+  return (_p, m, closeAt) => new Date(closeAt.getTime() + secs[Math.min(m.index, secs.length - 1)]! * 1000);
+}
+
+function ledgerFromEnv(env: Env, clock: Clock, dataDir?: string, devnet?: { walletsFile: string }): LedgerPort {
   const mode = env.LEDGER_MODE ?? "fake";
   if (mode === "fake")
     return new FakeLedger({ clock, platformAddress: DEMO_ADDRESSES.platform, stateFile: dataDir ? join(dataDir, "fake-ledger.json") : undefined });
-  // TODO(adapters): LEDGER_MODE=devnet -> packages/xrpl/src/adapter.ts (@Jalil-g, XRPL lane).
-  throw new Error(`LEDGER_MODE=${mode} not wired yet (only "fake")`);
+  if (mode === "devnet") return new XrplLedgerAdapter({ walletsFile: devnet!.walletsFile, log: (line) => console.log(`[xrpl] ${line}`) });
+  throw new Error(`LEDGER_MODE=${mode} not supported (fake | devnet)`);
 }
 
-function verifierFromEnv(env: Record<string, string | undefined>, clock: Clock): VerifierPort {
-  const mode = env.CORE_VERIFIER ?? "fake";
-  if (mode === "fake") return new FakeVerifier(clock);
-  // TODO(adapters): CORE_VERIFIER=verifier -> packages/verifier/src/adapter.ts (@elmir132).
-  throw new Error(`CORE_VERIFIER=${mode} not wired yet (only "fake")`);
+/**
+ * CORE_VERIFIER=fake|verifier wins; otherwise VERIFIER_MODE=live -> ClaudeVerifierAdapter, anything else -> FakeVerifier.
+ * On devnet the FakeVerifier reads uploaded files' metadata (EXIF, pHash, invoice totals) from DATA_DIR (adapters/evidence-meta.ts).
+ */
+function verifierFromEnv(env: Env, clock: Clock, store: Store, dataDir?: string, devnet = false): VerifierPort {
+  const vmode = (env.VERIFIER_MODE ?? "mock").trim().toLowerCase();
+  if (vmode !== "mock" && vmode !== "live") throw new Error(`VERIFIER_MODE=${vmode} not supported (mock | live)`);
+  const mode = env.CORE_VERIFIER ?? (vmode === "live" ? "verifier" : "fake");
+  if (mode === "fake") return devnet && dataDir ? new UploadedEvidenceMeta(new FakeVerifier(clock), dataDir) : new FakeVerifier(clock);
+  if (mode === "verifier")
+    return new CoreVerifierAdapter({ mode: vmode, store, now: () => clock.now().toISOString(), ...(dataDir ? { dataDir } : {}), ...(env.VERIFIER_MODEL ? { model: env.VERIFIER_MODEL } : {}) });
+  throw new Error(`CORE_VERIFIER=${mode} not supported (fake | verifier)`);
 }
 
 export function createCore(opts: CreateCoreOptions = {}): Core {
@@ -51,8 +91,9 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const clock = opts.clock ?? systemClock;
   const dataDir = opts.inMemory ? undefined : (opts.dataDir ?? resolveDataDir(env));
   const store = opts.store ?? (dataDir ? new FileStore(dataDir) : new MemoryStore());
-  const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir);
-  const verifier = opts.verifier ?? verifierFromEnv(env, clock);
+  const devnet = !opts.ledger && env.LEDGER_MODE === "devnet" ? devnetConfigFromEnv(env) : undefined;
+  const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir, devnet);
+  const verifier = opts.verifier ?? verifierFromEnv(env, clock, store, dataDir, !!devnet);
   const vault = dataDir ? new FilePreimageVault(dataDir) : new MemoryPreimageVault();
   const release = opts.release ?? new ReleaseService({ ledger, vault, now: () => clock.now() });
 
@@ -61,7 +102,9 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const canSeed = !opts.seed && dataDir && ledger instanceof FakeLedger && !opts.ledger;
   const seed: CoreServiceOptions["seed"] =
     opts.seed ??
-    (canSeed
+    (devnet
+      ? () => seedDevnetParticipants(service, devnet.identities, (line) => console.log(`[core] ${line}`))
+      : canSeed
       ? async (name) => {
           if (name !== "maple-st") throw new DomainError("VALIDATION", `Seed "${name}" needs LEDGER_MODE=devnet (fake mode seeds "maple-st")`);
           const twinClock = new FakeClock(new Date(clock.now().getTime() - SEED_BACKDATE_MS));
@@ -72,21 +115,27 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   // CORE-07: devnet route 21 loads the XRPL prestage (A/B/C) into this store and the release service's vault.
   const prestage =
     !opts.seed && !opts.release && (env.LEDGER_MODE ?? "fake") === "devnet"
-      ? prestageSeedOptions({ env, dataDir: dataDir ?? resolveDataDir(env), store, vault, ledger, service: () => service })
+      ? prestageSeedOptions({ env, dataDir: dataDir ?? resolveDataDir(env), store, vault, ledger, service: () => service, other: seed, walletsPlatform: devnet?.identities.platform })
       : {};
 
+  const ids = devnet?.identities;
+  const cancelAfterFor = cancelAfterFromEnv(env);
   const service: CoreService = new CoreService({
-    platformAddress: DEMO_ADDRESSES.platform,
-    aiAgentAddress: DEMO_ADDRESSES.aiAgent,
-    releaseServiceAddress: DEMO_ADDRESSES.releaseService,
+    platformAddress: ids?.platform ?? DEMO_ADDRESSES.platform,
+    aiAgentAddress: ids?.aiAgent ?? DEMO_ADDRESSES.aiAgent,
+    releaseServiceAddress: ids?.releaseService ?? DEMO_ADDRESSES.releaseService,
     ...prestage,
+    ...(cancelAfterFor ? { cancelAfterFor } : {}),
+    // The ledger's cover minimum is CoverRateMinimum (10%) of principal + interest, not of principal; 11% of principal is
+    // the headroom xrpl's defaultCoverDeposit uses (covers interest up to 10% of principal). Proper fix: service.ts cover on owed.
+    ...(devnet ? { coverBps: DEVNET_COVER_BPS } : {}),
     ...opts,
     store,
     ledger,
     verifier,
     release,
     clock,
-    seed: seed ?? prestage.seed,
+    seed: prestage.seed ?? seed,
     resetLedger: opts.resetLedger ?? (ledger instanceof FakeLedger ? () => ledger.reset() : undefined),
   });
   return { service, store, ledger, verifier, release, clock, dataDir };

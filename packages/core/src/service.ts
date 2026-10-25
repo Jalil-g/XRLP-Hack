@@ -36,7 +36,7 @@ import { z } from "zod";
 import type { AuditReportInput, CoreApi, DemoSeed, EvidenceUpload, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
-import { DomainError } from "./errors.ts";
+import { DomainError, ledgerErrorCode } from "./errors.ts";
 import { canonicalJson, fakeAddress, newId, sha256Hex, slugify } from "./ids.ts";
 import { fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
 import { PLATFORM_SCOPE } from "./ports.ts";
@@ -150,6 +150,8 @@ class KeyedMutex {
 }
 
 const OPEN_PROJECT: readonly ProjectStatus[] = ["escrowed", "repaying", "stalled"];
+/** Investor.kycCredentialTx when the ledger already held an accepted KYC_INVESTOR (no tx this time). */
+export const KYC_ALREADY_ON_LEDGER = "already-accepted";
 
 // ---------- service ----------
 
@@ -192,8 +194,7 @@ export class CoreService implements CoreApi {
     } catch (e) {
       if (e instanceof DomainError) throw e;
       if (e instanceof LedgerError) {
-        const code = e.code === "too_soon" ? "TOO_SOON" : e.code === "unsafe_release" ? "UNSAFE_RELEASE" : "LEDGER_ERROR";
-        throw new DomainError(code, `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
+        throw new DomainError(ledgerErrorCode(e), `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
       }
       throw new DomainError("LEDGER_ERROR", `${what} failed: ${(e as Error).message}`, e);
     }
@@ -313,7 +314,8 @@ export class CoreService implements CoreApi {
     return this.store.write((db) => {
       let inv = db.investors.find((i) => i.address === addr);
       if (!inv) db.investors.push((inv = { address: addr, name: name ?? `Investor ${addr.slice(0, 6)}`, createdAt: this.nowIso() }));
-      inv.kycCredentialTx = txs[0]?.hash;
+      // [] = already issued + accepted on-ledger (devnet adapter: nothing submitted); still KYC'd.
+      inv.kycCredentialTx = txs[0]?.hash ?? inv.kycCredentialTx ?? KYC_ALREADY_ON_LEDGER;
       db.chainEvents.push(...events);
       return { events };
     });

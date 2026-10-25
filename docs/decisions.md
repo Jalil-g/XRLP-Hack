@@ -131,6 +131,12 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
+- [10-25] CORE-05 (Jalil's agent, in Sean's core lane): `LEDGER_MODE=devnet` → `XrplLedgerAdapter`; core's demo parties map to the
+  `WALLETS_FILE` roles (`packages/core/src/adapters/devnet-identities.ts`), route 21 seed on devnet = participants only.
+  `VERIFIER_MODE=mock` keeps core's `FakeVerifier` (the verifier package's `verifyProject` needs registry/history inputs core does not
+  supply yet), fed with metadata extracted from uploaded bytes on devnet; `VERIFIER_MODE=live` / `CORE_VERIFIER=verifier` → `ClaudeVerifierAdapter`.
+  Devnet cover = 11% of principal (ledger minimum is 10% of principal + interest). A self-addressed attestation (platform → platform,
+  e.g. inspector assignment before an SPV exists) is a memo-only `AccountSet`: a Payment to yourself is `temREDUNDANT`.
 
 ## Open
 

@@ -360,6 +360,7 @@ describe("CORE-07 importPrestage (offline)", () => {
     const noPre = fixture();
     delete noPre.preimages.projects[noPre.file.projects.A!.projectId];
     await assert.rejects(planPrestageImport({ ...base, ...write(noPre) }), isCode("VALIDATION", /No preimage/));
+    await assert.rejects(planPrestageImport({ ...base, ...write(fixture()), walletsPlatform: fakeAddress("other-wallets") }), isCode("VALIDATION", /another wallet store/));
     // C is optional (withdraw beat unavailable), A and B are not
     const noC = await planPrestageImport({ ...base, ...write(fixture("r1", { withC: false })) });
     assert.deepEqual(Object.keys(noC.result.ids), ["A", "B"]);

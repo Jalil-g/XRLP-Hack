@@ -67,7 +67,7 @@ export type { BatchOutcome, InnerLookup, CreateEscrowsAtomicParams, CreateEscrow
 // Low-level building blocks
 export { getClient, disconnect, ledgerTime, waitForLedgerTimeAfter, signAndSubmit, submitBlob, XrplTxError } from "./client.ts";
 export type { TxResult } from "./client.ts";
-export { config, RLUSD_CURRENCY } from "./config.ts";
+export { assertNotMainnet, config, REPO_ROOT, RLUSD_CURRENCY } from "./config.ts";
 export { loadWallets, resolveWallet, WALLET_ROLES } from "./wallets.ts";
 export { RLUSD_HOLDERS, LEGACY_ROLE_RENAMES, migrateWalletFile, rlusdTopUpPlan } from "./wallets.ts";
 export type { WalletRole, DemoWallets } from "./wallets.ts";
@@ -130,6 +130,8 @@ export {
   decodeAttestMemo,
   decodeAnyAttestation,
   buildAttestTx,
+  buildSelfAttestTx,
+  attestTxFor,
   prepareAttestTx,
   verifyAttestBlob,
 } from "./attest.ts";

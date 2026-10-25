@@ -64,6 +64,8 @@ export interface ImportPrestageOptions extends PrestagePaths {
   /** If given, every open/expired escrow of A and B must still exist on-ledger with the same condition. */
   ledger?: Pick<LedgerPort, "getEscrow">;
   now?: () => Date;
+  /** Platform address of core's wallet store (CORE-05 identities); the prestage must have used the same WALLETS_FILE. */
+  walletsPlatform?: string;
   /** Expected `network` of the file (default "devnet"). */
   network?: string;
   minLeadMs?: number;
@@ -111,6 +113,8 @@ export async function planPrestageImport(opts: ImportPrestageOptions): Promise<{
   }
   const network = opts.network ?? "devnet";
   if (file.network !== network) fail("VALIDATION", `prestage.json is for ${file.network}, core expects ${network}`);
+  if (opts.walletsPlatform && file.accounts.platform !== opts.walletsPlatform)
+    fail("VALIDATION", `prestage.json was made with another wallet store (platform ${file.accounts.platform}, core uses ${opts.walletsPlatform}); use the same WALLETS_FILE`);
   const preimagesPath = opts.preimagesPath ?? resolve(REPO_ROOT, file.preimagesFile);
   const pf = (await readJson(preimagesPath, "prestage-preimages.json")) as Partial<PrestagePreimagesFile>;
   if (!pf || typeof pf !== "object" || !pf.projects || typeof pf.projects !== "object") fail("VALIDATION", `${preimagesPath} has no projects`);
