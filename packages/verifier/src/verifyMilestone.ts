@@ -163,7 +163,7 @@ export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, rel
   if (failing.length) {
     decision = "fail";
     confidence = Math.max(...failing.map((c) => c.confidence));
-  } else if (human.length || !policy.allowAutoPass) {
+  } else if (human.length || !policy.allowAutoPass || !counted.length) {
     decision = "needs_human";
     confidence = human.length ? Math.min(...human.map((c) => c.confidence)) : 0.5;
   } else {
