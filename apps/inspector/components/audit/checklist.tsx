@@ -29,7 +29,7 @@ export function Checklist({
         const missing = showErrors && (!entry.status || (needsNote && !entry.note.trim()));
         return (
           <li key={line.code} id={`checklist.${line.code}`} className={cn("space-y-3 px-5 py-5 sm:px-6", missing && "bg-bad-bg/60")}>
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="grid items-start gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
               <div className="min-w-0">
                 <p className="text-small font-semibold">
                   <span className="font-mono text-faint">{line.code}</span> {line.title}

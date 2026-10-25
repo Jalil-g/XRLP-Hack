@@ -174,7 +174,7 @@ export function EvidenceUploader({
             {busy ? "Submitting…" : reviewing ? `${submitLabel} ${files.length} file${files.length === 1 ? "" : "s"}` : "Review evidence"}
           </Button>
           {fixture && !reviewing && (
-            <Button variant="quiet" disabled={loading || busy} onClick={loadFixture}>
+            <Button variant="quiet" className="h-auto shrink whitespace-normal py-2 text-left" disabled={loading || busy} onClick={loadFixture}>
               {loading && <Loader2 className="animate-spin" aria-hidden />}
               {fixture.label}
             </Button>

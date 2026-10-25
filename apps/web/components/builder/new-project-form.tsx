@@ -131,7 +131,6 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
 
   return (
     <div className="space-y-12">
-      <div className="rounded-[20px] bg-capital p-6 text-capital-text sm:p-8"><h2 className="text-heading">Build a funding plan</h2><p className="mt-2 max-w-[65ch] text-small text-capital-muted">Define the work, match every draw to the principal, then review before creating your project.</p><ol className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-small"><li className="text-accent">1. Project & terms</li><li>2. Schedule & documents</li><li>3. Review</li></ol></div>
       <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
       <section className="grid gap-5 rounded-panel border border-line bg-surface p-5 sm:p-6">
         <h2 className="text-heading">Project</h2>

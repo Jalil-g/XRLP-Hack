@@ -57,12 +57,10 @@ export default async function VerificationPage({ params }: Props) {
         />
       </div>
 
-      <section className="grid gap-6 rounded-[20px] bg-capital p-6 text-capital-text sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8" aria-label="Project verification summary">
-        <div><h2 className="text-heading">{p.name}</h2><p className="mt-2 text-body text-capital-muted">{builder.name}</p><p className="mt-5 max-w-[65ch] text-small text-capital-muted">{v ? "Read the findings below before moving to the next stage. Project verification is not approval of a milestone draw." : "Verification has not run. Pay the fee, then review the identity, feasibility and capability findings here."}</p></div>
-        <div className="border-t border-capital-muted/30 pt-4 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-6"><p className="text-small text-capital-muted">Requested financing</p><p className="mt-2 break-words text-[36px] leading-tight font-semibold tracking-[-0.035em] tabular-nums">{formatAmount(p.terms.principal, { cents: true })}</p><p className="mt-1 text-small text-capital-muted">RLUSD · {decision?.label ?? "Awaiting verification"}</p></div>
-      </section>
-
-      <dl className="grid gap-x-10 gap-y-5 rounded-panel border border-line bg-surface p-5 sm:grid-cols-3 sm:p-6">
+      <section className="finance-surface grid gap-6 sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8" aria-label="Project verification summary">
+        <div><h2 className="text-heading">{p.name}</h2><p className="mt-2 text-body text-ink-2">{builder.name}</p><p className="mt-5 max-w-[65ch] text-small text-ink-2">{v ? "Read the findings below before moving to the next stage. Project verification is not approval of a milestone draw." : "Verification has not run. Pay the fee, then review the identity, feasibility and capability findings here."}</p></div>
+        <div className="border-t border-line pt-4 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-8"><p className="text-small text-ink-2">Requested financing</p><p className="mt-2 break-words text-[36px] leading-tight font-semibold tracking-[-0.035em] tabular-nums">{formatAmount(p.terms.principal, { cents: true })}</p><p className="mt-1 text-small text-ink-2">RLUSD · {decision?.label ?? "Awaiting verification"}</p></div>
+        <dl className="grid gap-x-10 gap-y-5 border-t border-line pt-6 sm:col-span-2 sm:grid-cols-3">
         <Fact
           label="Verification fee"
           value={fee ? `${formatAmount(fee.amount ?? "250")} RLUSD paid by ${builder.name}` : "Not paid yet"}
@@ -90,6 +88,7 @@ export default async function VerificationPage({ params }: Props) {
           note={v ? `${v.model === "mock" ? "Mock verifier" : v.model} · ${formatDateTime(v.createdAt)}` : undefined}
         />
       </dl>
+      </section>
 
       {v?.decision === "needs_human" && (
         <p className="rounded-panel bg-review-bg px-5 py-4 text-small text-ink">

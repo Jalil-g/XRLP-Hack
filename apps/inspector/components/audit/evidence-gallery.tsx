@@ -16,7 +16,7 @@ export function EvidenceGallery({ evidence, site, browserExif }: { evidence: Evi
   return (
     <div className="space-y-4">
       {photos.length > 0 && (
-        <ul className="grid min-w-0 grid-cols-1 gap-4">
+        <ul className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
           {photos.map((p) => (
             <li key={p.id} className="overflow-hidden rounded-lg border border-line bg-surface">
               <a href={api.fileUrl(p)} target="_blank" rel="noreferrer" className="block aspect-[4/3] bg-subtle">

@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const field =
-  "w-full rounded-control border border-line-2 bg-page px-3 text-body text-ink placeholder:text-ink-3 transition-colors duration-150 hover:border-ink-3 focus:border-action focus:outline-none focus-visible:outline-none focus:ring-3 focus:ring-action/15 disabled:bg-band disabled:text-ink-2";
+  "w-full rounded-control border border-line-2 bg-surface px-3 text-body text-ink placeholder:text-ink-3 transition-colors duration-150 hover:border-ink-3 focus:border-action focus:outline-none focus-visible:outline-none focus:ring-3 focus:ring-action/15 disabled:bg-band disabled:text-ink-2";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...props }, ref) {
   return <input ref={ref} className={cn(field, "h-11", className)} {...props} />;

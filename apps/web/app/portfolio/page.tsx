@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { CapitalBar } from "@/components/ui/capital-bar";
 import { Empty, PageHeader } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
@@ -22,6 +23,8 @@ export default async function PortfolioPage() {
   );
   const positions = await api.portfolio(investor.address);
   const total = positions.reduce((a, p) => a + toCents(p.value), 0);
+  const nextOpen = positions.filter((p) => p.phase !== "redemption").map((p) => p.redemptionDate).sort()[0];
+  const open = positions.filter((p) => p.phase === "redemption").reduce((a, p) => a + toCents(p.value), 0);
 
   return (
     <div className="space-y-12">
@@ -41,11 +44,19 @@ export default async function PortfolioPage() {
         <div>
           <p className="text-small text-capital-muted">Current vault share value</p>
           <p className="financial-amount mt-3">{formatAmount(fromCents(total), { cents: true })} <span>RLUSD</span></p>
-          <p className="mt-3 text-small text-capital-muted">{positions.length} project {positions.length === 1 ? "position" : "positions"} · share value rises as interest is repaid</p>
+          <p className="mt-2 text-small text-capital-muted">{positions.length} project {positions.length === 1 ? "position" : "positions"} · share value rises as interest is repaid</p>
+          <CapitalBar
+            className="mt-6"
+            label="Holdings by withdrawal status"
+            segments={[
+              { label: "Withdrawals open", cents: open, tone: "accent" },
+              { label: "Locked until redemption date", cents: total - open, tone: "muted" },
+            ]}
+          />
         </div>
         <div className="capital-detail">
-          <div><span>In redemption-phase holdings</span><strong>{formatAmount(fromCents(positions.filter((position) => position.phase === "redemption").reduce((amount, position) => amount + toCents(position.value), 0)), { cents: true })} RLUSD</strong></div>
-          <div><span>In locked holdings</span><strong>{formatAmount(fromCents(positions.filter((position) => position.phase !== "redemption").reduce((amount, position) => amount + toCents(position.value), 0)), { cents: true })} RLUSD</strong></div>
+          <div><span>Positions</span><strong>{positions.length}</strong></div>
+          <div><span>Next withdrawal opens</span><strong>{nextOpen ? formatDate(nextOpen) : "Not scheduled"}</strong></div>
         </div>
       </section>}
 

@@ -5,12 +5,13 @@ import { EvidenceUploader } from "@/components/builder/evidence-uploader";
 import { EvidenceReceipt } from "@/components/builder/evidence-receipt";
 import { TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
+import { MilestoneTabs } from "@/components/project/milestone-tabs";
 import { buttonClass } from "@/components/ui/button";
 import { Empty, PageHeader, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
-import { MILESTONE_STATUS, PROJECT_STATUS, sovLinesFor } from "@/lib/display";
+import { PROJECT_STATUS, sovLinesFor } from "@/lib/display";
 import { MAPLE_FIXTURE_SETS } from "@/lib/fixture-files";
 import { getSession } from "@/lib/session";
 import { formatAmount, toCents } from "@/lib/utils";
@@ -80,21 +81,22 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
     >
       <div className="mb-6 grid gap-6 rounded-[20px] bg-capital p-6 text-capital-text sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8">
         <div className="min-w-0">
-          <p className="text-small text-capital-muted">{current ? `${current.title} · scheduled draw` : "Project financing"}</p>
+          <p className="text-small text-capital-muted">{current ? `${current.title} · scheduled draw` : "Project principal"}</p>
           <p className="mt-2 break-words text-[36px] leading-[1.1] font-semibold tracking-[-0.035em] tabular-nums sm:text-[52px]">{formatAmount(current?.amount ?? p.terms.principal, { cents: true })} <span className="text-body font-medium tracking-normal text-capital-muted">RLUSD</span></p>
           <p className="mt-3 max-w-[65ch] text-small text-capital-muted">{current ? STEP[current.status] ?? (current.status === "failed" ? "A check failed. Review the flagged evidence and resubmit; funds remain locked." : "Follow the milestone below for the next action.") : "Verification comes before funding. Each construction draw has its own evidence requirements."}</p>
         </div>
         <dl className="space-y-3 border-t border-capital-muted/30 pt-4 text-small sm:border-t-0 sm:border-l sm:pt-0 sm:pl-6">
-          <div><dt className="text-capital-muted">Builder</dt><dd className="mt-1 font-medium">{builder.name}</dd></div>
-          <div><dt className="text-capital-muted">Project principal</dt><dd className="mt-1 tabular-nums">{formatAmount(p.terms.principal, { cents: true })} RLUSD</dd></div>
+          {p.status === "funding" || p.status === "funded" ? (
+            <div><dt className="text-capital-muted">Raised from investors</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(raised / 100, { cents: true })} RLUSD</dd></div>
+          ) : (
+            <div><dt className="text-capital-muted">Paid to you</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(p.milestones.filter((m) => m.status === "released").reduce((a, m) => a + toCents(m.amount), 0) / 100, { cents: true })} RLUSD</dd></div>
+          )}
+          {current && <div><dt className="text-capital-muted">Project principal</dt><dd className="mt-1 tabular-nums">{formatAmount(p.terms.principal, { cents: true })} RLUSD</dd></div>}
         </dl>
       </div>
-      <ol aria-label={`${p.name} milestone schedule`} className="mb-8 grid divide-y divide-line border-y border-line sm:grid-cols-2 sm:divide-y-0 lg:flex">
-        {p.milestones.map((milestone) => <li key={milestone.id} aria-current={current?.id === milestone.id ? "step" : undefined} className={`min-w-0 flex-1 px-3 py-4 ${current?.id === milestone.id ? "bg-accent/25" : ""}`}>
-          <p className="text-small font-medium">{milestone.index + 1}. {milestone.title}</p>
-          <p className="mt-1 text-caption text-ink-2">{MILESTONE_STATUS[milestone.status].label}</p>
-        </li>)}
-      </ol>
+      <div className="mb-8">
+        <MilestoneTabs milestones={p.milestones} selectedId={current?.id} linked={false} label={`${p.name} milestone schedule`} />
+      </div>
       <EvidenceReceipt detail={d} />
       {p.status === "draft" && (
         <NextStep

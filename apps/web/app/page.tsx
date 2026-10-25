@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { AutoRefresh } from "@/components/auto-refresh";
+import { CapitalBar } from "@/components/ui/capital-bar";
 import { Progress } from "@/components/ui/progress";
 import { Tag } from "@/components/ui/tag";
 import { Empty } from "@/components/ui/layout";
@@ -31,7 +32,14 @@ export default async function ProjectsPage() {
         <div>
           <p className="text-small text-capital-muted">Capital across listed projects</p>
           <p className="financial-amount mt-3">{formatAmount(fromCents(principal))} <span>RLUSD</span></p>
-          <p className="mt-3 max-w-[48ch] text-small text-capital-muted">Every draw has a destination. Every release needs proof.</p>
+          <CapitalBar
+            className="mt-6"
+            label="Listed project funding"
+            segments={[
+              { label: "Raised", cents: raised, tone: "accent" },
+              { label: "Still open", cents: Math.max(0, principal - raised), tone: "track" },
+            ]}
+          />
         </div>
         <div className="capital-detail">
           <div><span>Raised to date</span><strong>{formatAmount(fromCents(raised))} RLUSD</strong></div>
@@ -92,7 +100,7 @@ export default async function ProjectsPage() {
                     <td data-label="Status" className="px-4 py-5">
                       <Tag tone={status.tone}>{status.label}</Tag>
                     </td>
-                    <td className="px-4 py-5"><Link href={`/projects/${p.id}`} aria-label={`View ${p.name}`} className="inline-flex min-h-11 items-center gap-2 text-small font-medium text-link">View<ArrowUpRight className="size-4" aria-hidden /></Link></td>
+                    <td className="px-4 py-5"><Link href={`/projects/${p.id}`} aria-label={`View ${p.name}`} className="inline-flex min-h-11 items-center gap-2 text-small font-medium text-link">View<ArrowRight className="size-4" aria-hidden /></Link></td>
                   </tr>
                 );
               })}

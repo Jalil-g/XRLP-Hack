@@ -9,6 +9,7 @@ import { EvidenceStrip } from "@/components/project/evidence-strip";
 import { InvestDialog } from "@/components/project/invest-dialog";
 import { MilestoneTabs } from "@/components/project/milestone-tabs";
 import { MoneyMap } from "@/components/project/money-map";
+import { CapitalBar } from "@/components/ui/capital-bar";
 import { SovTable } from "@/components/project/sov-table";
 import { PageHeader, Properties, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
@@ -75,7 +76,24 @@ export default async function ProjectPage({ params, searchParams }: Props) {
         <div>
           <p className="text-small text-capital-muted">{p.status === "funding" ? "Raised toward project funding" : "Project loan principal"}</p>
           <p className="financial-amount mt-3">{formatAmount(p.status === "funding" ? fromCents(raised) : p.terms.principal)} <span>RLUSD</span></p>
-          <p className="mt-3 text-small text-capital-muted">{p.status === "funding" ? `${formatAmount(p.terms.principal)} RLUSD target · funding closes ${formatDate(p.terms.fundingDeadline)}` : `${formatAmount(fromCents(sum(["released"])))} RLUSD released · ${formatAmount(fromCents(sum([...LOCKED_MILESTONE_V2])))} RLUSD in milestone escrows`}</p>
+          <p className="mt-2 text-small text-capital-muted">{p.status === "funding" ? `of ${formatAmount(p.terms.principal)} RLUSD target · funding closes ${formatDate(p.terms.fundingDeadline)}` : "Where the principal is now"}</p>
+          <CapitalBar
+            className="mt-6"
+            label={p.status === "funding" ? "Funding progress" : "Principal by location"}
+            segments={
+              p.status === "funding"
+                ? [
+                    { label: "Raised", cents: raised, tone: "accent" },
+                    { label: "Still open", cents: Math.max(0, toCents(p.terms.principal) - raised), tone: "track" },
+                  ]
+                : [
+                    { label: "Released to builder", cents: sum(["released"]), tone: "accent" },
+                    { label: "In milestone escrows", cents: sum([...LOCKED_MILESTONE_V2]), tone: "muted" },
+                    { label: "Returned", cents: sum(["refunded"]), tone: "track" },
+                    { label: "Not in escrow yet", cents: sum(["pending"]), tone: "track" },
+                  ]
+            }
+          />
         </div>
         <div className="capital-detail">
           <div><span>Annual interest rate</span><strong>{formatBps(p.terms.interestRateBps)}</strong></div>

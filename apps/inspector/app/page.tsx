@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
-import { api, API_MODE } from "@/lib/api";
+import { api } from "@/lib/api";
 import { ACTIONABLE, arrivedKeys, groupTasks, taskKey } from "@/lib/queue";
 import type { InspectorTask } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
@@ -142,7 +142,7 @@ function PollStatus({ updatedAt, error, now, onRefresh }: { updatedAt?: number; 
         </Badge>
       ) : (
         <span className="flex items-center gap-1.5">
-          {!updatedAt ? "Loading queue…" : API_MODE === "mock" ? "Mock data" : "Up to date"}
+          {!updatedAt && "Loading queue…"}
         </span>
       )}
       {ago !== null && <span className="tabular">updated {ago}s ago</span>}
