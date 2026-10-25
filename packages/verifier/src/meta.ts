@@ -25,6 +25,8 @@ export interface ExtractedMeta {
   };
   /** Decoded text for text/JSON documents (not part of Evidence; handy for callers/LLM). */
   text?: string;
+  /** Decode/preprocessing failure. Callers must not treat this file as verified evidence. */
+  error?: string;
 }
 
 export function sha256Hex(bytes: Uint8Array): string {
@@ -56,6 +58,7 @@ const COS: number[][] = Array.from({ length: 8 }, (_, u) =>
 export async function perceptualHash(bytes: Uint8Array): Promise<string> {
   const px = await sharp(bytes)
     .rotate() // respect EXIF orientation
+    .flatten({ background: "#fff" })
     .greyscale()
     .resize(DCT_N, DCT_N, { fit: "fill", kernel: "lanczos3" })
     .raw()
@@ -103,6 +106,7 @@ export async function differenceHash(bytes: Uint8Array): Promise<string> {
 
 /** Hamming distance between two 64-bit hex hashes (0 = identical, 64 = opposite). */
 export function hammingDistance(a: string, b: string): number {
+  if (![a, b].every((hash) => /^[0-9a-f]{16}$/i.test(hash))) throw new Error("Expected two 64-bit hexadecimal perceptual hashes.");
   let x = BigInt(`0x${a}`) ^ BigInt(`0x${b}`);
   let n = 0;
   while (x) {
@@ -118,7 +122,12 @@ export function parseExifDate(raw: unknown, offset?: unknown): string | undefine
   if (typeof raw !== "string") return undefined;
   const m = /^(\d{4})[:-](\d{2})[:-](\d{2})[ T](\d{2}):(\d{2}):(\d{2})/.exec(raw.trim());
   if (!m) return undefined;
-  const off = typeof offset === "string" && /^[+-]\d{2}:\d{2}$/.test(offset) ? offset : "Z";
+  const parts = m.slice(1).map(Number);
+  const [year, month, day, hour, minute, second] = parts as [number, number, number, number, number, number];
+  const calendar = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day || hour > 23 || minute > 59 || second > 59) return undefined;
+  if (offset !== undefined && (typeof offset !== "string" || !/^[+-](?:0\d|1[0-4]):[0-5]\d$/.test(offset))) return undefined;
+  const off = typeof offset === "string" ? offset : "Z";
   const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}${off}`);
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
@@ -138,7 +147,7 @@ export async function readExif(bytes: Uint8Array): Promise<{ takenAt?: string; g
   const lat = tags.latitude;
   const lng = tags.longitude;
   const gps =
-    typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng)
+    typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
       ? { lat, lng }
       : undefined;
   return { ...(takenAt ? { takenAt } : {}), ...(gps ? { gps } : {}) };
@@ -178,7 +187,7 @@ export async function extractEvidenceMeta(file: EvidenceFile): Promise<Extracted
     try {
       meta.perceptualHash = await perceptualHash(file.bytes);
     } catch {
-      /* undecodable image: leave hash empty; duplicate check will fall back to sha256 */
+      return { sha256, meta: {}, error: "Image could not be decoded; metadata is not verified." };
     }
   } else if (isTextLike(file.mimeType, file.filename)) {
     text = Buffer.from(file.bytes).toString("utf8");
@@ -214,15 +223,16 @@ export async function loadEvidence(
   try {
     bytes = await loadEvidenceBytes(ev, opts);
   } catch (e) {
-    return { evidence: ev, bytes: null, sha256: null, meta: ev.meta ?? {}, text: null, loadError: String(e) };
+    return { evidence: ev, bytes: null, sha256: null, meta: {}, text: null, loadError: String(e) };
   }
-  const extracted = await extractEvidenceMeta({ bytes, mimeType: ev.mimeType, filename: ev.filename });
-  // Bytes are ground truth: recomputed values win; stored meta only fills gaps
-  // (e.g. an invoiceTotal keyed in by core for a PDF we can't parse deterministically).
-  const meta = { ...stripUndefined(ev.meta ?? {}), ...extracted.meta };
-  return { evidence: ev, bytes, sha256: extracted.sha256, meta, text: extracted.text ?? null };
-}
-
-function stripUndefined<T extends object>(o: T): Partial<T> {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
+  try {
+    const extracted = await extractEvidenceMeta({ bytes, mimeType: ev.mimeType, filename: ev.filename });
+    // Uploaded image bytes are authoritative: stripped EXIF must not resurrect stored GPS/time/hash.
+    // PDF totals may be extracted separately by the live judge; other stored metadata is untrusted.
+    const meta = extracted.meta;
+    return { evidence: ev, bytes, sha256: extracted.sha256, meta, text: extracted.text ?? null,
+      ...(extracted.error ? { loadError: extracted.error } : {}) };
+  } catch {
+    return { evidence: ev, bytes, sha256: sha256Hex(bytes), meta: {}, text: null, loadError: "Evidence preprocessing failed." };
+  }
 }

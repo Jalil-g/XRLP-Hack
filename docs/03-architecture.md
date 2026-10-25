@@ -64,7 +64,7 @@ releaseService --EscrowFinish(Condition_i, Fulfillment_i)--> RLUSD -> builder   
 builder --Payment--> SPV ; SPV --LoanPay(multisig)--> Vault  (AssetsAvailable up)
 ```
 
-Share value (`AssetsTotal/shares`) rises at **LoanSet** (protocol books contracted interest). Repayments restore liquidity.
+Share value (`AssetsTotal/shares`) rises as **interest is repaid** (devnet-verified 2026-10-24, XRPL-04/09: `AssetsTotal` 30000 after LoanSet, 30000.0257 after LoanPay); it is 1.00 at close. Repayments also restore liquidity.
 Investors redeem from `RedemptionDate`.
 
 ## Stall path
@@ -147,7 +147,7 @@ packages/xrpl       All ledger ops + devnet scripts (bootstrap, demo, prestage, 
 packages/verifier   Project verification + milestone test suite (deterministic checks + Claude), inspector matching, mock mode.
 packages/core       Orchestrator + HTTP server: workflows, release service (preimages, evaluateRelease, pre-reveal safety),
                     keeper, JSON store, adapter factory.
-packages/ledger-signer  Attestation signing (software key). Hardware-wallet backend parked.
+packages/attest-signer  Inspector audit attestation signing (software key, in the browser). No hardware wallet.
 ```
 
 Dependency direction: `web, inspector →(HTTP)→ core → (xrpl, verifier) → shared`. HTTP + port contract: `docs/05-api.md`.

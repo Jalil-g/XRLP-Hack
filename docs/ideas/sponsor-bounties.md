@@ -43,9 +43,9 @@ Rubric still unpublished. Past XRPL Commons events scored Innovation · Executio
 ### Ledger — $10,000 (Protocol $4,000 · Agentic $3,000 · Why Not $3,000). **Not pursued.**
 - "Ledger" here is the hardware-wallet company (Nano / Stax devices), not the XRP Ledger. Every slice requires signing on a Ledger device, and
   DX feedback is judged as much as code.
-- Our concept does not need it: the inspector's release key is a software key in her browser with an encrypted backup. `packages/ledger-signer`
-  keeps a `SoftwareSigner` behind the same `InspectorSigner` interface, so a device is a drop-in later.
-- The spike (`docs/ideas/ledger-bounty.md`, `packages/ledger-signer`) stays in the repo. INS-09 (#51) and the Ledger clip in PITCH-08 (#71) are
+- Our concept does not need it: the inspector's release key is a software key in her browser with an encrypted backup. `packages/attest-signer`
+  (renamed from `ledger-signer` in INS-04) keeps a `SoftwareSigner` behind the same `InspectorSigner` interface, so a device is a drop-in later.
+- The spike (`docs/ideas/ledger-bounty.md`; the device code lives in git history under `packages/ledger-signer`, removed in INS-04) stays available. INS-09 (#51) and the Ledger clip in PITCH-08 (#71) are
   parked. Reverse only if someone has a device, the demo is green at T+24h, and the team wants the $3k Agentic slice.
 
 ## Judges with no bounty: tailor the narrative, not the code

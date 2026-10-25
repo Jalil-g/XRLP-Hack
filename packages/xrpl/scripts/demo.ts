@@ -40,7 +40,7 @@ import {
   type MilestoneCondition,
   type TxResult,
 } from "../src/index.ts";
-import { disableMasterKey } from "../src/spv.ts";
+import { topUpRlusd } from "../src/rlusd.ts";
 
 const env = (k: string, d: number) => Number(process.env[k] ?? d);
 const SPV_MODE = (process.env.DEMO_SPV_MODE ?? "multisig") as "multisig" | "single";
@@ -122,12 +122,15 @@ async function main() {
   // SPV creation (faucet) happens before VaultCreate inside setup, so give it slack.
   const subEnd = now0 + SUBSCRIPTION_S + 45;
   const redemption = subEnd + PAYMENT_INTERVAL_S * PAYMENT_TOTAL + 60 + 90;
+  // Cover deposit defaults to the protocol minimum (10% of principal + interest) + 10% headroom.
   const setup = await setupProjectOnChain(project, {
     subscriptionEndsAt: new Date(rippleTimeToISOTime(subEnd)),
     redemptionAt: new Date(rippleTimeToISOTime(redemption)),
-    coverDeposit: "1000",
+    paymentTotal: PAYMENT_TOTAL,
+    paymentIntervalS: PAYMENT_INTERVAL_S,
     lockSpv: SPV_MODE === "multisig",
   });
+  console.log(`  cover ${setup.cover.amount} RLUSD (min ${setup.cover.minimum}), rates ${setup.cover.coverRateMinimum}/${setup.cover.coverRateLiquidation}, mgmt fee ${setup.cover.managementFeeRate}`);
   for (const [k, t] of Object.entries(setup.txs)) rec(k, t);
   events.push(...setup.events);
   project.chain = { spv: setup.spv, vaultId: setup.vaultId, loanBrokerId: setup.loanBrokerId, shareMptIssuanceId: setup.shareMptIssuanceId };
@@ -156,6 +159,8 @@ async function main() {
   const vs = await getVaultStatus(setup.vaultId);
   await waitForLedgerTimeAfter(subEnd, tick("subscription end"));
   console.log(`\n  phase now: ${(await getVaultStatus(setup.vaultId))?.phase} (was ${vs?.phase})`);
+  // Builder pays the LoanOriginationFee shortfall into the SPV at closing (escrows sum to the full principal).
+  rec("RLUSD -> builder (closing costs)", await topUpRlusd(w.issuer, w.builder.classicAddress, 1000));
   const nowInv = await ledgerTime();
   const m3 = project.milestones[2]!;
   m3.cancelAfter = rippleTimeToISOTime(nowInv + M3_CANCEL_S);
@@ -163,12 +168,16 @@ async function main() {
     conditions,
     paymentTotal: PAYMENT_TOTAL,
     paymentIntervalS: PAYMENT_INTERVAL_S,
+    // TODO(agent D, XRPL-06 #115): planLoanClose now REJECTS this — CancelAfter must be < loan maturity
+    // (here 4 × 300 s ≈ 20 min, not 30 days). Drop defaultCancelAfter (new default = maturity − one payment
+    // interval) or pass `cancelAfters`. Left as-is so the demo.ts rewrite owns the change.
     defaultCancelAfter: new Date(Date.now() + 30 * 86_400_000),
     waitForInvestmentPhase: true,
     allowOverpayment: true,
     ...(SPV_MODE === "single" ? { spvSingleKey: setup.spvWallet } : {}),
   });
-  rec(`LoanSet (${SPV_MODE} countersign)`, close.loanSetTx);
+  rec(`builder -> SPV origination fee ${close.originationFee}`, close.originationFeeTopUpTx);
+  rec(`LoanSet (${SPV_MODE} countersign, origination fee ${close.originationFee})`, close.loanSetTx);
   close.escrows.forEach((e, i) => {
     const t = close.events.find((ev) => ev.kind === "escrow_created" && ev.milestoneId === e.milestoneId)!;
     rows.push({ step: `EscrowCreate m${i + 1} ${e.amount} (cancel ${e.cancelAfter})`, type: "EscrowCreate", result: "tesSUCCESS", url: t.explorerUrl });
@@ -181,8 +190,9 @@ async function main() {
 
   if (SPV_MODE === "single") {
     say("6b. fallback path: lock SPV AFTER loan + escrows");
-    rec("SignerListSet (post-loan)", await lockSpvAccount(setup.spvWallet));
-    rec("AccountSet disableMaster (post-loan)", await disableMasterKey(setup.spvWallet));
+    const lock = await lockSpvAccount(setup.spvWallet);
+    rec("SignerListSet (post-loan)", lock.signerListSet);
+    rec("AccountSet disableMaster (post-loan)", lock.disableMaster);
   }
 
   say("7. milestone 1: AI + inspector + platform attest on-chain, inspector reveals fulfillment, release");
@@ -192,7 +202,7 @@ async function main() {
   const verdictHash = sha256Hex(JSON.stringify(fakeVerdict));
   for (const [role, signer, notes] of [
     ["ai_agent", "aiAgent", "evidence checks passed"],
-    ["inspector", "inspectorA", "site visit OK"],
+    ["inspector", "inspector1", "site visit OK"],
     ["platform", "platform", "policy satisfied"],
   ] as const) {
     const a = await attestApproval({ projectId, spv: setup.spv, milestoneId: m1.id, role, signer, decision: "approve", notes, verdictHash, condition: e1.escrow.condition });

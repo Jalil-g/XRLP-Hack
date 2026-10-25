@@ -1,0 +1,178 @@
+{
+  "capturedAt": "2026-10-24T22:59:13.233Z",
+  "network": "devnet",
+  "description": "investor (RLUSD trust line, 0 RLUSD after depositing all), noTrust (no lines), issuer (negative side), unfunded (actNotFound)",
+  "ledger": {
+    "account_hash": "133971FB27D4FD0269C6F471E1FF05688D0DB866E622B1559F98D667006B49E7",
+    "close_flags": 0,
+    "close_time": 846197951,
+    "close_time_human": "2026-Oct-24 22:59:11.000000000 UTC",
+    "close_time_iso": "2026-10-24T22:59:11Z",
+    "close_time_resolution": 10,
+    "closed": true,
+    "ledger_hash": "196425E1440A07F60A010CF69DC2A3840118FF5BDD7CDE60C99CC65F700F77F4",
+    "ledger_index": 6390148,
+    "parent_close_time": 846197950,
+    "parent_hash": "7CF386C521F97346A71096AC65898CD6F05A0443EE1C1DAD1D1D7509264224D1",
+    "total_coins": "99999210470280424",
+    "transaction_hash": "45EE664BAF2AA34132975D6306BAC1A96ABA40E6A43380705273295C6C1D263D"
+  },
+  "issuer": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+  "investorLines": {
+    "account": "r3jeqmaCMoMkSUBLUzqfakQvjzHK3VfTHY",
+    "ledger_hash": "196425E1440A07F60A010CF69DC2A3840118FF5BDD7CDE60C99CC65F700F77F4",
+    "ledger_index": 6390148,
+    "lines": [
+      {
+        "account": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+        "balance": "0",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "1000000000",
+        "limit_peer": "0",
+        "quality_in": 0,
+        "quality_out": 0
+      }
+    ],
+    "validated": true
+  },
+  "noTrustLines": {
+    "account": "rHwYpy2rprSMvFWCjhQXUraFxkL892RdAL",
+    "ledger_hash": "196425E1440A07F60A010CF69DC2A3840118FF5BDD7CDE60C99CC65F700F77F4",
+    "ledger_index": 6390148,
+    "lines": [],
+    "validated": true
+  },
+  "issuerLines": {
+    "account": "rQL25XCW6mnGciVPsSfbii5pnFH28bPpGP",
+    "ledger_hash": "196425E1440A07F60A010CF69DC2A3840118FF5BDD7CDE60C99CC65F700F77F4",
+    "ledger_index": 6390148,
+    "lines": [
+      {
+        "account": "r3jeqmaCMoMkSUBLUzqfakQvjzHK3VfTHY",
+        "balance": "0",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "0",
+        "limit_peer": "1000000000",
+        "quality_in": 0,
+        "quality_out": 0
+      },
+      {
+        "account": "rMoWGA4fUGeQrFoLGCU637uMHzVvN4CRYG",
+        "balance": "0",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "0",
+        "limit_peer": "1000000000",
+        "quality_in": 0,
+        "quality_out": 0
+      },
+      {
+        "account": "rwZ4cHzL6kXQRzDqnCsGP8k575JGftHYjn",
+        "balance": "-100",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "0",
+        "limit_peer": "0",
+        "no_ripple_peer": true,
+        "quality_in": 0,
+        "quality_out": 0
+      },
+      {
+        "account": "r3C5ax7Punrg41xVAkDGSLjarLDxuSbnjK",
+        "balance": "-200",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "0",
+        "limit_peer": "1000000000",
+        "quality_in": 0,
+        "quality_out": 0
+      },
+      {
+        "account": "rhppjw1jfKPDag9utCrsEFtU1k433bZYVK",
+        "balance": "-400",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "0",
+        "limit_peer": "1000000000",
+        "quality_in": 0,
+        "quality_out": 0
+      },
+      {
+        "account": "r4zQmndVF1YStgtu2ok63DaceiVqGFh7vK",
+        "balance": "-1234.5",
+        "currency": "524C555344000000000000000000000000000000",
+        "limit": "0",
+        "limit_peer": "0",
+        "no_ripple_peer": true,
+        "quality_in": 0,
+        "quality_out": 0
+      }
+    ],
+    "validated": true
+  },
+  "investorInfo": {
+    "account_data": {
+      "Account": "r3jeqmaCMoMkSUBLUzqfakQvjzHK3VfTHY",
+      "Balance": "99999998",
+      "Flags": 0,
+      "LedgerEntryType": "AccountRoot",
+      "OwnerCount": 2,
+      "PreviousTxnID": "40E716ACE915E19F008F8DF17666095E88C0D7CCF5E01A6233B291F02C3FED65",
+      "PreviousTxnLgrSeq": 6390148,
+      "Sequence": 6390124,
+      "index": "473D504DCBE586E2ADFD7802195C299993D4F6276D38D434BF3DD80498A76F2C"
+    },
+    "account_flags": {
+      "allowTrustLineClawback": false,
+      "allowTrustLineLocking": false,
+      "defaultRipple": false,
+      "depositAuth": false,
+      "disableMasterKey": false,
+      "disallowIncomingCheck": false,
+      "disallowIncomingNFTokenOffer": false,
+      "disallowIncomingPayChan": false,
+      "disallowIncomingTrustline": false,
+      "disallowIncomingXRP": false,
+      "globalFreeze": false,
+      "noFreeze": false,
+      "passwordSpent": false,
+      "requireAuthorization": false,
+      "requireDestinationTag": false
+    },
+    "ledger_hash": "196425E1440A07F60A010CF69DC2A3840118FF5BDD7CDE60C99CC65F700F77F4",
+    "ledger_index": 6390148,
+    "validated": true
+  },
+  "unfundedLines": {
+    "api_version": 2,
+    "error": "actNotFound",
+    "error_code": 19,
+    "error_message": "Account not found.",
+    "id": 243,
+    "request": {
+      "account": "r4Ry1ToWBDK8i6oFG9WD3S1PqrFJRFPB7q",
+      "api_version": 2,
+      "command": "account_lines",
+      "id": 243,
+      "ledger_index": 6390148
+    },
+    "status": "error",
+    "type": "response"
+  },
+  "unfundedInfo": {
+    "account": "r4Ry1ToWBDK8i6oFG9WD3S1PqrFJRFPB7q",
+    "api_version": 2,
+    "error": "actNotFound",
+    "error_code": 19,
+    "error_message": "Account not found.",
+    "id": 244,
+    "ledger_hash": "196425E1440A07F60A010CF69DC2A3840118FF5BDD7CDE60C99CC65F700F77F4",
+    "ledger_index": 6390148,
+    "request": {
+      "account": "r4Ry1ToWBDK8i6oFG9WD3S1PqrFJRFPB7q",
+      "api_version": 2,
+      "command": "account_info",
+      "id": 244,
+      "ledger_index": 6390148
+    },
+    "status": "error",
+    "type": "response",
+    "validated": true
+  }
+}

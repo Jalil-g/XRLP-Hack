@@ -1,0 +1,61 @@
+{
+  "milestoneId": "ms_maple_1",
+  "inspector": "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh",
+  "evidenceBundleHash": "a78afeadd20b792322b00f317bda6a030851b4aae8e1b88b4609edad161f6390",
+  "checklist": [
+    {
+      "sovCode": "F-01",
+      "status": "done",
+      "note": "Footings and stem walls match the approved plans."
+    },
+    {
+      "sovCode": "F-02",
+      "status": "done",
+      "note": "Slab cured, hairline shrinkage cracks only."
+    },
+    {
+      "sovCode": "F-03",
+      "status": "done",
+      "note": "Anchor bolts present at plan spacing."
+    }
+  ],
+  "photos": [
+    {
+      "id": "ev_audit-foundation-01-rebar",
+      "kind": "photo",
+      "filename": "audit-foundation-01-rebar.jpg",
+      "mimeType": "image/jpeg",
+      "uri": "evidence/maple-st/audits/photos/audit-foundation-01-rebar.jpg",
+      "sha256": "c915db7e1aed16ec4ba00f980be324666aea4b87d53a44873c8c62b55ddc72a3",
+      "meta": {
+        "takenAt": "2026-10-21T15:10:00.000Z",
+        "gps": {
+          "lat": 40.67953611111111,
+          "lng": -73.96207222222222
+        },
+        "perceptualHash": "eb6332b478f88e24"
+      },
+      "uploadedAt": "2026-10-21T15:30:00Z"
+    },
+    {
+      "id": "ev_audit-foundation-02-site",
+      "kind": "photo",
+      "filename": "audit-foundation-02-site.jpg",
+      "mimeType": "image/jpeg",
+      "uri": "evidence/maple-st/audits/photos/audit-foundation-02-site.jpg",
+      "sha256": "9966c46196a62243c6407b9948caa1c0f93c93106a8cdf6cdec1168ed10679e0",
+      "meta": {
+        "takenAt": "2026-10-21T15:25:00.000Z",
+        "gps": {
+          "lat": 40.67941111111111,
+          "lng": -73.96185833333334
+        },
+        "perceptualHash": "a3485c4b3337ccdc"
+      },
+      "uploadedAt": "2026-10-21T15:30:00Z"
+    }
+  ],
+  "notes": "Foundation walls and slab complete per plans. I walked the site and took the attached photos.",
+  "txHash": "B8FBFE416E038B7280824220D5916195C456E557C0CA721FCB313C6D105D9975",
+  "at": "2026-10-21T15:30:00Z"
+}

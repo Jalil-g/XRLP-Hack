@@ -1,13 +1,16 @@
 // End-to-end in mock mode: fixtures -> verifyMilestone -> shared Verdict.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { test } from "node:test";
-import { Verdict } from "@xrlp/shared";
+import { Inspector, InspectorAudit, Verdict } from "@xrlp/shared";
 import { verifyBuilder, verifyMilestone, verifyMilestoneDetailed, type MilestoneJudge } from "../src/index.ts";
 import { unavailableJudgement } from "../src/llm/types.ts";
-import { builder, builderOnboardingInput, SCENARIOS } from "../fixtures/scenarios.ts";
+import { evidenceBundleHash } from "../src/audit.ts";
+import { builder, builderOnboardingInput, FIXTURES_DIR, project, SCENARIOS } from "../fixtures/scenarios.ts";
 
 for (const s of SCENARIOS) {
-  test(`scenario ${s.key}: ${s.title} -> ${s.expect}`, async () => {
+  test(`scenario ${s.key}: ${s.title} -> ${s.expect}`, { skip: s.pending && `needs ${s.pending}` }, async () => {
     const v = await verifyMilestone({ ...(await s.input()), mode: "mock" });
     assert.doesNotThrow(() => Verdict.parse(v));
     assert.equal(v.decision, s.expect, v.summary);
@@ -15,15 +18,74 @@ for (const s of SCENARIOS) {
   });
 }
 
-test("scenario B flags exactly the reused photo, for both reuse and stale date", async () => {
+test("scenario B flags exactly the copied photo by pHash alone (its EXIF date is fresh)", async () => {
   const v = await verifyMilestone({ ...(await SCENARIOS[1]!.input()), mode: "mock" });
   const dup = v.checks.find((c) => c.check === "no_duplicate_photo")!;
   const fresh = v.checks.find((c) => c.check === "photo_fresh")!;
   assert.equal(dup.result, "fail");
-  assert.deepEqual(dup.evidenceIds, ["ev_framing-04-reused"]);
+  assert.deepEqual(dup.evidenceIds, ["ev_IMG_5121"]);
   assert.match(dup.reason, /Oak Ave/);
-  assert.equal(fresh.result, "fail");
-  assert.deepEqual(fresh.evidenceIds, ["ev_framing-04-reused"]);
+  assert.equal(fresh.result, "pass");
+});
+
+for (const s of SCENARIOS) {
+  test(`scenario ${s.key} matches the manifest: failing and warning checks`, async () => {
+    const v = await verifyMilestone({ ...(await s.input()), mode: "mock" });
+    const by = (r: string) => v.checks.filter((c) => c.result === r).map((c) => c.check);
+    for (const f of s.failingChecks) assert.ok(by("fail").includes(f), `${f} should fail: ${v.summary}`);
+    for (const w of s.warnChecks) assert.ok(by("warn").includes(w), `${w} should warn`);
+  });
+}
+
+test("manifest.json mirrors the scenarios", async () => {
+  const m = JSON.parse(await readFile(join(FIXTURES_DIR, "manifest.json"), "utf8"));
+  assert.equal(m.scenarios.length, SCENARIOS.length);
+  for (const s of SCENARIOS) {
+    const e = m.scenarios.find((x: { key: string }) => x.key === s.key);
+    assert.deepEqual(e.evidence, s.evidencePaths);
+    assert.equal(e.expect, s.expect);
+    assert.deepEqual(e.failingChecks, s.failingChecks);
+    assert.equal(e.audit, s.auditPath);
+  }
+});
+
+test("inspector audits are bound to the exact evidence bundle they cover", async () => {
+  for (const s of SCENARIOS.filter((x) => x.auditPath)) {
+    const [audit] = await s.audits();
+    const bundle = (await s.input()).evidence;
+    assert.equal(audit!.evidenceBundleHash, evidenceBundleHash(bundle), `scenario ${s.key}`);
+    assert.match(audit!.txHash!, /^[0-9A-F]{64}$/);
+  }
+  const [foundation, framing] = [await SCENARIOS[0]!.audits(), await SCENARIOS[1]!.audits()];
+  assert.ok(foundation[0]!.checklist.every((l) => l.status === "done"));
+  assert.deepEqual(framing[0]!.checklist.filter((l) => l.status !== "done").map((l) => l.sovCode), ["FR-03"]);
+  assert.deepEqual(await SCENARIOS[4]!.audits(), [], "scenario E has no audit");
+});
+
+test("changing one evidence file breaks the audit binding", async () => {
+  const s = SCENARIOS[0]!;
+  const [audit] = await s.audits();
+  const bundle = (await s.input()).evidence.slice(1);
+  assert.notEqual(audit!.evidenceBundleHash, evidenceBundleHash(bundle));
+});
+
+test("fixture panel and audits parse against shared v2 and cover the milestone SoV", async () => {
+  const panel = JSON.parse(await readFile(join(FIXTURES_DIR, "inspectors.json"), "utf8"));
+  const inspectors = panel.inspectors.map((i: unknown) => Inspector.parse(i));
+  assert.equal(inspectors.length, 3);
+  assert.ok(inspectors.every((i: Inspector) => i.verified && i.homeGeo));
+  for (const s of SCENARIOS.filter((x) => x.auditPath)) {
+    const [audit] = await s.audits();
+    InspectorAudit.parse(audit);
+    const milestone = (await s.input()).milestone;
+    assert.deepEqual(audit!.checklist.map((line) => line.sovCode), milestone.sovCodes);
+    assert.ok(audit!.checklist.every((line) => project.sov!.some((sov) => sov.code === line.sovCode)));
+  }
+  const cents = (s: string) => BigInt(s.replace(".", ""));
+  assert.equal(project.sov!.reduce((sum, line) => sum + cents(line.amount), 0n), cents(project.terms.principal));
+  for (const milestone of project.milestones) {
+    assert.equal(project.sov!.filter((line) => milestone.sovCodes!.includes(line.code)).reduce((sum, line) => sum + cents(line.amount), 0n), cents(milestone.amount));
+  }
 });
 
 test("detailed result returns recomputed meta to persist for future dedupe", async () => {

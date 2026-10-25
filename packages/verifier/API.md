@@ -1,133 +1,184 @@
-# @xrlp/verifier — API
+# @xrlp/verifier API (Direction v2)
 
-Produces a `Verdict` (from `@xrlp/shared`) for a milestone's evidence bundle, and a `BuilderVerdict` for builder onboarding.
+This package checks evidence consistency, not construction quality. A passing verdict is an input to
+core's release gate; it does not sign or release an escrow. Core authenticates inspector transactions,
+attests the exact verdict hash, runs pre-reveal safety checks and controls release.
 
-**What the AI is for (pitch-precise):** it checks that evidence is **consistent** (place, time, originality,
-paperwork, budget). It does **not** judge construction quality; the human inspector does that. A `pass` never
-releases money by itself. The inspector still has to sign (`verdict.policy.requiredInspectors`).
+## Commands
 
-```bash
-pnpm --filter @xrlp/verifier demo        # 4 scenarios + builder onboarding + policy matrix (mock, no key)
-pnpm --filter @xrlp/verifier test        # node --test via tsx
+```sh
 pnpm --filter @xrlp/verifier typecheck
-pnpm --filter @xrlp/verifier fixtures    # regenerate synthetic fixtures (deterministic)
-VERIFIER_MODE=live ANTHROPIC_API_KEY=... pnpm --filter @xrlp/verifier demo   # real Claude
+pnpm --filter @xrlp/verifier test
+VERIFIER_MODE=mock pnpm --filter @xrlp/verifier demo
+pnpm --filter @xrlp/verifier fixtures
+pnpm --filter @xrlp/verifier eval --mode mock --repeat 3
+pnpm --filter @xrlp/verifier eval --mode live --repeat 3 --output .data/live-eval.json
 ```
 
-## Modes
+Mock mode is deterministic and needs no API key. Its judgement reasons are labeled [mock]; stage
+judgement uses filename tokens and audit judgement uses checklist status, not real image analysis.
+The live request path is implemented and tested with fake responses; real Claude stability remains
+unvalidated until a keyed VER-10 evaluation is recorded.
 
-| `VERIFIER_MODE` | Deterministic checks | `stage_visually_consistent` / `document_consistency` | Needs key |
-|---|---|---|---|
-| `mock` (default) | real | canned: stage keyed off **filename** tokens (`foundation-…`, `framing-…`); docs via a text heuristic. Reasons prefixed `[mock]`. `verdict.model = "mock"` | no |
-| `live` | real | Claude (`VERIFIER_MODEL`, default `claude-opus-5-5`) with vision + document input and zod-validated structured output | yes |
-
-Mock mode never imports `@anthropic-ai/sdk` (the live judge is lazy-loaded). If the live call fails, is refused,
-or returns unparseable output, the LLM checks become `warn` with confidence 0, so the decision is
-**`needs_human`**, never an automatic pass.
-
-## Checks and how strong they are
-
-| check | kind | strength |
-|---|---|---|
-| `no_duplicate_photo` | deterministic | **Strong.** sha256 exact match + DCT perceptual hash vs **all prior evidence on the platform (all projects)** and within the submission. Survives recompression, resize, small crops, brightness changes. Same project+milestone priors are ignored (resubmission). |
-| `invoice_matches_budget` | deterministic | **Strong.** Sum of invoice totals vs milestone amount, integer cents. Shortfall beyond tolerance → fail; overrun → warn. |
-| `lien_waiver_matches_invoices` | deterministic | **Strong, but a STUB.** Documents named/containing "lien waiver" are matched to invoices by `Invoice No` + `Amount`. Not yet required by templates. |
-| `required_evidence_present` | deterministic | Template `requiredEvidence` kinds/minCount. |
-| `gps_within_site` | deterministic | **Catches lazy fraud only.** EXIF GPS is spoofable. |
-| `photo_fresh` | deterministic | **Catches lazy fraud only.** EXIF time must be after escrow creation, after previous milestone approval, within `maxPhotoAgeDays`, not in the future. Naive EXIF times are treated as UTC. |
-| `stage_visually_consistent` | LLM | Do photos show *this* stage's `visualCriteria` (foundation, not framing)? |
-| `document_consistency` | LLM | Names, site address, dates on invoices/docs match project + builder; also extracts invoice totals for PDFs. |
-
-## Functions
+## Shared v2 adapter
 
 ```ts
-import {
-  verifyMilestone, verifyMilestoneDetailed, verifyBuilder, policyFor, extractEvidenceMeta,
-} from "@xrlp/verifier";
+import { ClaudeVerifierAdapter } from "@xrlp/verifier";
+const verifier = new ClaudeVerifierAdapter({
+  mode: "mock",
+  dataDir: ".data",
+  assignedInspectors: project => trustedAssignments(project.id),
+  history: project => trustedProjectHistory(project.builderId),
+});
 ```
 
-### `extractEvidenceMeta(file) → Promise<ExtractedMeta>`
-```ts
-extractEvidenceMeta({ bytes: Uint8Array, mimeType: string, filename?: string })
-// → { sha256, meta: { takenAt?, gps?: {lat,lng}, perceptualHash?, invoiceTotal? }, text? }
-```
-**Call this at upload time** and store `sha256` + `meta` on the `Evidence`. Stored `perceptualHash` values are what
-make cross-project reuse detection work later. Images: EXIF + pHash. Text/JSON docs: `invoiceTotal` from a
-`TOTAL:` line or a JSON `total` field. PDFs: nothing deterministic (live mode reads them).
+The class implements shared VerifierPort: verifyProject, assignInspector, verifyMilestone,
+policyFor(project, milestone), verdictHash. The assignment/history resolvers must use server-owned
+records, never values from builder evidence or audit notes. Missing assignment context cannot pass.
+Unknown project risk defaults to high; successful project verification caches its assessed tier.
+Production callers should supply a persisted risk resolver across process restarts.
 
-### `verifyMilestone(input, opts?) → Promise<Verdict>`
-```ts
-interface VerifyMilestoneInput {
-  project: Project; builder: Builder; milestone: Milestone;
-  evidence: Evidence[];                    // this submission; meta filled in if missing
-  priorEvidence?: PriorEvidence[];         // ALL other evidence on the platform: { evidence, projectId, milestoneId, projectName? }
-  timeline?: {
-    escrowCreatedAt?: string;              // ISO. Photos must be newer. (shared Milestone has no escrow timestamp, so pass it)
-    previousMilestoneApprovedAt?: string;  // ISO. Photos must be newer.
-    now?: string;                          // ISO. Defaults to the real clock. Fixtures pin it.
-  };
-  files?: Record<string, Uint8Array>;      // bytes by evidence id; else loaded from evidence.uri
-  dataDir?: string;                        // base for relative uris (default env DATA_DIR, else ".data")
-  mode?: "mock" | "live";                  // default env VERIFIER_MODE
-  model?: string;                          // default env VERIFIER_MODEL
-}
-opts?: { judge?: MilestoneJudge }          // inject a custom/mock LLM judge (tests)
-```
-`evidence.uri` may be a `data:` URL, an absolute path, or a path relative to `dataDir`.
+Current core still has an older local port/factory. The class also exposes legacy verifyBuilder and
+the three-argument policyFor, but old milestone calls missing audits fail closed. Core's factory
+must inject this adapter and migrate to shared v2; setting CORE_VERIFIER alone is not yet wired in
+core. Core must also supply prior evidence from ALL projects, not only one builder. Tests instantiate
+the actual core factory and exercise its actual evaluateRelease gate with fixture verdicts. They
+do not claim an end-to-end v2 HTTP/devnet flow. Contract coordination is on issue #53.
 
-`verifyMilestoneDetailed` returns `{ verdict, policy, checks /* + confidence, source, escalation */, evidence /* recomputed meta */ }`.
-Use it if you want per-check confidence or the policy notes in the UI.
+## Evidence preprocessing
 
-**Decision rules** (see `decide()` in `src/verifyMilestone.ts`):
-1. Each non-skipped check is mapped through the policy: `fail → policy.checks[c].onFail`, `warn → onWarn` (`fail | needs_human | ignore`).
-2. LLM checks with confidence < `minLlmConfidence` → `needs_human`, whatever they say.
-3. Any `fail` → **fail**. Else any `needs_human`, or the builder is unverified → **needs_human**. Else **pass**.
+extractEvidenceMeta({ bytes, mimeType, filename? }) returns sha256, meta and optional text/error.
+Meta includes takenAt, gps, perceptualHash and invoiceTotal when extractable. Store it at upload so
+later submissions can be compared across projects. Images use EXIF and 64-bit DCT pHash; alpha is
+flattened to white. Text/JSON invoice totals use integer cents. PDFs require live extraction.
 
-**Suggested status mapping for core:** `pass` → `ai_reviewed` (inspector next); `needs_human` → `ai_reviewed` with a
-flag for the inspector; `fail` → `rejected` (builder may resubmit).
+loadEvidence recomputes from bytes. Stored GPS/time/hash cannot fill in stripped EXIF. Corrupt images
+have loadError and are not verified evidence. EXIF is spoofable: GPS/time catch lazy fraud, not a
+determined attacker. Malformed prior pHashes require reprocessing. pHash distance <=10 is a match
+at standard risk (high-risk legacy sensitivity is stricter). Cross-project evidence IDs cannot hide
+reuse; resubmissions are excluded only with explicit matching project AND milestone provenance.
 
-### `policyFor(project, builder, milestone) → VerificationPolicy`
-Pure. Returns `requiredInspectors` (2 if amount ≥ `TWO_INSPECTOR_THRESHOLD` or `riskTier === "high"`),
-per-check `onFail`/`onWarn` escalations, thresholds, `allowAutoPass` (false if builder unverified), and
-plain-English `notes` for the UI. Run `pnpm demo` to see the policy matrix. Summary:
+## Milestone verification
 
-| | low | medium | high |
-|---|---|---|---|
-| GPS outside site | needs_human | needs_human | **fail** |
-| missing GPS / EXIF time | ignore | needs_human | needs_human |
-| invoice shortfall tolerance | −10% → needs_human | −5% → fail | −2% → fail |
-| max photo age | 45 d | 30 d | 14 d |
-| pHash fail / warn distance | ≤10 / ≤14 | ≤10 / ≤14 | ≤12 / ≤16 |
-| min LLM confidence | 0.6 | 0.7 | 0.8 |
-| document mismatch | needs_human | needs_human | **fail** |
+verifyMilestone(input, { judge? }) returns shared Verdict. verifyMilestoneDetailed additionally
+returns internal check confidences/escalations, policy and loaded evidence for persistence.
 
-Modifiers: renovation → wider GPS slack, missing GPS ignored; commercial → photos ≤21 d, doc warnings to human;
-amount ≥ 50k → invoice tolerance ≤3%, +0.05 confidence bar, 2 inspectors.
+Input: project, builder, milestone, evidence; audits; trusted assignedInspectors; sov (defaults to
+project.sov); policy; optional priorEvidence, timeline, files, dataDir, mode, model and template.
+Prior evidence may include { evidence, projectId, milestoneId, projectName? } for better provenance.
+timeline contains escrowCreatedAt, previousMilestoneApprovedAt and now. Pin now for repeatable demos.
+Verification options also accept timeoutMs (default 20 seconds, maximum 60 seconds) and cacheDir
+(false disables caching). Live SDK requests have maxRetries=0, abort signals and explicit deadlines;
+server-side fallback is disabled so a refusal cannot silently rerun on another model. Builder and
+inspector images, checklists, notes and SoV are reviewed together. Image preprocessing is inside the
+fail-closed path. Corrupt/unreadable evidence, refusal, timeout, malformed/incomplete model responses
+produce needs_human. Reasons identify LLM-extracted invoice totals. Supplied text is untrusted data.
 
-### `verifyBuilder(input) → Promise<BuilderVerdict>`
-```ts
-verifyBuilder({ builder, documents: Evidence[], registry?, now?, minLiabilityUsd?, files?, dataDir? })
-// → { builderId, decision, confidence, summary, checks: CheckResult[], suggestedRiskTier, registryIsMock, model, createdAt }
-```
-Checks license + insurance against a **MOCK registry** (`MOCK_REGISTRY`, labeled in every reason) and against the
-submitted text documents. Pass your own `registry: BuilderRegistry` to swap in a real source.
+Live cache entries are schema-validated and keyed by SHA-256 of model, prompt version, context,
+timeline, audits, metadata and actual file bytes. Atomic writes are best effort; transport/refusal
+failures are not cached. Cache does not prove model stability; the live eval disables it. Default
+cache path is .data/verifier-cache (override VERIFIER_CACHE_DIR).
+Files may be provided by evidence ID; otherwise data URLs or paths relative to dataDir are loaded.
 
-## Core `VerifierPort` compatibility
-`verifyMilestone`, `verifyBuilder`, and `policyFor` structurally satisfy core's `VerifierPort`
-(`packages/core/src/ports.ts` on `scaffold/core`). Core's input shape works as-is: `template`,
-top-level `escrowCreatedAt`, `priorEvidence: Evidence[]`, and `BuilderDocument[]` with `fields`. The result carries
-`ok`/`reasons`/`riskTier`, and the policy carries `minConfidence`. `test/core-port.test.ts` copies the port interfaces and
-fails to typecheck if they drift. The adapter only needs to add `mode` and set `DATA_DIR`. Prefer passing
-`PriorEvidence` (with `projectId`/`milestoneId`) when you can: it gives better reasons and skips same-milestone resubmits.
+Audit gates require the correct milestone, assigned inspector, recomputed evidenceBundleHash and
+a 64-hex attestation hash. Duplicate signers/transactions cannot fill independent slots. Checklist
+coverage must exactly match the milestone SoV codes: missing, duplicate, unrelated and not_done lines
+fail; partial lines need review. Core/ledger must authenticate transaction signatures, validation and
+memo binding; hash presence alone is not proof of ledger inclusion.
 
-## Fixtures (`fixtures/`)
-Synthetic only (no third-party photos). `fixtures/scenarios.ts` exports `project`, `builder`, `SCENARIOS`
-(A pass, B reused photo + stale EXIF → fail, C off-site GPS → needs_human, D invoice shortfall → fail) and
-`builderOnboardingInput()`. Core/web can use these as seed data.
+evidenceBundleHash hashes sorted per-file SHA-256 strings joined by a newline. It is order-independent
+and retains duplicate multiplicity. Inspector/core consumers must use the same convention.
 
-**Demo-day gotcha:** fixture photos carry fixed EXIF dates (Oct 19–23 2026). If core creates escrows live and
-passes `escrowCreatedAt = now`, scenario A will fail `photo_fresh`. Either pass the seeded timeline from
-`FIX.times`, or re-stamp photos with `stampExif()` from `scripts/make-fixtures.ts`.
+## Policy and verdict hashing
 
-## Env
-`VERIFIER_MODE` (`mock`|`live`), `ANTHROPIC_API_KEY` (live only), `VERIFIER_MODEL` (default `claude-opus-5-5`), `DATA_DIR`.
+releasePolicyFor(project, milestone, riskTier?) returns shared ReleasePolicy. The default tier is
+high. Minimum confidence is 0.7/0.8/0.9 (+0.05 for high-value draws). At 50,000 RLUSD or high risk,
+two independent audits are required. SoV evidence kinds determine document/invoice optionality;
+unknown context retains conservative gates. The legacy policyFor(project, builder, milestone)
+additionally provides detail thresholds and notes.
+
+The milestone runner combines caller policy with the baseline; callers can tighten but cannot
+remove mandatory checks or lower thresholds. Any required failure fails. Missing, skipped, warning
+or low-confidence required checks need human review. Optional warnings do not dilute passing
+confidence. An unverified builder cannot auto-pass. decide accepts a third ReleasePolicy; production
+milestone verification always supplies it. Without an explicit policy, decide conservatively requires
+the complete suite; partial result arrays can never automatically pass.
+
+verdictHash validates the full shared Verdict, canonicalizes nested object keys (array order is
+preserved), then computes SHA-256 hex. createdAt is included. Core/attest-signer must hash the exact
+returned object, not a placeholder or a reconstruction with another timestamp. canonicalJson is
+also exported; it rejects cycles and non-finite/non-JSON data. Neither helper signs or sends a tx.
+
+## Invoice reconciliation (VER-05)
+
+Standard-risk invoice totals within +/-10% of the milestone amount pass; mismatch up to +/-25%
+requires review; beyond 25% fails. High-risk/high-value policy narrows the pass band. Boundaries use
+integer cross-multiplication, so a one-cent excess cannot hide behind a rounded display percentage.
+Unreadable/malformed totals need review. Text/JSON parsing is deterministic; PDFs/images use live
+extraction and are explicitly labeled LLM-extracted. No live PDF extraction result was measured here.
+
+## Project verification
+
+verifyProject({ project, builder, sov, documents, history?, now?, mode?, registry?, dataDir? }) returns
+shared ProjectVerification with local inspectorPreVisitRequired and registryIsMock flags.
+Identity checks licence/insurance expiry and name consistency plus entity information. Feasibility
+checks exact micro-RLUSD sums, unique positive lines, mock regional cost proportions, permit/plan
+records, coordinate bounds and timeline plausibility. Capability checks completed projects, trusted
+open load and prior milestone performance. Missing history requires review and conservative risk.
+
+The default licence/insurance registry, NYC residential cost proportions and fixture records are
+MOCK. They do not prove real-world licensing, entity/sanctions status, site existence, permit
+authenticity, construction quality or quantities. Live mode adds bounded structured Claude judgement
+(20 seconds, no retries); unavailable/refused/low-confidence review requires a human, and cannot
+override deterministic contradictions. Project manifest: fixtures/projects/manifest.json.
+
+The eval harness recursively discovers fixtures/**/manifest.json for milestone and project cases.
+It checks expected decisions AND every declared failing/warning check, serially. Live mode disables
+the review cache; three repetitions must independently match before claiming stability. Missing keys,
+unknown fixture builders, exceptions and mismatches cannot score green. Exit codes: 0 matched,
+1 mismatch, 2 configuration/unavailable. Reports contain results/timings/hashes, never credentials.
+Mock validation completed 24/24 scenario runs; no real live evaluation has been measured here.
+
+VER-11 adds six adversarial manifest cases: an APPROVED overlay on a real photo with a stale audit,
+injected notes from an unassigned inspector, stripped EXIF with an otherwise bound audit, wrong GPS,
+corrupt image bytes, and invoice instructions with a zero total. These test deterministic gating;
+they do not demonstrate that a live model resists every prompt attack. Transformations are generated
+from the credited real source fixtures at evaluation time. Every case must fail or need review.
+
+Locked SoV lines now determine visual criteria and evidence requirements. Caller-supplied line
+definitions cannot weaken different stored lines. A shared document may support several lines;
+the minimum count is the maximum requirement per kind, while audit/AI review covers each line.
+
+## Inspector assignment
+
+assignInspector({ project, panel, count: 1 | 2, availability? }) deterministically ranks the shared
+Inspector panel. Verified inspectors with matching SoV trades and no explicit unavailability qualify.
+Score: trade coverage 40, distance 25 (linear to 100 km), capacity 20/(1+openAudits), agreement 15.
+Address order breaks ties. Shortage returns no assignment, never one of two required slots.
+
+The three-person fixture panel is MOCK. available/openAudits/priorAgreement extend shared Inspector
+locally pending #53; shared schema parsing strips extensions. Supply scheduling separately by address
+or preserve raw fixture entries. Missing distance/load/history earns zero points; unknown availability
+is disclosed and must be confirmed before locking terms. No real registry/credential lookup occurs.
+Rotation uses supplied current workload; no persistent assignment history is invented.
+
+## Fixtures and limits
+
+Real CC0/public-domain photos and source/licence links are in fixtures/SOURCES.txt. All fixture EXIF,
+projects, invoices, inspector identities, audits and transaction hashes are synthetic. No fixture
+transaction is on-ledger. Regeneration is deterministic from fixtures/source. Total is under 15 MB.
+
+Milestone manifest: A honest foundation pass; B reused Oak Ave framing photo fail; C offsite photo
+fail on the required GPS gate; D under-invoiced draw fail; E no inspector audit fail. The reused copy
+has fresh EXIF, in-geofence GPS and neutral filename IMG_5121.jpg; pHash detects it at distance 4/64.
+No test skips remain. Project fixtures add pass, expired insurance and 40%-over-mock-baseline cases.
+
+Live vision has not been demonstrated: sources span different sites, the wide foundation photo has
+a gravel floor, and the inspector rebar photo shows work in progress. Validate or replace these photos
+before claiming a live scenario A pass. Fixed EXIF dates (Oct 19–24 2026) require the seeded timeline
+or re-stamping with stampExif before a real-time demo.
+
+## Environment
+
+VERIFIER_MODE=mock|live; ANTHROPIC_API_KEY for live only; VERIFIER_MODEL overrides the configured
+model; DATA_DIR supplies evidence paths. No secrets belong in source, fixtures, examples or PRs.

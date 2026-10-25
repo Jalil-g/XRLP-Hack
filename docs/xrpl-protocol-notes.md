@@ -84,7 +84,7 @@ differently on devnet, devnet wins: write it down here and in `docs/decisions.md
 | SPV SignerList | Has no effect on EscrowFinish | No (but it does govern LoanSet, EscrowCreate, LoanPay and SignerListSet) |
 | **Preimage held by the inspector (chosen)** | Works today | **Yes.** The AI and platform approvals become on-chain attestations |
 | Lazy escrow (create the milestone escrow from SPV multisig only after approval, FinishAfter≈now) | Works | Gives a real m-of-n gate, but the SPV holds liquid principal until then (see §2 collusion bound). Keep as a fallback |
-| Batch (XLS-56, `BatchV1_1` enabled) | Works, ≤8 inner txs, multisig BatchSigners allowed | Can make `LoanSet + N×EscrowCreate` **atomic**, so the SPV never holds liquid principal. Stretch |
+| Batch (XLS-56, `BatchV1_1` enabled) | Works for Payment/EscrowCreate (≤8 inner, multisig BatchSigners ✔). **LoanSet as inner tx → `temINVALID_INNER_BATCH`** on devnet 3.4.1 (Lending/SAV types banned until `LendingProtocolV1_2`) | Partial: LoanSet, then **one** all-or-nothing Batch of every EscrowCreate (`closeLoanAtomic` "escrows"): SPV liquid ~1–2 ledgers instead of N multisig rounds. Full atomic close when V1_2 lands (§2d) |
 
 **Design adopted (replaces Shamir):** the inspector's client (browser WebCrypto, or a Ledger-backed app)
 generates a **fresh 32-byte CSPRNG preimage per milestone escrow**. It sends only the *condition* to the
@@ -164,6 +164,65 @@ Observations:
   clock). `EscrowCancel` by a non-owner, non-signer account (releaseService) succeeded and returned the 40 RLUSD to
   the SPV; no SPV signature needed to recover funds.
 
+### 1b. XRPL-07 devnet results (finish, cancel, repay, withdraw; 2026-10-25 ~00:22 UTC)
+
+Script: `WALLETS_FILE=… pnpm --filter @xrlp/xrpl spike:release` (`packages/xrpl/scripts/spike-release.ts`, ~7 min). It uses only
+the high-level API (`releaseMilestone`, `tryFinishWithWrongFulfillment`, `cancelExpiredMilestone`, `builderPayToSpv`,
+`repayLoan`, `withdrawFromVault`) on bootstrap wallets, with a fresh project: v2 SPV multisig, closed-ended vault (Subscription
+~90 s, Redemption = Subscription + 330 s), broker with default rates, cover 4400.016744. Terms: **40 000 RLUSD @ 100 %/yr
+(XLS-66 max), 3 × 60 s**, `tfLoanOverpayment`; m1 = 16 000 (finish), m2 = 24 000 (expires, then cancel + refund). We use the
+max rate so a few minutes of interest show up in `AssetsTotal`; a real loan gets the same move at a normal rate over days.
+0 submit retries.
+
+Accounts: SPV `rL5KirT8Ewut4o4QM5rNy9dwZvV4AY9qup` · platform `rKWaFJA6r1TQM9zhBLmAJG4SrNXyaMsmZv` · builder `rfr3qY9cgyy4K31bUoKhiXEmWyPSEyXxUA` ·
+releaseService `rP1ao4CQTF1tfdEvxJGUKCxKSYVh84MJYK` · investor1 `rEyBxq16NH7Lu7TVqd3cBxah4QsWjPtPre` · vault `97BE43F6…A7792` · loan `611C01C4…4B59F`
+
+| step | result | explorer |
+|---|---|---|
+| VaultCreate (closed-ended) / LoanBrokerSet / LoanBrokerCoverDeposit 4400.016744 | `tesSUCCESS` | [2A0B80AF…](https://devnet.xrpl.org/transactions/2A0B80AF3905C6FC392AB16B4C85FB44EB7DDB32E7D1990B6C034A6B4AA469CD) · [4DBE5EB9…](https://devnet.xrpl.org/transactions/4DBE5EB95BCC5AE8B8E13070E2B0928D0D55DD613DFDAF8A99008764B9B27B84) · [3C70F83A…](https://devnet.xrpl.org/transactions/3C70F83A5E747526972B298CF933D28B74D5E3C08B64F210FF97A05E5C294FF6) |
+| VaultDeposit 15 000 + 15 000 + 10 000 | `tesSUCCESS` | [D9B74C21…](https://devnet.xrpl.org/transactions/D9B74C21B4B8E3C4EC79AF2B65339A90C85FC3E1E256B257FC652F7AD7D903EB) · [71936E30…](https://devnet.xrpl.org/transactions/71936E30099F06B2A455F5F11A5C213F18A370ACFD1084C5395753116A6ECB77) · [C1F4B1A3…](https://devnet.xrpl.org/transactions/C1F4B1A3342A9E6D1671647295735E5E1C9CB34885ACE0770DAF9F340F602723) |
+| LoanSet 40 000 (SPV multisig countersign, origination fee 600) | `tesSUCCESS` | [9B1F5283…](https://devnet.xrpl.org/transactions/9B1F528320BE8FCE01A006717FD56E2356CFFA070BF63AF439A4055589291861) |
+| EscrowCreate m1 16 000 / m2 24 000 | `tesSUCCESS` | [46685484…](https://devnet.xrpl.org/transactions/466854843BAA01C877C8BAD9BC680C3687335E6EC49A995CE201A95F5D3E1F51) · [D804AFE3…](https://devnet.xrpl.org/transactions/D804AFE3F4F599E82785359634C54974B181D36710ADA13BE895791797A9DCB2) |
+| `cancelExpiredMilestone` m2 **before** CancelAfter ("63s to go") | **`TooSoonError`**, client-side, releaseService Sequence unchanged | — (not submitted) |
+| `withdrawFromVault` investor1 in the Investment phase ("302s to go") | **`TooSoonError`**, client-side, investor Sequence unchanged | — (not submitted) |
+| `tryFinishWithWrongFulfillment` m1 (platform, random 32-byte preimage) → event `release_refused` | **`tecCRYPTOCONDITION_ERROR`** (resolved, not thrown) | [9F48441B…](https://devnet.xrpl.org/transactions/9F48441B8CAFE999D17AD94C2705A943CF86852BF480A62320B235C6F47B1C47) |
+| `releaseMilestone` m1 by **releaseService**, Fee 36 drops, preflighted → `escrow_finished 16000` (builder 400 → 16 400) | `tesSUCCESS` | [5F205253…](https://devnet.xrpl.org/transactions/5F205253D913C670232267CB039331DA0BA8A6ABDE0CEBB01A342403FC2338BB) |
+| `builderPayToSpv` 13 333.38407 (one periodic payment, rounded up) | `tesSUCCESS` | [04B1AB4F…](https://devnet.xrpl.org/transactions/04B1AB4F0B7B6BB5CF04B3C255AE39B0E54BB1CF053A89F90CC86114696C9157) |
+| `repayLoan` source builder → mode `regular` | `tesSUCCESS` | [2E3A2491…](https://devnet.xrpl.org/transactions/2E3A249141294854EF029F54DAFC9685DC622BAA6A02B675D8ABF24576D6246F) |
+| `repayLoan` 1000 (< one periodic payment) | **`LoanPayAmountError`**, client-side, SPV Sequence unchanged | — (not submitted) |
+| `cancelExpiredMilestone` m2 by releaseService after CancelAfter → `escrow_cancelled 24000` | `tesSUCCESS` | [96C5E876…](https://devnet.xrpl.org/transactions/96C5E87637B2A3F0F8CE22DD05DC7AF3B3496F94D400E533ED3CF6946F67DB63) |
+| `repayLoan` 24 000 source escrow_refund → mode **`overpayment`** | `tesSUCCESS` | [34E51801…](https://devnet.xrpl.org/transactions/34E51801DA4FEC126DC64709ED3B6B52E24DB18FE440229C0A4CCB9E42FDD726) |
+| `withdrawFromVault` investor1 1000 after RedemptionDate | `tesSUCCESS` | [4320B972…](https://devnet.xrpl.org/transactions/4320B972A9C1C818C75B81C0A83070A371E1EA70AB9DB873CF8409B032C92DD1) |
+
+Vault (`getVaultSnapshot`) along the way:
+
+| moment | AssetsTotal | AssetsAvailable | sharePrice |
+|---|---|---|---|
+| after deposits | 40000 | 40000 | 1 |
+| after LoanSet | 40000 | 0 | 1 |
+| after builder LoanPay (one periodic) | **40000.068493** | 13333.376458 | **1.000001** |
+| after refund LoanPay (overpayment 24 000) | **40000.114155** | 37333.371385 | **1.000002** |
+| after investor1 withdraws 1000 | 39000.114155 | 36333.371385 | 1.000002 |
+
+Observations:
+- **Share price moves at LoanPay, not at LoanSet** (again): +0.068493 for the first period's interest (net of the 10 % management fee),
+  +0.045662 at the refund payment. The ratio is tiny because the loan ran only minutes. The mechanism is what we pitch.
+- **Overpayment re-amortizes:** the 24 000 refund paid period 2 (13 333.38) and put the rest into principal.
+  PrincipalOutstanding 26 666.69 → 2 666.74, PaymentRemaining 2 → 1, PeriodicPayment 13 333.38 → 2 666.75. The SPV kept
+  0.00000096657 RLUSD of dust (we round the periodic payment up to 6 dp).
+- **Withdraw burns shares at the current price:** investor1 15 000 000 000 → 14 000 002 854 shares (1000 RLUSD at 1.0000029
+  per share); RLUSD 35 000 → 35 999.99999987428 (IOU precision, not exactly +1000).
+- The finish used preflight's Fee (36 drops for a 36-byte fulfillment) and a LastLedgerSequence 18 ledgers out
+  (spike passes `lastLedgerMargin: 20`; default 60). Submitter = releaseService, as in Direction v2.
+- Client-side refusals were proven by the submitting account's `Sequence` staying put: nothing reached the ledger, so the
+  TooSoon / amount errors cost no fee and leak nothing.
+- **Re-run on main after merging XRPL-06 and the hardening follow-ups (locked `submitMultisigned` for LoanPay, `planLoanClose`)**,
+  2026-10-25 ~00:34 UTC, same numbers, 0 retries: wrong fulfillment [44C99ACC…](https://devnet.xrpl.org/transactions/44C99ACC8C811B0D19F067FC4C52C4ABDD9FEB22BEE26AAFB7C589E81C215C3A) `tecCRYPTOCONDITION_ERROR` ·
+  finish [8175B5F2…](https://devnet.xrpl.org/transactions/8175B5F240E36FC93AB8DC9829F3F135380207A9DAA1F316F544E6F532C8E79F) · builder LoanPay [3F36268E…](https://devnet.xrpl.org/transactions/3F36268EC995EC3076006442D4262CB7805AE964023416C9119D95F6DF103E0D) ·
+  cancel [5206FBF3…](https://devnet.xrpl.org/transactions/5206FBF347522B5C25B1D4FBDAEEB0048954668857ACD6C91A0F1CF0AE75B046) · refund overpayment [FCC906F7…](https://devnet.xrpl.org/transactions/FCC906F7BB8F68F1C1DAF5FD1EC3424BEF2E1C251F9382766F48E51A27179A8A) ·
+  withdraw [D68D6A4C…](https://devnet.xrpl.org/transactions/D68D6A4C58B0A8A1742F90EF609FA2E6A87DE2BC926D945FE372444FE10C598F). Bootstrap first hit
+  `Decimal precision out of range` topping up investor1 from 35 999.99999987428 (left by run 1's withdraw); fixed in `topUpRlusd` (round the shortfall up to 6 dp).
+
 ---
 
 ## 2. (b) LoanSet: multisig borrower and countersigning
@@ -210,6 +269,8 @@ Observations:
 
 
 
+### 2a. XRPL-01 devnet results (2026-10-24 ~22:50 UTC, `pnpm --filter @xrlp/xrpl spike:loanset`, fresh faucet wallets)
+
 v2 signer list: SPV `rUkEQZJci363W8GwX32tMXe1mXzG9q2VFT` = `{platform, builder, inspector, trustee}` weight 1, quorum 3, master disabled.
 Counterparty signers on the LoanSet: **platform + builder + inspector** (the platform signs both as `Account` and as one of the
 SPV's counterparty signers: accepted). Loan `66FE03B2BFDE7B6AD7C55272384707A9EADC2166C349604858474E5C43D12018`.
@@ -235,6 +296,128 @@ Observations:
 - With this toy rate/interval (10 %/yr, 240 s) the booked interest is below the vault's precision: `AssetsTotal` stayed 1000. For a visible share-price move in the demo use realistic terms (days, not seconds).
 - `AssetsAvailable` is omitted from the Vault entry when 0 (read it as `"0"`).
 
+### 2b. XRPL-05 devnet results (SPV signer list + multisig submit)
+
+`pnpm --filter @xrlp/xrpl spike:spv` (fresh throwaway faucet wallets). `createSpv()` gives SPV `rGfACDRPDofveyiTUj6aZaufb4JoPDLme8`:
+fund, RLUSD `TrustSet`, `SignerListSet {platform, builder, inspector, trustee}` w1 quorum 3, `asfDisableMaster`. Every attempt is a
+small XRP `Payment` from the SPV.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | SPV TrustSet RLUSD | `tesSUCCESS` | https://devnet.xrpl.org/transactions/9A6FD10025548970476676B01E26249A3F2DF407E7B6DDFE9E5292E6BDBEE4FD |
+| 2 | SPV SignerListSet {platform, builder, inspector, trustee} w1, quorum 3 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/8F04A0F25140F2A314C50E1EBFBEC8269EF48816735332F4F1C1EE7B09F4D30E |
+| 3 | SPV AccountSet asfDisableMaster | `tesSUCCESS` | https://devnet.xrpl.org/transactions/F491B509B6EE1E0E072B4B2D1DCEA2C702BB0C9F38F38992AE056D397056E4D4 |
+| 4 | master key single-sign | **`tefMASTER_DISABLED`** (expected) | — (not on ledger) |
+| 5 | multisig **2 of 4** (platform + builder) | **`tefBAD_QUORUM`** (expected) | — (not on ledger) |
+| 6 | platform + builder + **aiAgent** (AI not on the list) | **`tefBAD_SIGNATURE`** (expected) | — (not on ledger) |
+| 7 | `submitMultisigned` 2 of 4: local fast-fail, nothing submitted | `tefBAD_QUORUM` (local) | — |
+| 8 | multisig **3 of 4** (platform + builder + inspector) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BE908263747379191BB0C79A1CFB9EEF7B506B926715116200455CD79560D464 |
+| 9 | 3 of 4 without the inspector (platform + builder + trustee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/979B020D7F417AB44993DC6EAB64705F85AB1A3AAA64CEA6D4B6CFC10EF503AA |
+| 10 | 3 of 4 without the platform (builder + inspector + trustee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C0353715A7D5CDF835F03A00FFBF16FBCBCFB5FBAB14FF6DAB83C4BFDF3C0C25 |
+
+Observations:
+- **`tef*` results are not on-ledger**: they are rejected at submit, not applied, not relayed, no fee charged and no sequence used, so
+  there is **no explorer link** for rows 4–6. Right after submit the node may still answer `tx <hash>` from its local cache
+  (`validated: false`, no meta). Later it returns `txnNotFound`. To show "ledger says no" on the explorer, use a `tec` case (e.g. wrong
+  fulfillment → `tecCRYPTOCONDITION_ERROR`, XRPL-02), not a short multisig.
+- **xrpl.js `submitAndWait` does not throw on `tef*`** (only on `tem*`). It polls until `LastLedgerSequence` passes (~1 min), then throws
+  "latest ledger sequence … Preliminary result: tefBAD_QUORUM". `submitMultisigned()` therefore checks the signers against the on-ledger
+  SignerList first (`checkSignerQuorum`) and throws `XrplTxError("tefBAD_QUORUM"|"tefBAD_SIGNATURE" …)` at once.
+- Any 3 of 4 work, so no single party (including the platform) can block. The AI key is not a signer.
+- Fee: `autofill(tx, signers.length)` = base × (1 + 3) = 4 drops. Enough.
+
+### 2c. XRPL-06 devnet results (loan close: LoanSet + N escrows, conditions from the caller, 2026-10-25 ~00:17 UTC)
+
+`WALLETS_FILE=.data/wallets.<you>.json pnpm --filter @xrlp/xrpl spike:close` (bootstrap store, fresh SPV/vault/broker per run).
+Project: principal 3000 RLUSD, 3 milestones (1000 / 1200 / 800), 10% APR, `PaymentTotal 3 × 300 s`, origination fee 1.5% = 45.
+Conditions come from the script (stand-in for core's release service, CORE-12); this package no longer generates preimages on the
+close path. SPV `rEZDzFFLieyLVD3fLXTNUKwsEAuPna3QeP`, loan `BB7BADF09A3D032E2E408B5E96E40E907A9537E9EA5D9BD1FEC356462FCA8809`.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | SPV TrustSet RLUSD | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0199D5DFBDB746A2AD689B1A8A777F6F44A8BD64D5E14F7314949D69943E4044 |
+| 2 | SPV SignerListSet {platform, builder, inspector, trustee} w1, quorum 3 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BBACD441E62BF6E88F45282ACEF4DD89724990ADDADB18DBFCB3996F2A0029DF |
+| 3 | SPV AccountSet asfDisableMaster | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C21E844FBFF51ADA733F0E7E4C510F23D10EFF262511C45BA63F008792812B77 |
+| 4 | VaultCreate (closed-ended, `AssetsMaximum` 3000) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/3E26DADC0646B5B055EBBDE273F251B1C8523D3F57FBDD4FC5BDC2D61BCA9940 |
+| 5 | LoanBrokerSet (10% / 100% cover, 10% mgmt fee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A163A876EA2DBD9936CF5220909082A602919154F52F868F6F0AEBEC923B444B |
+| 6 | LoanBrokerCoverDeposit | `tesSUCCESS` | https://devnet.xrpl.org/transactions/43D93BA3E473D94C6E250E0A4843F45AF575CCB20D29AFCEF8BD22A219AC71E9 |
+| 7 | VaultDeposit investor1 3000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BE720B6B42A5AE15F17CDD31E22918710C0A6AC52C406A2C80B4E20F23B14F84 |
+| 8 | close during Subscription, `waitForInvestmentPhase: false` | **`TooSoonError`** (client-side) | — (nothing submitted) |
+| 9 | duplicate condition (m3 = m1) | **`CloseValidationError`** (client-side) | — (nothing submitted) |
+| 10 | CancelAfter ≥ maturity (m2 = now + 30 days) | **`CloseValidationError`** (client-side) | — (nothing submitted) |
+| 11 | malformed condition (a fulfillment) + `PaymentTotal 1` | **`CloseValidationError`** (client-side, all issues listed) | — (nothing submitted) |
+| 12 | builder → SPV origination-fee shortfall 45 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/3F9C07BA2938ABF3422F58112B5CE18DD5D797FC023E567847AA5B9208741BE6 |
+| 13 | **LoanSet** (platform `Account`, SPV 3-of-4 countersign, `tfLoanOverpayment`, fee 45) | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/79685931320311866541E6286DA92B0CBF5296F5B4C07CED829A2311CC6A9D72 |
+| 14 | EscrowCreate m1 1000 (seq 6391515) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C99135974E70EF351E8CC5B758C9AF81A64FCAAC6EFB268A8CA4AB8CA0A11BB2 |
+| 15 | EscrowCreate m2 1200 (seq 6391516) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/1F71B6B7167E563B0C45C918EA27D1E4F7EC2B3E391EFA6236CE5E4641889B79 |
+| 16 | EscrowCreate m3 800 (seq 6391517) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/E5AC7836059DAC59EA48EF2CB6B3C65F6296A79260F237186A6B47DDF0636DF4 |
+| 17 | re-close with the same conditions | **`CloseValidationError`** (already on open SPV escrows) | — (nothing submitted) |
+
+Observations:
+- **SPV liquid RLUSD after close = 0** (before 0, +45 fee shortfall, +2955 from LoanSet, −3000 into 3 escrows). Escrows sum to the
+  principal (3000); `principalOutstanding` 3000, 3 payments remaining.
+- "Nothing submitted" is checked, not assumed: the script compares `Sequence` + RLUSD of platform, SPV and builder before/after each
+  negative. All were unchanged.
+- Default `CancelAfter` = **maturity − one payment interval** (here 00:27:12 < maturity ≥ 00:32:12). Maturity is a lower bound
+  computed before LoanSet (`ledger now + interval × total`). The real LoanSet starts a few seconds later, so every CancelAfter that
+  passes the check is also before the real maturity.
+- All validation runs **before the first tx** (including the origination-fee top-up): conditions (`A0258020…810120`, 78 hex, unique
+  within the call and vs the SPV's open escrows via `account_objects`), `now + 60 s < CancelAfter < maturity`, `PaymentTotal ≥ 2`,
+  `0 < InterestRate ≤ 100%`, `PaymentInterval ≥ 60 s`, loan fits before `RedemptionDate`, milestone sum ≤ principal, SPV signers reach the
+  on-ledger quorum. If an EscrowCreate still fails after LoanSet, `CloseLoanPartialError` carries `loanId`, the created escrows and the pending milestones.
+- The cross-SPV duplicate check doubles as a **re-run guard**: calling close again for a closed project is refused before any tx.
+- LoanSet autofill → sign → countersign → submit now runs under `withAccountLock(platform)` (XRPL-12).
+
+### 2d. XRPL-13 Batch atomic close (devnet)
+
+`pnpm --filter @xrlp/xrpl spike:batch` (2026-10-25 ~00:18 UTC, fresh faucet wallets, rippled **3.4.1**: `BatchV1_1` + `fixBatchV1_2`
+enabled, **`LendingProtocolV1_2` absent**, not even supported). v2 SPV `rHoVKshZoEJaqgKKZJwpXj4mTf65ppnGJY` (4 × w1, quorum 3, master
+disabled), signers platform + builder + inspector. Code: `packages/xrpl/src/batch.ts`.
+
+**Verdict: the fully atomic `LoanSet + EscrowCreate×N` is blocked on devnet today.** rippled 3.4.1 has every SAV/Lending type
+(`VaultCreate…VaultClawback`, `LoanBrokerSet…CoverClawback`, `LoanSet`, `LoanDelete`, `LoanManage`, `LoanPay`) in
+`Batch::kDisabledTxTypes`, and rejects it as an inner tx with `temINVALID_INNER_BATCH` no matter who signs. rippled `develop` lifts the
+ban behind `featureLendingProtocolV1_2`. **What works today**, and is now `closeLoanAtomic({ mode: "escrows" })`, the default: the countersigned
+LoanSet, then **one** all-or-nothing Batch that holds every milestone `EscrowCreate`. Two txs instead of 1+N. Either every escrow exists or none does. The SPV
+held the principal for **2 ledgers (~9 s)**.
+
+| # | variant | result | explorer |
+|---|---|---|---|
+| A | Batch outer = SPV (multisigned 3/4), 2 × RLUSD Payment SPV→builder, no BatchSigners | `tesSUCCESS` | https://devnet.xrpl.org/transactions/D93DABD9C04A6C6973E9BB36FC7C70F77EB606899446D43A87337427A386C3B6 |
+| A↳ | inner Payments (fee 0, `ParentBatchID` in meta) | `tesSUCCESS` ×2 | https://devnet.xrpl.org/transactions/97A080D1DDB7A46856F3241288AF1BA53D832B92D4F9B5AC0DF536730A9B89A6 · https://devnet.xrpl.org/transactions/ACE64B8391D9C6F16905AE69453794735AA02114EC158636E4EBBBBD5E70404A |
+| B | Batch outer = **platform**, same 2 inner Payments from the SPV, `BatchSigners = [{Account: SPV, Signers: [3]}]` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4B5C2BBF043677DBFCCDAF670F1922AF4897D6403CCF5270265F69576774278E |
+| B↳ | inner Payments | `tesSUCCESS` ×2 | https://devnet.xrpl.org/transactions/348DEECFA4F2FFEF0B6489BD752021D4D7D167F33C57C1A675A43767529FB5A5 · https://devnet.xrpl.org/transactions/BBDEA55C585A9441414B30CA86CCA16BAA1FFF2B4EF7A99D21A9B1DD4D6CBC78 |
+| C | `tfAllOrNothing`: Payment 1 + Payment 999 (overdraws) | outer `tesSUCCESS`, **both inners not applied**, SPV balance unchanged | https://devnet.xrpl.org/transactions/436DCDD497BAE3BA433CE9EBDCD2652AB6D3A20817CE15A50F562F5A736C96E7 |
+| F1 | **full close**: outer = platform, inner LoanSet (`Counterparty` = SPV, **no** `CounterpartySignature`) + 2 × EscrowCreate from the SPV, BatchSigners = SPV multisig | **`temINVALID_INNER_BATCH`** "Malformed: Invalid inner batch transaction." | — (not on ledger) |
+| F2 | full close, borrower-initiated: outer = SPV (multisig), inner LoanSet `Account` = SPV / `Counterparty` = platform + 2 × EscrowCreate, BatchSigners = platform (single) | **`temINVALID_INNER_BATCH`** (same) | — (not on ledger) |
+| E1 | fallback: LoanSet countersigned by SPV multisig (standalone, as XRPL-01) | `tesSUCCESS` (ledger 6391571) | https://devnet.xrpl.org/transactions/0F0564B011AE6E55A8B1B944ADD0D04A38609DA01229224FEF9A342CA7440D7A |
+| E2 | fallback: Batch outer = SPV (multisig 3/4), 3 × EscrowCreate 330 RLUSD, `tfAllOrNothing`, fee 8 drops | `tesSUCCESS` (ledger 6391573) | https://devnet.xrpl.org/transactions/05612B4D17E66B37FFA64139CD2BA2163642D76122C7FC319FF1407253DBC5B8 |
+| E2↳ | inner EscrowCreates (OfferSequence 6391539/40/41 = inner `Sequence`) | `tesSUCCESS` ×3 | https://devnet.xrpl.org/transactions/D55455B55B0E380BB6AFEB0C34E48D504C4D763CC06D5CC048D28344BFFFCC33 · https://devnet.xrpl.org/transactions/65BF0ABDED94165567ACA1771D99D96C7255FF6AF7E60C191D445F906D17A31A · https://devnet.xrpl.org/transactions/74BE49BE0C51CFD209A69D6A0CDC262E3C6022DB1CDBD140784E1991FA191708 |
+
+Answers to the research questions (rippled `LoanSet.cpp` / `Batch.cpp`, 3.4.1 and `develop`):
+- **Can LoanSet be an inner tx?** Not on 3.4.1 (`kDisabledTxTypes`, `temINVALID_INNER_BATCH`). With `LendingProtocolV1_2` (develop) it can.
+- **Does the inner LoanSet still need `CounterpartySignature`?** No. `LoanSet::preflight` skips the "must have CounterpartySignature" check for
+  `tfInnerBatchTxn`. It requires an explicit `Counterparty` (else `temBAD_SIGNER`). `Batch::preflightSigValidated` adds `Counterparty` to the
+  **required BatchSigners**, so the SPV's approval comes through its BatchSigner. If a `CounterpartySignature` is present it must be unsigned.
+  The inner LoanSet fee is then just `base` (no counterparty signatures). `innerLoanSetTx()` builds exactly this.
+- **Outer Account?** Either works for multisig: A (SPV outer, multisigned) and B (platform outer + SPV BatchSigner with nested `Signers`).
+  For the full close, use outer = **platform**: it is the LoanSet `Account` and pays the fee, and the SPV is the only BatchSigner.
+  The outer Account must never be listed in BatchSigners (`temBAD_SIGNER`).
+- **Multisig SPV EscrowCreate as inner tx, with the SPV signing via `BatchSigner.Signers`?** Yes (variant B with Payments, E2 with the SPV as outer).
+  The signature payload is `BCH\0` + outer Account + outer Sequence + outer Flags + count + inner tx IDs + batch account + signer account.
+  Fee and LastLedgerSequence are **not** bound, so the outer submitter can re-fee without new BatchSigners.
+- **Fee** (rippled `Batch::calculateBaseFeeImpl`) = `base + base×(1 + outerSigners) + Σ inner base + base × (signatures in BatchSigners)`.
+  E2: 1 + 4 + 3 = 8 drops ✔. `batchFee()` computes it. xrpl.js autofill gives the same with `signersCount` = outer signers + nested BatchSigner signatures.
+- **Sequences:** inners from the outer account use outer+1… (the outer consumes its own Sequence). In C the outer used SPV seq 6391537, and the rolled-back
+  inners did **not** consume 6391538/39: E2's escrows got them. An escrow's `OfferSequence` = its inner `Sequence`; its "create tx" = the inner hash.
+- **xrpl.js 5.3.0 gotcha:** `combineBatchSigners` de-duplicates by `BatchSigner.Account` and keeps only the first fragment. That drops all but one
+  signer of a multisig account (→ `tefBAD_QUORUM`). `mergeBatchSigners()` merges the nested `Signers` instead. Also, autofill mutates the
+  `RawTransactions` array of the input in place. `submitBatch` builds every Sequence itself.
+- **tfAllOrNothing rollback is silent:** the outer is `tesSUCCESS` (fee charged) even when nothing applied. `submitBatch` looks up every inner hash,
+  and `createEscrowsAtomic`/`closeLoanAtomic` throw `XrplTxError("inner_failed …")` unless every inner tx is `tesSUCCESS`.
+- **Limits:** 2..8 inner txs, so `escrows` mode takes 2..8 milestones and `full` mode 1..7 (the LoanSet takes one slot). One milestone →
+  use `createMilestoneEscrow`.
+
 ---
 
 ## 3. (c) Vault mechanics, and the V1_1 closed-ended lifecycle
@@ -247,10 +430,11 @@ Observations:
 - **Withdrawals are limited by liquidity.** `VaultWithdraw` fails with `tecINSUFFICIENT_FUNDS` if `AssetsAvailable < amount` (§3.6.2.2 #10).
   While the loan is out, `AssetsAvailable` drops by the principal, so investors can only take out what has been repaid.
   **Any share holder can withdraw, even from a private vault.** Withdraw ignores the domain (§A.2).
-- **⚠ Share value rises at `LoanSet`, not at repayment.** `LoanSet` adds the full scheduled interest (net of
-  management fee) to `Vault.AssetsTotal` (§3.8.6 #6). `LoanPay` leaves `AssetsTotal` unchanged and only raises
-  `AssetsAvailable` (§3.1.10, Example 2). The demo line "share value rises as repayments land" is **wrong**. Say
-  instead: "share value reflects contracted interest at close; repayments turn it back into withdrawable liquidity."
+- **⚠ Devnet: share value rises as interest is *paid*, not at `LoanSet`.** Our reading of XLS-66 §3.8.6 #6 said `LoanSet`
+  books the full scheduled interest into `Vault.AssetsTotal`. **Devnet (rippled 3.4.1) does not:** `AssetsTotal` stayed at the
+  principal after `LoanSet` (even with 6.17 RLUSD of interest booked on the Loan) and rose only when `LoanPay` landed
+  (30000 → 30000.0257). Devnet wins (see §3a). Say: "share value rises as interest is repaid; repayments also turn the
+  principal back into withdrawable liquidity."
 - **⚠ `LendingProtocolV1_1` (enabled on devnet) requires closed-ended vaults:**
   - `LoanBrokerSet` (create) **fails with `tecNO_PERMISSION` unless `Vault.VaultKind = 1` (ClosedEnded)** (66.1.2 §3.3).
   - A closed-ended vault has immutable `SubscriptionDate` and `RedemptionDate`, with `180s ≤ Redemption − Subscription`.
@@ -285,6 +469,93 @@ Observations:
 4. The released-but-unrepaid part is real credit loss. The platform can `LoanManage tfLoanDefault` after
    due+grace. First-loss cover absorbs `DefaultCovered`, and the vault writes down the rest.
 
+### 3a. XRPL-04 devnet results
+
+`pnpm --filter @xrlp/xrpl spike:broker` (fresh faucet wallets, single-key SPV; 2026-10-24). Vault dates from
+`vaultDatesFor()`, broker rates from `createLoanBroker()` defaults, cover from `minimumCover()` / `defaultCoverDeposit()`,
+fee from `originationFeeFor()` (`src/lending-math.ts`). Terms: 1000 RLUSD @ 10 %/yr, 2 × 15 days (realistic interval,
+so interest and the management fee are visible; the spike never waits for `RedemptionDate`).
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | VaultCreate closed-ended, `AssetsMaximum` 1000, `RedemptionDate = Sub + 2×15d + 60 + 1h` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C2A84A3F51195BAD19A3657F251FE8CC4F1B75296E127B82C1635958B95F3646 |
+| 2 | LoanBrokerSet defaults: `CoverRateMinimum 10000`, `CoverRateLiquidation 100000`, `ManagementFeeRate 10000` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4AAEA4888FDF4482FF027F8F991BCA644091900ED2D167CF8711A83911F61795 |
+| 3 | LoanBrokerCoverDeposit 50 (below the 100.61686 minimum) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4A5C80078CB871E3DF8957A39A98695377BA8CC85415EFA86ADEBA30FDE66DCE |
+| 4 | VaultDeposit 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/5A3AD10F7A5FCE5C4D4242E03219C255C59E0A4F6C30DE44ED6BB4FD5AC22AC8 |
+| 5 | **LoanSet with cover 50 < minimum** | **`tecINSUFFICIENT_FUNDS`** (as spec'd) | https://devnet.xrpl.org/transactions/3C45AF4B859045A0069832118A948902289EA3961D4CF264EE1818622C4391D3 |
+| 6 | LoanBrokerCoverDeposit +60.678546 (total 110.678546 = minimum + 10 % headroom) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/838A9C19F4FB4E629852C8D3191FCB81932977792AF144FE958529879E87F240 |
+| 7 | **LoanSet 1000, `LoanOriginationFee` 15** (1.5 %), `tfLoanOverpayment` | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/37B59EFA9A8CC564ED912B470D9131148412D88265BF8FE724EF4806497A14A3 |
+
+Observations:
+- Broker entry carries `CoverRateMinimum=10000 CoverRateLiquidation=100000 ManagementFeeRate=10000` (readable on the explorer).
+- **Origination fee lands with the platform:** SPV `0 → 985`, platform `+15`. Consequence for the close path: milestone
+  escrows sum to the full principal, so the SPV is 15 short. `closeLoanAndCreateEscrows` has the builder pay the
+  shortfall into the SPV before `LoanSet` (see `docs/decisions.md`).
+- `expectedInterest()` predicted 6.168597; the ledger booked `TotalValueOutstanding = 1006.168597084243` (exact to 6 dp).
+  `Loan.ManagementFeeOutstanding = 0.616859708424` = 10 % of interest, as `managementFeeOn()` predicts.
+- After LoanSet: `Broker.DebtTotal = 1000` (principal only, not principal + interest), `CoverAvailable = 110.678546`.
+  **`Vault.AssetsTotal` stayed 1000** even with 6.17 of interest booked. So on this devnet build the vault does *not*
+  book the scheduled interest into `AssetsTotal` at `LoanSet` (contrary to the §3 reading of §3.8.6 #6); interest
+  presumably arrives with `LoanPay`. Re-check share price in the XRPL-07 repay test before using the "booked at
+  origination" line in the demo.
+- 50 < 10 % × 1000 → rejected, so we cannot tell from this run whether the check uses `DebtTotal + principal` or
+  `+ interest` too. `minimumCover()` includes interest (conservative); the 10 % headroom covers either reading.
+- Client-side guard: `validateBrokerRates` rejects `CoverRateMinimum 10000 / CoverRateLiquidation 0` before
+  submission (the ledger would return `temINVALID`, which is not on-ledger).
+
+Full `pnpm demo` through `setupProjectOnChain` / `closeLoanAndCreateEscrows` (bootstrap wallets, multisig SPV, 30000
+principal, 4 × 300 s): default cover **3300.007849** (minimum 3000.007135) deposited; builder paid the 450 origination
+shortfall into the SPV; multisig LoanSet with `LoanOriginationFee 450`; 3 escrows; **SPV liquid RLUSD after escrows = 0**.
+
+| step | result | explorer |
+|---|---|---|
+| LoanBrokerSet (default rates) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/352178626E211BA65E693B543C4ED7C6ACA973AFB48AB519F0AF04B5A0BEE522 |
+| LoanBrokerCoverDeposit 3300.007849 (mandatory, default) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/75C6777AC164EB3EB589F53C7627A79583861D585E27BDC85215F93EAF87DEC5 |
+| builder → SPV 450 (origination fee shortfall) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/060C4832103A851D006A0992A01A22E4615B20CCB2A6DE7E400275C7EC9C99C2 |
+| LoanSet multisig countersign, `LoanOriginationFee 450` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0CF84E10A53C5B30BA433050BA87344AA698F4522769731E1E7A2E5DCB72A62F |
+| LoanPay 9000 (escrow refund, overpayment) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/7395A3FC078351AA15389DE58778E63D8535DF949A830A4B4B0C43CDB6F1B2AB |
+
+- Confirms the share-price finding: `Vault.AssetsTotal` was **30000** after LoanSet and **30000.02568** only after the
+  LoanPay. **On devnet, interest reaches the vault (and the share price) as it is paid, not at LoanSet.** The "booked at
+  origination" demo tooltip should become "share value rises as interest is repaid".
+### 3b. XRPL-08 devnet results (credentials, domain, private vault)
+`pnpm --filter @xrlp/xrpl compliance` (2026-10-24, fresh faucet wallets, `scripts/compliance.ts`). All green on the first run.
+Accounts: platform `rfXuWyuiDB6YebmqkmGPFVkgX5VzoSYXQ5` · builder `rMiCidC2QvSt5Eqxv7AFxQF2Y3WJX4B6eB` · investor1 `rpq36NP8EqGCMYmD4FjVk94qX9AoC9rt9v` ·
+investor2 `rsPRm5t57J4AFNagPbqLZD1eqZcyHg44sc` · investor3 `r3BiGirvzzcSVhqc6cTZ7UpvLstdjhSiWw` · inspector1 `r3KYuCJCpircLrFJuKq2fcKxBqpCM1VixN` ·
+aiAgent `rHw8ajV19p3i79Z6GXAPXyCPCpgnqUodij` · releaseService `rnGRf8Xi1XJYRMLZGg7mvEamYfBwrJRpZH` · attestation target ("SPV") `rhemmtSz5vbYkvSv4pSV9d6VZBjGX5B4tU`.
+| 1 | CredentialCreate VERIFIED_BUILDER → builder | `tesSUCCESS` | https://devnet.xrpl.org/transactions/2093B0D492B5C4304CD09BD31DDC72354C1258EFD0B5B7FE93BED224CAF8541C |
+| 2 | CredentialAccept VERIFIED_BUILDER (builder) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/FA22A7DE4DB77DC11CA8F6DD23AC3C66618FB25B85024541E3EE3711CABCD8B3 |
+| 3 | CredentialCreate VERIFIED_INSPECTOR → inspector1 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/FAEC2E6EA06F90E286FC4C370B14BDBEAD87CBA6AB1F3E4D43EC9F910A26D3A5 |
+| 4 | CredentialAccept VERIFIED_INSPECTOR (inspector1) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/05A4F6AA5BA5055730A1F8C169C4BBEEA5ADE8686A8BCA50DE813095B0F77754 |
+| 5 | CredentialCreate KYC_INVESTOR → investor1 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/B95BE5BA5F9032529B011608F6CDCF70210BDB80DBC06696A47CD0782FB79495 |
+| 6 | CredentialAccept KYC_INVESTOR (investor1) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/AB14DEF8EF092869C54EB4724F7EBBB5592DCA029D6DC2795452ED13E41E1453 |
+| 7 | CredentialCreate KYC_INVESTOR → investor2 (never accepted) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/89CC6458441CF825144633BC20E12B29BE8F531E4DD9C0A26F8EC46FE69DC964 |
+| 8 | PermissionedDomainSet, AcceptedCredentials = [platform, KYC_INVESTOR] | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BBC688F9D2F6037497C18B0549237EFC874393934F0D1BEBF2DD9A7B686BE9F8 |
+| 9 | VaultCreate closed-ended + `tfVaultPrivate` + `tfVaultShareNonTransferable` + `DomainID` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/848F08C55D34109007F58FC0793AFE570C57308AE9FFEAF42F0FAD9307E7A276 |
+| 10 | VaultDeposit investor1 (KYC accepted) 400 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/263E1954289F75FCB6D1B0F3AEFE6384EE22158A7E29E60C74814EF670049751 |
+| 11 | VaultDeposit investor2 (KYC issued, **not accepted**) 400 | `tecNO_AUTH` (expected) | https://devnet.xrpl.org/transactions/918DA41A978CD40E4B2F10FEAC491301895A3F5D0A8F5AD4F77BC86531C9F445 |
+| 12 | VaultDeposit investor3 (**no KYC**) 400 | `tecNO_AUTH` (expected) | https://devnet.xrpl.org/transactions/D1917499C930BFAEDBB1A4B4E56266A8BD9EA7E1C3AFC5CFC9240ECD6CE3BFD2 |
+| 13 | Payment verification fee builder → platform 250 RLUSD | `tesSUCCESS` | https://devnet.xrpl.org/transactions/9568897585BA6DB7D02FB97B360A82A5FC3E10F52BA91A526AC4AFC54245D30F |
+| 14 | attest `audit` (inspector1: prepare → sign offline → `submitSignedBlob`) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/1B41FAC014072A13E81171B80F7E37F7836E7CA581E69FBC80F556AF766225AB |
+| 15 | attest `verdict` (aiAgent) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0CFBA141DC9A1D61D260CD4847D65985D127FD1F170A894673D201600DE39499 |
+| 16 | attest `decision` (platform, with reason) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/11CD030C7FFDD4A423351270F850807BF97BE16C927D08E1F7CC6F37022E6117 |
+| 17 | attest `release` (releaseService) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/02BAD5D0FAE4C0B1043E945696F8F4A7EBC5031EC3EF134C0C90A7781736E9A0 |
+(Issuer `AccountSet`/`TrustSet`/RLUSD funding txs omitted; full table in the script output and `.data/xrpl08-compliance-*.json`.)
+What devnet showed:
+- **`tecNO_AUTH` is on-ledger** (a tec, fee charged, has an explorer link), both for "no credential" and for "credential issued
+  but not accepted". So `CredentialAccept` is mandatory for investors (the KYC button must do issue **and** accept).
+- **Where the flags land:** `Vault.Flags = 0x10000` (`lsfVaultPrivate`), but **`DomainID` is not on the `Vault` object** — it sits on
+  the share `MPTokenIssuance` (`DomainID = <domain>`, `Flags = 0x4` = `lsfMPTRequireAuth`, no `lsfMPTCanTransfer` because of
+  `tfVaultShareNonTransferable`). Read the domain from the share issuance, not the vault.
+- A KYC'd depositor needs **no `MPTokenAuthorize`**: the first `VaultDeposit` creates and authorizes the share MPToken
+  (investor1 got `400000000` shares for 400 RLUSD, scale 6).
+- `CredentialType` on the ledger is the hex of the ASCII name (`KYC_INVESTOR` → `4B59435F494E564553544F52`).
+- Idempotency: re-running `grantCredential` for an accepted credential sends 0 txs; re-running `createDomain` with the same
+  `AcceptedCredentials` reuses the existing `PermissionedDomain` (one domain per platform, shared by all project vaults).
+- Attestation = 1-drop XRP `Payment` attester → SPV, one memo `xrlp/attest/v1` (`application/json`). The validated tx JSON (#16) is a
+  test fixture (`packages/xrpl/test/fixtures/devnet-attest-decision-tx.json`): it decodes, re-encodes to the same hash, and its
+  signature verifies offline. API v2 `tx` responses show `DeliverMax`, not `Amount`, for Payments.
+
 ---
 
 ## 4. (e) Reserves and fees per project (devnet: base 1 XRP, owner 0.2 XRP, fee 1 drop)
@@ -312,5 +583,5 @@ The `Sponsor` amendment is enabled, so the platform could sponsor SPV reserves. 
 | Escrow gated by 2-of-3 Shamir preimage among SPV signers | No signer list governs EscrowFinish. Replaced by a unique, inspector-held preimage per escrow |
 | AI is a release signer | The AI is an attestor (memo tx). The AI key comes off the SPV signer list |
 | "Escrows expire and money flows back to investors automatically" | EscrowCancel (anyone) → SPV → multisig LoanPay (needs `tfLoanOverpayment`) → withdraw only from `RedemptionDate` |
-| "Share value rises as repayments land" | Rises at LoanSet. Repayment restores liquidity |
+| "Share value rises as repayments land" | Correct on devnet after all: interest reaches `AssetsTotal` at LoanPay, not LoanSet (§3, §3a) |
 | Funding deadline missed → investors withdraw | Only during Subscription. After the deadline, funds are locked until RedemptionDate |
