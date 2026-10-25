@@ -143,7 +143,7 @@ bundle by `evidenceBundleHash`, with inspector photos under `audits/photos/`), `
 - **A** foundation, honest, audit all `done` → pass
 - **B** framing: one photo is a copy of the Oak Ave photo with a **fresh** EXIF date, in-geofence GPS and a neutral file
   name (`IMG_5121.jpg`), so **only pHash catches it**; the inspector marks sheathing `partial` → fail (`no_duplicate_photo`)
-- **C** one photo geotagged 2.6 km away → needs_human (`gps_within_site`)
+- **C** one photo geotagged 2.6 km away → fail (`gps_within_site`, required by the v2 suite)
 - **D** invoices cover 73.6% of the draw → fail (`invoice_matches_budget`)
 - **E** honest evidence, **no inspector audit** → fail (`inspector_audit_present`)
 
@@ -189,6 +189,24 @@ agreement earns zero points; missing availability is explicitly reported and mus
 be confirmed before locking terms. The verifier does not query a licence registry
 or prove credentials on-ledger; core supplies the trusted verified panel. Rotation
 is represented by current open load, not an invented persistent assignment history.
+
+## Env
+
+## Release policy and verdict attestations (VER-06/07)
+
+`releasePolicyFor(project, milestone, riskTier?)` returns shared `ReleasePolicy`; omitted risk is
+conservatively high. Thresholds are 0.7/0.8/0.9 (+0.05 for high-value draws), with two audits at
+50,000 RLUSD or high risk. The milestone runner combines caller policy with its baseline: callers
+can tighten requirements, never remove gates or lower the confidence/audit count. Any required
+failure is a failure; missing/skipped/warning/low-confidence required results need human review.
+Optional warnings do not lower the aggregate passing confidence. The legacy `decide` helper can
+also take a third `ReleasePolicy`; production milestone verification always supplies it.
+
+`verdictHash(verdict)` validates shared `Verdict` then hashes canonical JSON with recursively sorted
+object keys, preserved array order and normal JSON number/string serialization. The full timestamp
+is included. Pin `timeline.now` for deterministic fixture verdicts. Core and attest-signer must hash
+the exact returned object; do not use a placeholder or rebuild it with another timestamp. No ledger
+or signature is produced by this function. `canonicalJson` is exported for audit/cache integrations.
 
 ## Env
 `VERIFIER_MODE` (`mock`|`live`), `ANTHROPIC_API_KEY` (live only), `VERIFIER_MODEL` (default `claude-opus-5-5`), `DATA_DIR`.
