@@ -1,5 +1,9 @@
 # Decisions log
 
+## 2026-10-25 — Finance workspace redesign
+
+The user rejected the restrained frontend polish and requested a more impressive, intuitive finance platform inspired by Ramp, Robinhood and Apple. `docs/ideas/shared-frontend-style.md` now supersedes the previous white/blue Apple/Notion visual restrictions across both apps. The chosen implementation direction uses warm neutrals, dark capital summaries, selective chartreuse and stronger financial hierarchy. Preserve all domain behavior and guided reviews. Write the guide first, then implement on a new branch with Opus or GPT-6.1 Sol agents; independent rendered review is required. Pitch timing/storyline are unchanged.
+
 ## Shared frontend polish — 2026-10-25
 
 - User authorized a consistent Apple/Notion-style polish of both `apps/web` and `apps/inspector`. Both consume `apps/styles/drawproof.css`; inspector compatibility aliases preserve existing component APIs. No domain contracts or signing algorithms change.

@@ -1,3 +1,5 @@
+> Redesign in progress: the canonical target is [shared frontend guide](../../docs/ideas/shared-frontend-style.md), revised 2026-10-25 for the user-selected Ramp/Robinhood/Apple finance direction. The implementation notes below describe the prior system and must be replaced as the new system ships. Conflicting aesthetic restrictions below are superseded.
+
 # Design
 
 Drawproof web. Bar: Apple's and Notion's web design, played straight (user decision 2026-10-24). Operate surfaces:
