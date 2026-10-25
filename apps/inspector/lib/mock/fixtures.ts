@@ -291,7 +291,7 @@ export const AUDITS: Record<string, InspectorAudit[]> = {
     {
       milestoneId: "rhinebeck-farmhouse:m1",
       inspector: ADDR.marcus,
-      evidenceBundleHash: fakeHash("bundle:rhinebeck:m1:v1").toLowerCase(),
+      evidenceBundleHash: "56535f8f296ac86ac0e119a102f9f7e62439e20bcf8b4616afed8b03b7d7cb41",
       checklist: [
         { sovCode: "02-410", status: "done" },
         { sovCode: "22-100", status: "done" },
