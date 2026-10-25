@@ -69,3 +69,5 @@ web, inspector →HTTP→ core → (xrpl, verifier) → shared
 ## What we say on stage, and what we don't
 Say: the ledger fixes *where* money can go; the suite plus on-chain attestations make *when* auditable; the inspector is a required check,
 not a formality; the AI never redirects anything. Don't say: "trustless AI", "ledger-enforced release", "mainnet-ready", "automatic refunds to investors".
+
+Submission package for judges (pitch, the four guarantees, how to run, team, XRPL primitives appendix with a devnet link per primitive, what we don't claim): `docs/submission/`.

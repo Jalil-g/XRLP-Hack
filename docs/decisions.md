@@ -100,6 +100,14 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   blob leaves. No key → the audit is filed unsigned and core signs with the demo key (05-api §1), labelled as such in the UI.
   Seeds are never put in `NEXT_PUBLIC_*` env (they would ship in the JS bundle). Autofill uses `XRPL_WS_URL`, `LastLedgerSequence` +75.
 - [10-25] `@xrlp/attest-signer` tests run with `node --import tsx` (like core/verifier) because the parity test imports `@xrlp/xrpl`.
+- [10-25] Submission package `docs/submission/` cites only tx hashes already published in our docs or PR bodies: the v2 proof (#126) first,
+  then Batch from protocol-notes §2d / §2e, LoanManage from §3c, the CLI demo's batch close from `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`,
+  and the platform try-steal / inspector-app signer / adapter private vault from #125 / #128 / #121.
+  `node docs/submission/check-links.mjs --devnet` re-checks every link (published, validated, result = link text): 64/64 green on 10-25,
+  80/80 after XRPL-13b / XRPL-15 / XRPL-11 merged. (Jalil's agent, PITCH-04)
+- [10-25] PITCH-04 wording calls: `LoanManage` moved from "not used" into the primitives table once XRPL-15 (#132) proved it on devnet;
+  the v2 run's `demo.ts` attestation rows aren't cited (deprecated `xrlp/attestation/v1` memo); the v2 demo's `EscrowFinish` isn't called a suite-gated release
+  (it was sent from `platform`, before #125 made `releaseService` the default). (Jalil's agent, PITCH-04)
 
 - [10-25] Prestage (XRPL-11) = three fresh projects per run, pipelined C → B → A (C first: it must wait for its RedemptionDate). A: 6 × 30-day loan, escrow CancelAfter +30/60/90 d. B: M1 released, **M2 (12k) is the stall escrow** (CancelAfter past before the file is written), 12 × 30-day loan so the refund LoanPay is on time and ≥ one periodic payment. C: 2 × 240 s loan (XRPL-06 needs PaymentTotal ≥ 2 and CancelAfter < maturity: C's escrows cancel at +360 s), all escrows released, builder → SPV → two LoanPays pay it off, then wait for RedemptionDate. `--only A,B` re-stages a subset and keeps the rest of `prestage.json` (a rehearsal consumes A's M1/M2 and B's expired escrow; C stays valid). (Jalil's agent, XRPL-11)
 - [10-25] `.data/prestage.json` shape = `PrestageFile` in `packages/xrpl/src/prestage-types.ts` (exported, with `parsePrestageFile`); preimages only in `.data/prestage-preimages.json` / `.data/demo-preimages.json` (mode 600, never printed, old entries kept); the writer validates that the file has no preimage/fulfillment/seed field. (Jalil's agent, XRPL-11)
