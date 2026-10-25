@@ -9,8 +9,9 @@ import {
 } from "./checks.ts";
 import { resolveMode, resolveModel } from "./config.ts";
 import { checkInspectorAudits } from "./auditChecks.ts";
+import { withDeadline } from "./deadline.ts";
 import { MockJudge } from "./llm/mock.ts";
-import type { MilestoneJudge } from "./llm/types.ts";
+import { unavailableJudgement, type MilestoneJudge, type MilestoneJudgement } from "./llm/types.ts";
 import { loadEvidence } from "./meta.ts";
 import { policyFor, releasePolicyFor, type Escalation, type VerificationPolicy } from "./policy.ts";
 import type { CheckOutcome, LoadedEvidence, MilestoneCheckName, MilestoneContext, PriorEvidence, VerifyMilestoneInput } from "./types.ts";
@@ -28,15 +29,17 @@ export interface VerifyMilestoneResult {
 export interface VerifyOptions {
   /** Inject a judge (tests, or a custom model wrapper). Defaults to mock/live per VERIFIER_MODE. */
   judge?: MilestoneJudge;
+  timeoutMs?: number;
+  cacheDir?: string | false;
 }
 
 /**
  * Live judge is loaded lazily so mock mode never imports @anthropic-ai/sdk
  * (no key, no network, no SDK needed for teammates running the demo).
  */
-export async function createLiveJudge(model = resolveModel()): Promise<MilestoneJudge> {
+export async function createLiveJudge(model = resolveModel(), options: { timeoutMs?: number; cacheDir?: string | false } = {}): Promise<MilestoneJudge> {
   const { LiveJudge } = await import("./llm/live.ts");
-  return new LiveJudge(model);
+  return new LiveJudge(model, undefined, options);
 }
 
 export async function verifyMilestone(input: VerifyMilestoneInput, opts: VerifyOptions = {}): Promise<Verdict> {
@@ -56,7 +59,7 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   // A caller policy may tighten the baseline but cannot remove required gates or lower thresholds.
   const release: ReleasePolicy = {
     riskTier: standard.riskTier,
-    requiredChecks: [...new Set([...standard.requiredChecks, ...requested.requiredChecks])],
+    requiredChecks: [...new Set([...standard.requiredChecks, ...requested.requiredChecks, "evidence_readable"])],
     optionalChecks: [...new Set([...standard.optionalChecks, ...requested.optionalChecks])].filter((check) => !standard.requiredChecks.includes(check) && !requested.requiredChecks.includes(check)),
     minConfidence: Math.max(standard.minConfidence, requested.minConfidence),
     requiredAudits: Math.max(standard.requiredAudits, requested.requiredAudits) as 1 | 2,
@@ -67,10 +70,23 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   const loaded = await Promise.all(input.evidence.map((ev) => loadEvidence(ev, { files: input.files, dataDir: input.dataDir })));
   const photos = loaded.filter((l) => l.evidence.kind === "photo" && l.bytes);
   const documents = loaded.filter((l) => (l.evidence.kind === "invoice" || l.evidence.kind === "document") && l.bytes);
+  const inspectorPhotos = await Promise.all((input.audits ?? []).flatMap((audit) => audit.photos).map((ev) => loadEvidence(ev, { files: input.files, dataDir: input.dataDir })));
+  const unreadable = [...loaded, ...inspectorPhotos].filter((ev) => ev.loadError || !ev.bytes);
 
   const mode = resolveMode(input.mode);
-  const judge = opts.judge ?? (mode === "live" ? await createLiveJudge(resolveModel(input.model)) : new MockJudge());
-  const judgement = await judge.judgeMilestone({ ctx, photos, documents, timeline, audits: input.audits });
+  const judgeInput = { ctx, photos, documents, timeline, audits: input.audits, inspectorPhotos };
+  let judgement: MilestoneJudgement;
+  try {
+    if (unreadable.length) throw new Error("Unreadable evidence.");
+    const judge = opts.judge ?? (mode === "live" ? await createLiveJudge(resolveModel(input.model), opts) : new MockJudge());
+    judgement = await withDeadline(() => judge.judgeMilestone(judgeInput), opts.timeoutMs ?? 20_000);
+    for (const [expected, check] of [["stage_visually_consistent", judgement.stage], ["document_consistency", judgement.documents], ["audit_matches_evidence", judgement.audit]] as const) {
+      if (!check || check.check !== expected || !Number.isFinite(check.confidence) || check.confidence < 0 || check.confidence > 1) throw new Error("Malformed judgement.");
+      CheckResult.parse(check);
+    }
+  } catch {
+    judgement = unavailableJudgement("image, model or transport review did not complete", mode === "mock" ? "mock" : resolveModel(input.model), judgeInput);
+  }
 
   const outcomes: CheckOutcome[] = [
     checkRequiredEvidence(template, loaded, milestone.templateKey),
@@ -83,9 +99,11 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     judgement.stage,
     judgement.documents,
     judgement.audit ?? { check: "audit_matches_evidence", result: "warn", confidence: 0, source: "llm", evidenceIds: [], reason: "Audit/evidence judgement unavailable; operator review required." },
+    { check: "evidence_readable", result: unreadable.length ? "warn" : "pass", confidence: unreadable.length ? 0 : 0.99, source: "deterministic", evidenceIds: unreadable.map((ev) => ev.evidence.id), reason: unreadable.length ? "Evidence could not be decoded/read; operator review required." : "Builder and inspector evidence decoded successfully." },
   ];
 
   const decided = decide(outcomes, policy, release);
+  if (unreadable.length) { decided.decision = "needs_human"; decided.confidence = 0; }
   const verdict = Verdict.parse({
     milestoneId: milestone.id,
     decision: decided.decision,
