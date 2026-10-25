@@ -114,6 +114,12 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Scripts make every project vault **private** (tfVaultPrivate + platform DomainID + non-transferable shares) by composing `setupProjectOnChain`'s steps in `scripts/demo-lib.ts` (`setupProjectOnChain` got `domainId` / `nonTransferableShares` in XRPL-10, but it fixes SubscriptionDate before the SPV's txs, which would eat the scripts' 60 s deposit window; switch once it can anchor on ledger time at VaultCreate). The CLI demo dropped the `DEMO_SPV_MODE=single` master-key fallback (XRPL-01 proved multisig LoanSet). Scripts delete an old investor3 `KYC_INVESTOR` credential so the `tecNO_AUTH` beat works with v1 wallet files. (Jalil's agent, XRPL-11)
 - [10-25] On merging XRPL-11 with XRPL-13b/15: the demo/prestage close uses the default batch mode (one `tfAllOrNothing` Batch row in the tx table, then each milestone's inner EscrowCreate), and the deprecated `generateMilestoneCondition` / `MilestoneCondition` exports are removed from `@xrlp/xrpl` (no users left; core has its own `packages/core/src/conditions.ts`) (Jalil's agent M5, integration)
 
+- [10-25] INS-05 history discovers assigned projects through route 18 (including `needs: none`) and reads audits, latest checks,
+  and release transactions from route 2, polling every 5s. Results are explicitly **latest per milestone**, not attributed to an
+  individual audit revision: the contract has no audit-to-verdict reference. A verdict older than a report is labelled as awaiting
+  a new run. Only reports returned by core are shown; superseded reports removed by core cannot be reconstructed. No contract change.
+  Added a completed Oak Ave mock project for Dana's pass/release history and aligned the reused Maple M2 photo's GPS with Oak Ave. (Roro's agent)
+
 ## Pitch review (Jalil's agent, PITCH-09)
 
 - [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected
@@ -130,6 +136,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
+
 
 ## Open
 
