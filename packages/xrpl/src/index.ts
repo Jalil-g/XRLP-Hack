@@ -276,3 +276,16 @@ export type {
 export { XrplLedgerAdapter } from "./adapter.ts";
 export type { XrplLedgerAdapterOptions } from "./adapter.ts";
 export { XrplLedgerError, toAdapterError, apiCodeOf, toPortTx, pickQuorumSigners } from "./adapter-map.ts";
+// XRPL-11: .data/prestage.json contract (read by core, CORE-07). Preimages live in a separate file, never here.
+export { PRESTAGE_VERSION, PRESTAGE_FILE, PRESTAGE_PREIMAGES_FILE, PRESTAGE_KEYS, parsePrestageFile, prestageVaultDates } from "./prestage-types.ts";
+export type {
+  PrestageFile,
+  PrestageProject,
+  PrestageEscrow,
+  PrestageEscrowState,
+  PrestageMilestone,
+  PrestageTx,
+  PrestageKey,
+  PrestageScenario,
+  PrestagePreimagesFile,
+} from "./prestage-types.ts";

@@ -549,3 +549,20 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `events.ts` | `TxResult` → shared `ChainEvent` |
 | `reads.ts` | read models: vault/loan snapshots, escrows, balances, trust lines (pure parsers + thin fetches) |
 | `default.ts` | XRPL-15: `LoanManage` impair / unimpair / default with a rippled-order guard, cover math, outcome parsers (pure + thin submit) |
+| `prestage-types.ts` | XRPL-11: `PrestageFile` (`.data/prestage.json` shape for core), `parsePrestageFile`, pure `prestageVaultDates` |
+
+## Demo + pre-staging (XRPL-11)
+
+| Command | What | Time |
+|---|---|---|
+| `pnpm --filter @xrlp/xrpl demo` | CLI backup of the live demo, one fresh project: fee → `VERIFIED_BUILDER` → SPV (4 signers, q3) + private closed-ended vault + broker + cover → KYC'd deposits, investor3 `tecNO_AUTH` → LoanSet + 3 escrows → M1 audit + verdict + preflight + release attestation + `EscrowFinish` → M2 verdict `fail`, escrow stays → random fulfillment `tecCRYPTOCONDITION_ERROR` → M3 `EscrowCancel` → refund `LoanPay` (overpayment) → snapshots. Prints narration + a markdown tx table; run record in `.data/demo-run-*.json`. | ~5 min |
+| `pnpm --filter @xrlp/xrpl prestage` (= `demo --prestage`) | Projects **A** ready (3 escrows open, 6×30-day loan), **B** stalled (M1 released, M2 `CancelAfter` already past, 12×30-day loan), **C** repaid (2 × 240 s loan, all released, loan paid off, past `RedemptionDate`). Writes `.data/prestage.json` (`PrestageFile`) + `.data/prestage-preimages.json` (secret, mode 600). | ~13 min |
+| `pnpm --filter @xrlp/xrpl prestage --only A,B` | Re-stage a subset after a rehearsal; other projects are kept from the existing `prestage.json` (same issuer). | ~3–5 min |
+
+Core (CORE-07) reads `.data/prestage.json` with `parsePrestageFile` (exported from `@xrlp/xrpl`): `projects.{A,B,C}` carry
+project/milestone ids + amounts, `chain` (spv, vaultId, loanBrokerId, loanId, shareMptIssuanceId, domainId), escrows
+`{milestoneId, owner, offerSequence, condition, cancelAfter, amount, state}`, SPV signers, investments, dates, a final
+snapshot and every tx hash. Preimages are **only** in `.data/prestage-preimages.json` (`PrestagePreimagesFile`:
+projectId → milestoneId → `{condition, preimage}`), the release-service stand-in until CORE-12 generates them;
+`parsePrestageFile` rejects any file carrying a `preimage`/`fulfillment`/`seed` field. Env knobs: header of
+`scripts/demo.ts` / `scripts/prestage.ts`. Devnet tx tables: `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`.
