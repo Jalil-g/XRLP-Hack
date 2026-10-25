@@ -137,6 +137,14 @@ export const DEFAULT_MARGIN_S = 120;
 export const DEFAULT_LAST_LEDGER_OFFSET = 20;
 /** Devnet closes every ~3-4s; budget 5s per ledger so a tx that sits until LLS still lands before CancelAfter. */
 export const MAX_CLOSE_INTERVAL_S = 5;
+/**
+ * Seconds that must be left before CancelAfter for a finish to pass preflight: max(marginS, lastLedgerOffset ×
+ * MAX_CLOSE_INTERVAL_S), so a tx that sits until its LastLedgerSequence still lands before CancelAfter. Pure.
+ * releaseMilestone / finishEscrow default to lastLedgerOffset = FINISH_LLS_MARGIN (60 ledgers) → 300 s.
+ */
+export function releaseMarginS(lastLedgerOffset: number = DEFAULT_LAST_LEDGER_OFFSET, marginS: number = DEFAULT_MARGIN_S): number {
+  return Math.max(marginS, lastLedgerOffset * MAX_CLOSE_INTERVAL_S);
+}
 /** Standard fulfillment for a 32-byte preimage (A0228020‖P) is 36 bytes. */
 const DEFAULT_FULFILLMENT_BYTES = 36;
 
@@ -178,7 +186,7 @@ export function evaluatePreflight(snap: PreflightSnapshot, now: LedgerNow): Pref
   const req = snap.request;
   const marginS = req.marginS ?? DEFAULT_MARGIN_S;
   const lastLedgerOffset = req.lastLedgerOffset ?? DEFAULT_LAST_LEDGER_OFFSET;
-  const effectiveMarginS = Math.max(marginS, lastLedgerOffset * MAX_CLOSE_INTERVAL_S);
+  const effectiveMarginS = releaseMarginS(lastLedgerOffset, marginS);
   const submitter = addressOf(req.submitter);
   const failures: PreflightFailure[] = [];
   const fail = (reason: PreflightReason, message: string) => failures.push({ reason, message });

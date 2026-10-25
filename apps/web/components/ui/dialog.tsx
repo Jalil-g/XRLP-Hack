@@ -9,7 +9,7 @@ export const Dialog = D.Root;
 export const DialogTrigger = D.Trigger;
 export const DialogClose = D.Close;
 
-export function DialogContent({ className, children, ...props }: React.ComponentProps<typeof D.Content>) {
+export function DialogContent({ className, children, closeDisabled = false, ...props }: React.ComponentProps<typeof D.Content> & { closeDisabled?: boolean }) {
   return (
     <D.Portal>
       <D.Overlay className="fixed inset-0 z-50 bg-black/30" />
@@ -21,7 +21,7 @@ export function DialogContent({ className, children, ...props }: React.Component
         {...props}
       >
         {children}
-        <D.Close className="absolute top-3 right-3 flex size-11 items-center justify-center rounded-control text-ink-3 transition-colors hover:bg-band hover:text-ink" aria-label="Close">
+        <D.Close disabled={closeDisabled} className="absolute top-3 right-3 flex size-11 items-center justify-center rounded-control text-ink-3 transition-colors hover:bg-band hover:text-ink disabled:pointer-events-none disabled:opacity-40" aria-label="Close">
           <X className="size-4" />
         </D.Close>
       </D.Content>

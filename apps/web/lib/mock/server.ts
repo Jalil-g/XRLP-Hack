@@ -21,7 +21,7 @@ import type {
   Rlusd,
   TxRef,
 } from "../contract";
-import { fromCents, toCents } from "../utils";
+import { SHARE_SCALE, fromCents, toCents } from "../utils";
 import { AI_AGENT, PLATFORM, RELEASE_SERVICE, SUITE, fakeAddress, fakeHash, seed, type MockDb, type MockScript } from "./fixtures";
 
 // ---------------------------------------------------------------- state
@@ -571,7 +571,7 @@ const routes: Route[] = [
       const shares = Number(db.holdings[p.id]?.[investor!] ?? 0);
       const v = db.vaults[p.id];
       if (!shares || !v) continue;
-      out.push({ projectId: p.id, projectName: p.name, shares: shares.toFixed(6), value: (shares * Number(v.sharePrice)).toFixed(2), phase: v.phase, redemptionDate: v.redemptionDate });
+      out.push({ projectId: p.id, projectName: p.name, shares: Math.round(shares * 10 ** SHARE_SCALE).toString(), value: (shares * Number(v.sharePrice)).toFixed(2), phase: v.phase, redemptionDate: v.redemptionDate });
     }
     return out;
   }],

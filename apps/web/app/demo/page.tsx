@@ -12,6 +12,7 @@ import { buttonClass } from "@/components/ui/button";
 import type { Tone } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
+import { failedChecks, findStall } from "@/lib/demo-scenes";
 import { MILESTONE_STATUS, PROJECT_STATUS, checkName } from "@/lib/display";
 import { getSession } from "@/lib/session";
 import { cn, formatAmount, fromCents, toCents } from "@/lib/utils";
@@ -35,7 +36,8 @@ export default async function DemoPage() {
   const all = (await Promise.all(summaries.map((s) => get(s.id)))).filter((d): d is ProjectDetail => !!d);
 
   const a = all.find((d) => /maple/i.test(d.project.name)) ?? all.find((d) => d.project.status === "escrowed");
-  const b = all.find((d) => d !== a && d.project.milestones.some((m) => m.status === "expired")) ?? all.find((d) => d !== a && d.project.status === "stalled");
+  const stall = findStall(all, a, Date.now());
+  const b = stall?.d;
   const onboard = all
     .filter((d) => d !== a && ONBOARDING_ORDER.includes(d.project.status))
     .sort(
@@ -49,9 +51,9 @@ export default async function DemoPage() {
   const investor = session.investors.find((i) => i.kyc);
   const [m1, m2, m3] = a?.project.milestones ?? [];
   const refused = a?.events.find((e) => e.kind === "release_refused");
-  const failedCheck = m2 && a?.checks[m2.id]?.required.find((c) => c.result === "fail");
-  const bExpired = b?.project.milestones.find((m) => m.status === "expired");
-  const bRefunded = b?.project.milestones.find((m) => m.status === "refunded");
+  const { failed: m2Failed, headline: failedCheck } = failedChecks(m2 && a?.checks[m2.id]);
+  const bExpired = stall?.overdue;
+  const bRefunded = stall?.refunded;
   const nextScene = !a ? undefined : !a.builder.verified ? 1 : !m1?.escrow ? 2 : m1.status !== "released" ? 3 : 4;
 
   const done = [!!a?.builder.verified, !!m1?.escrow, m1?.status === "released", m2?.status === "failed" || m2?.status === "released"];
@@ -105,9 +107,14 @@ export default async function DemoPage() {
         <Scene
           n={4}
           progress={progress(4)}
-          title="Failed check"
+          title="Failed check: funds stay locked"
           status={m2 && <MilestoneState m={m2} />}
-          facts={[m2 && `${m2.title} ${formatAmount(m2.amount)}`, failedCheck ? `${checkName(failedCheck.check)}: ${failedCheck.reason}` : undefined]}
+          facts={[
+            m2 && `${m2.title} ${formatAmount(m2.amount)}`,
+            failedCheck
+              ? `${checkName(failedCheck.check)}: ${failedCheck.reason}${m2Failed.length > 1 ? ` (+${m2Failed.length - 1} more failed check${m2Failed.length === 2 ? "" : "s"})` : ""}`
+              : undefined,
+          ]}
           action={a && m2 && RUNNABLE.includes(m2.status) && m2.status !== "failed" && <ActionButton action={{ kind: "runChecks", projectId: a.project.id, milestoneId: m2.id }}>Run checks</ActionButton>}
           screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label="milestone" />}
         />
@@ -116,11 +123,11 @@ export default async function DemoPage() {
       <details className="proof">
         <summary className="inline-flex min-h-11 items-center gap-1 text-small font-medium text-ink-2 hover:text-ink">
           <ChevronRight className="proof-chevron size-4 transition-transform duration-150" aria-hidden />
-          More controls
+          Extended walkthrough and engineering checks (outside the timed pitch)
         </summary>
         <ol className="border-t border-line">
           <Scene
-            title="Ledger refusal"
+            title="Ledger says no (tests the escrow condition, not the AI checks)"
             status={refused && <State tone="fail">Refused</State>}
             facts={refused ? [refused.result ?? "tecCRYPTOCONDITION_ERROR", <TxLink key="tx" hash={refused.txHash} />] : undefined}
             action={
@@ -129,15 +136,15 @@ export default async function DemoPage() {
               !m2.escrow.finishTx &&
               !m2.escrow.cancelTx && (
                 <ActionButton variant="danger" action={{ kind: "tryStealDemo", projectId: a.project.id, milestoneId: m2.id }}>
-                  {refused ? "Retry release" : "Attempt release"}
+                  {refused ? "Try again" : "Platform tries to release"}
                 </ActionButton>
               )
             }
             screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label="milestone" />}
           />
           <Scene
-            title="Escrow expiry"
-            status={b && (bExpired ? <State tone="review">Expired</State> : bRefunded ? <State tone="neutral">Returned</State> : <State tone="neutral">None expired</State>)}
+            title="Stall: escrow expires, money goes back"
+            status={b && (bExpired ? <State tone="review">{bExpired.status === "expired" ? "Expired" : "Past CancelAfter"}, not cancelled yet</State> : bRefunded ? <State tone="neutral">Returned to the vault</State> : <State tone="neutral">Nothing expired</State>)}
             facts={b?.vault ? [b.project.name, `Available ${formatAmount(b.vault.assetsAvailable)}`] : undefined}
             action={bExpired && <ActionButton action={{ kind: "keeperTick" }}>Run keeper tick</ActionButton>}
             screen={b && <ScreenLink href={`/projects/${b.project.id}`} label="project" />}

@@ -112,9 +112,11 @@ export function policyFor(project: Project, builder: Builder, milestone: Milesto
   // Under-documented draw is a hard fail unless the builder is low risk.
   checks.invoice_matches_budget.onFail = tier === "low" ? "needs_human" : "fail";
   checks.invoice_matches_budget.onWarn = "ignore"; // overrun on builder's own dime: informational
-  // Lien waivers aren't in the shared templates yet (TODO), so a mismatch goes to a human for now.
-  checks.lien_waiver_matches_invoices.onFail = "needs_human";
-  checks.lien_waiver_matches_invoices.onWarn = "ignore";
+  // Lien waivers aren't in the shared templates yet (TODO), so failures go to a human for now.
+  for (const check of ["lien_waiver_present", "lien_waiver_matches_invoices"] as const) {
+    checks[check].onFail = "needs_human";
+    checks[check].onWarn = "ignore";
+  }
   // Document mismatches (typos, DBA names) usually need a human, except for high-risk builders.
   checks.document_consistency.onFail = tier === "high" ? "fail" : "needs_human";
   checks.document_consistency.onWarn = tier === "high" ? "needs_human" : "ignore";
@@ -182,7 +184,7 @@ export function releasePolicyFor(project: Project, milestone: Milestone, riskTie
   const kinds = declaredKinds?.length ? declaredKinds
     : MILESTONE_TEMPLATES[project.type].find((template) => template.key === milestone.templateKey)?.requiredEvidence.map((requirement) => requirement.kind);
   // Unknown SoV/template context keeps every gate required rather than weakening the suite.
-  const optional = new Set<string>(["lien_waiver_matches_invoices"]);
+  const optional = new Set<string>(["lien_waiver_present", "lien_waiver_matches_invoices"]);
   if (kinds && !kinds.includes("invoice")) optional.add("invoice_matches_budget");
   if (kinds && !kinds.some((kind) => kind === "invoice" || kind === "document")) optional.add("document_consistency");
   const minConfidence = Math.min(0.95, Math.round((({ low: 0.7, medium: 0.8, high: 0.9 }[tier]) + (highValue ? 0.05 : 0)) * 100) / 100);

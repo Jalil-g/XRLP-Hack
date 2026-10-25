@@ -64,7 +64,17 @@ export default function QueuePage() {
               <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
             </div>
             {due.length === 0 ? (
-              <Empty className="mt-6" title={groups.none.length ? "No audits due" : "No assignments"} />
+              <Empty
+                className="mt-6"
+                title={groups.none.length ? "No audits due" : "No assignments"}
+                action={
+                  <p className="text-small text-ink-2">
+                    {groups.none.length
+                      ? "New work shows up here as soon as a builder submits evidence."
+                      : "No projects assigned to you yet. Inspectors are assigned from the verified panel at lock-terms."}
+                  </p>
+                }
+              />
             ) : (
               <ul className="divide-y divide-line">
                 {due.map((t) => (

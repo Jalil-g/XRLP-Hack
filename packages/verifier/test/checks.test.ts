@@ -4,6 +4,7 @@ import { MILESTONE_TEMPLATES, type Evidence, type EvidenceKind } from "@xrlp/sha
 import {
   checkGpsWithinSite,
   checkInvoiceMatchesBudget,
+  checkLienWaiverPresent,
   checkLienWaivers,
   checkNoDuplicatePhoto,
   checkPhotoFresh,
@@ -86,6 +87,16 @@ test("no_duplicate_photo: perceptual near-duplicate fails, similar warns, distan
   assert.equal(checkNoDuplicatePhoto(ctx, [p], [prior("0000ffffffffffff", "c")], policy).result, "pass"); // distance 48
 });
 
+test("no_duplicate_photo: a prior photo with no perceptual hash warns instead of silently passing", () => {
+  const p = okPhoto("0000000000000000");
+  const unhashed: PriorEvidence = { evidence: ev("photo", {}, { sha256: "unhashed" }).evidence, projectId: "prj_other", milestoneId: "ms_x" };
+  const r = checkNoDuplicatePhoto(ctx, [p], [unhashed], policy);
+  assert.equal(r.result, "warn");
+  assert.match(r.reason, /no perceptual hash; reuse cannot be ruled out/);
+  // byte-identical to the unhashed prior: still a hard fail
+  assert.equal(checkNoDuplicatePhoto(ctx, [okPhoto("0000000000000000", { sha256: "unhashed" })], [unhashed], policy).result, "fail");
+});
+
 test("no_duplicate_photo: copies within one submission fail; same-milestone priors (resubmission) are ignored", () => {
   const a = okPhoto("0000000000000000");
   const b = okPhoto("0000000000000001");
@@ -112,15 +123,36 @@ test("invoice_matches_budget: within tolerance, shortfall, overrun, unreadable",
   assert.equal(checkInvoiceMatchesBudget(ctx, [], policy).result, "fail", "template requires an invoice");
 });
 
-// --- lien waivers (stub) ------------------------------------------------------------------------
-test("lien_waiver_matches_invoices: match, amount mismatch, missing waiver", () => {
-  const invoice = ev("invoice", { invoiceTotal: "24850.00" }, { text: "Invoice No: GRM-24117\nTOTAL: $24,850.00" });
-  const waiver = (amt: string) => ev("document", {}, { filename: "lien-waiver.txt", text: `LIEN WAIVER\nInvoice No: GRM-24117\nAmount: $${amt}` });
+test("invoice_matches_budget: one invoice counted twice, or reused from another draw, fails", () => {
+  const half = (sha: string, text: string | null = null) => ev("invoice", { invoiceTotal: "12425.00" }, { sha256: sha, text });
+  const twice = checkInvoiceMatchesBudget(ctx, [half("same"), half("same")], policy);
+  assert.equal(twice.result, "fail", "two copies of a 12,425 invoice must not cover a 25,000 draw");
+  assert.match(twice.reason, /same invoice/);
+  // re-saved copy (different bytes, same content modulo whitespace)
+  assert.equal(checkInvoiceMatchesBudget(ctx, [half("a", "Invoice No: X-1\nTOTAL: 12,425.00"), half("b", "Invoice No: X-1\r\nTOTAL:  12,425.00 ")], policy).result, "fail");
+  // already submitted for another milestone / project
+  const prev: PriorEvidence = { evidence: ev("invoice", { invoiceTotal: "24850.00" }, { sha256: "old" }).evidence, projectId: "prj_other", milestoneId: "ms_x" };
+  const full = ev("invoice", { invoiceTotal: "24850.00" }, { sha256: "old" });
+  const r = checkInvoiceMatchesBudget(ctx, [full], policy, {}, [prev]);
+  assert.equal(r.result, "fail");
+  assert.match(r.reason, /already submitted/);
+  // a resubmission for this same milestone is not reuse
+  assert.equal(checkInvoiceMatchesBudget(ctx, [full], policy, {}, [{ ...prev, projectId: project.id, milestoneId: m1.id }]).result, "pass");
+});
+
+// --- lien waivers -------------------------------------------------------------------------------
+test("lien waivers require the right type and match amount plus vendor", () => {
+  const invoice = ev("invoice", { invoiceTotal: "24850.00" }, { text: "Gotham Ready-Mix Concrete\nInvoice No: GRM-24117\nTOTAL: $24,850.00" });
+  const waiver = (amt: string, claimant = "Gotham Ready-Mix Concrete") => ev("document", {}, {
+    filename: "lien-waiver.txt",
+    text: `CONDITIONAL LIEN WAIVER AND RELEASE\nClaimant: ${claimant}\nInvoice No: GRM-24117\nAmount: $${amt}`,
+  });
+  assert.equal(checkLienWaiverPresent([invoice]).result, "fail");
   assert.equal(checkLienWaivers([invoice]).result, "skipped");
+  assert.equal(checkLienWaiverPresent([invoice, waiver("24,850.00")]).result, "pass");
   assert.equal(checkLienWaivers([invoice, waiver("24,850.00")]).result, "pass");
   assert.equal(checkLienWaivers([invoice, waiver("20,000.00")]).result, "fail");
-  const other = ev("invoice", { invoiceTotal: "100.00" }, { text: "Invoice No: XYZ-1\nTOTAL: 100.00" });
-  assert.equal(checkLienWaivers([invoice, other, waiver("24,850.00")]).result, "warn");
+  assert.equal(checkLienWaivers([invoice, waiver("24,850.00", "Other Supplier LLC")]).result, "fail");
 });
 
 // --- decision mapping ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import type {
   Verdict,
   XrplAddress,
 } from "@xrlp/shared";
+import type { InspectorSiteVisit } from "./site-visit.ts";
 
 export interface InvestorProfile {
   address: XrplAddress;
@@ -34,10 +35,14 @@ export interface ProjectMeta {
   verificationFee?: { amount: Rlusd; tx: string; at: string };
   /** AI verification said needs_human: a panel inspector does a pre-construction visit. */
   preVisitRequested?: boolean;
+  /** Route 24 reports. `signedByInspector: false` = core attested it with the platform key on the inspector's behalf. */
+  siteVisits?: (InspectorSiteVisit & { hash: string; signedByInspector: boolean })[];
   assignment?: InspectorAssignment & { at: string; tx?: string };
   verifiedAt?: string;
   fundingOpenedAt?: string;
   escrowedAt?: string;
+  /** Partial close (LoanSet applied, some EscrowCreate failed): milestones still without an escrow; RLUSD sits in the SPV. */
+  closePending?: string[];
   completedAt?: string;
   stalledAt?: string;
   /** Write-ahead marker per milestone id: a refund LoanPay was attempted and its outcome is not yet recorded. */
@@ -62,6 +67,8 @@ export interface DecisionRecord {
 export type AttestationRecord = Attestation & { projectId: string; round: number };
 
 export interface Withdrawal {
+  /** Whole share units burned; absent in legacy records that require reconciliation. */
+  sharesBurned?: string;
   projectId: string;
   investor: XrplAddress;
   amount: Rlusd;
@@ -115,6 +122,39 @@ export const emptyDb = (): DbState => ({
   attestations: [],
   chainEvents: [],
 });
+
+/**
+ * CORE-08: what makes two ChainEvents the same fact. Not the hash alone: one tx may back events of a different kind,
+ * project or milestone, and each of those is history worth keeping. Only an exact repeat (a retry or reconcile recording
+ * a tx again, a re-imported prestage) collapses. Hex hashes compare case-insensitively. No txHash -> no key.
+ */
+export function chainEventKey(e: ChainEvent): string | undefined {
+  if (!e.txHash) return undefined;
+  return JSON.stringify([e.txHash.toUpperCase(), e.kind, e.projectId, e.milestoneId ?? null]);
+}
+
+/**
+ * The only way core appends to `db.chainEvents`: skips an event whose key is already recorded (or repeated in `events`),
+ * so the first recording wins. Events without a txHash are always appended. Returns the events actually added.
+ */
+export function recordChainEvents(db: DbState, events: readonly ChainEvent[]): ChainEvent[] {
+  const seen = new Set<string>();
+  for (const e of db.chainEvents) {
+    const k = chainEventKey(e);
+    if (k) seen.add(k);
+  }
+  const added: ChainEvent[] = [];
+  for (const e of events) {
+    const k = chainEventKey(e);
+    if (k) {
+      if (seen.has(k)) continue;
+      seen.add(k);
+    }
+    db.chainEvents.push(e);
+    added.push(e);
+  }
+  return added;
+}
 
 /** Fill in collections missing from older files. v1 inspector profiles become panel inspectors; v1-only collections are dropped. */
 export function normalizeDb(raw: Partial<DbState> & Record<string, unknown>): DbState {

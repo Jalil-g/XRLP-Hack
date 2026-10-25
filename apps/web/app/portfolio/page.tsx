@@ -6,7 +6,7 @@ import { CapitalBar } from "@/components/ui/capital-bar";
 import { Empty } from "@/components/ui/layout";
 import { ApiError, api } from "@/lib/api";
 import { getSession } from "@/lib/session";
-import { formatAmount, formatDate, fromCents, toCents } from "@/lib/utils";
+import { formatAmount, formatDate, fromCents, sharesFromUnits, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Portfolio" };
@@ -81,7 +81,7 @@ export default async function PortfolioPage() {
               <li key={pos.projectId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-3 border-b border-line py-5 first:border-t md:grid-cols-[minmax(0,1fr)_160px_180px]">
                 <Link href={`/projects/${pos.projectId}`} className="min-w-0 rounded-[8px]">
                   <span className="block truncate text-body font-semibold hover:underline">{pos.projectName}</span>
-                  <span className="block text-small text-ink-2 tabular-nums">{Number(pos.shares).toLocaleString("en-US", { maximumFractionDigits: 2 })} shares</span>
+                  <span className="block text-small text-ink-2 tabular-nums">{sharesFromUnits(pos.shares).toLocaleString("en-US", { maximumFractionDigits: 2 })} shares</span>
                 </Link>
                 <span className="text-right text-heading font-semibold tabular-nums">{formatAmount(pos.value, { cents: true })}</span>
                 <span className="col-span-2 flex md:col-span-1 md:justify-end">

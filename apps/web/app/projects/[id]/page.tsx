@@ -12,12 +12,14 @@ import { ProjectHero } from "@/components/project/project-hero";
 import { ReleaseStage } from "@/components/project/release-stage";
 import { SovTable } from "@/components/project/sov-table";
 import { Proof } from "@/components/checks/proof";
+import { Button } from "@/components/ui/button";
 import { Properties, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { LOCKED_MILESTONE_V2 } from "@xrlp/shared";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, VAULT_PHASE, focusMilestone, namer } from "@/lib/display";
+import { PROJECT_STATUS, VAULT_PHASE, focusMilestone, namer, roleNamer } from "@/lib/display";
+import { investmentAvailability } from "@/lib/investment";
 import { getSession } from "@/lib/session";
 import { formatAmount, formatBps, formatDate, fromCents, toCents } from "@/lib/utils";
 
@@ -56,6 +58,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const status = PROJECT_STATUS[p.status];
   const checks = (selected && d.checks[selected.id]) ?? { required: [], optional: [], outcome: "pending" as const };
   const audits = (selected && d.audits[selected.id]) ?? [];
+  const investment = investmentAvailability(p.status, d.vault?.phase, d.vault?.subscriptionDate);
 
   const loanFacts = [
     { label: "Rate", value: formatBps(p.terms.interestRateBps) },
@@ -98,14 +101,18 @@ export default async function ProjectPage({ params, searchParams }: Props) {
             facts={loanFacts}
             action={
               p.status === "funding" && session.investor ? (
-                <InvestDialog
-                  projectId={p.id}
-                  projectName={p.name}
-                  remaining={fromCents(toCents(p.terms.principal) - raised)}
-                  rateBps={p.terms.interestRateBps}
-                  investor={session.investor}
-                  redemptionDate={d.vault?.redemptionDate}
-                />
+                investment.available ? (
+                  <InvestDialog
+                    projectId={p.id}
+                    projectName={p.name}
+                    remaining={fromCents(toCents(p.terms.principal) - raised)}
+                    rateBps={p.terms.interestRateBps}
+                    investor={session.investor}
+                    redemptionDate={d.vault?.redemptionDate}
+                  />
+                ) : (
+                  <Button size="lg" disabled title={investment.reason}>{investment.label}</Button>
+                )
               ) : undefined
             }
           />
@@ -114,6 +121,17 @@ export default async function ProjectPage({ params, searchParams }: Props) {
             <MilestoneTabs milestones={p.milestones} selectedId={selected?.id} />
             {selected && (
               <div className="space-y-6">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-caption text-ink-2">
+                  <span>
+                    Pays for SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
+                    {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}, then the money can only go back`}
+                  </span>
+                  {selected.escrow && (
+                    <span>
+                      EscrowCreate <TxLink hash={selected.escrow.createTx} />
+                    </span>
+                  )}
+                </div>
                 <ChecksPanel
                   key={selected.id}
                   milestone={selected}
@@ -200,7 +218,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
 
       <div className="mt-16 grid gap-x-14 gap-y-12 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Section title="Activity">
-          <Activity events={d.events} who={who} builderName={builder.name} milestoneTitle={title} limit={10} />
+          <Activity events={d.events} who={who} roleOf={roleNamer(session.parties)} builderName={builder.name} milestoneTitle={title} limit={10} />
         </Section>
         <Section title="Builder">
           <Properties

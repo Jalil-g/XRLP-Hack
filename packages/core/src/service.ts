@@ -3,6 +3,7 @@
 // (ledger / verifier / release service), 4. commit state + ChainEvents in one store write. If 3 throws, nothing is
 // committed. Multi-tx steps (verdict -> release, cancel -> LoanPay) commit after each tx so a later failure never
 // erases an on-chain fact; keeperTick() retries the remainder.
+import { auditHash as canonicalAuditHash, verifyAuditBlob } from "@xrlp/attest-signer";
 import {
   CreateProjectInput,
   explorerTxUrl,
@@ -32,14 +33,16 @@ import {
   type Verdict,
   type VerifierPort,
   type InspectorAssignment,
+  type LoanSnapshot,
+  type VaultSnapshot,
 } from "@xrlp/shared";
 import { z } from "zod";
-import type { AuditReportInput, CoreApi, EvidenceUpload, KeeperIssue, KeeperTickResult, ReleaseServicePort, StoredFile } from "./api-surface.ts";
+import type { AuditReportInput, CoreApi, DemoParty, DemoSeed, EvidenceUpload, KeeperIssue, KeeperTickResult, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
-import { DomainError } from "./errors.ts";
+import { DomainError, ledgerErrorCode } from "./errors.ts";
 import { canonicalJson, fakeAddress, newId, sha256Hex, slugify } from "./ids.ts";
-import { fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
+import { redemptionShares, fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
 import { PLATFORM_SCOPE } from "./ports.ts";
 import {
   assignedInspectors,
@@ -71,7 +74,8 @@ import {
   isLocked,
   isTerminal,
 } from "./state-machine.ts";
-import type { AuditRecord, DbState, ProjectMeta, Store } from "./store.ts";
+import { normalizeAnswers, siteVisitHash, siteVisitOutcome, SiteVisitReportInput, type InspectorSiteVisit } from "./site-visit.ts";
+import { recordChainEvents, type AuditRecord, type DbState, type ProjectMeta, type Store } from "./store.ts";
 
 // ---------- non-route inputs (seed / admin) ----------
 
@@ -106,6 +110,20 @@ function parse<S extends z.ZodTypeAny>(schema: S, input: unknown): z.output<S> {
   return r.data;
 }
 
+/** What an xrpl CloseLoanPartialError carries (duck-typed: core doesn't import the adapter package here). */
+interface ClosePartial {
+  loanId: string;
+  loanSetTx: string;
+  created: { milestoneId: string; owner: XrplAddress; offerSequence: number; condition: string; cancelAfter: string; createTx: string }[];
+  pending: string[];
+}
+function closePartialOf(e: unknown): ClosePartial | undefined {
+  const x = e as Partial<ClosePartial> | null;
+  return e instanceof LedgerError && typeof x?.loanId === "string" && x.loanId && typeof x.loanSetTx === "string" && Array.isArray(x.created) && Array.isArray(x.pending)
+    ? (x as ClosePartial)
+    : undefined;
+}
+
 // ---------- options ----------
 
 export interface CoreServiceOptions {
@@ -123,10 +141,17 @@ export interface CoreServiceOptions {
   coverBps?: number;
   /** Escrow CancelAfter per milestone. Default: milestone i of n at (i+1)/n of termDays after close, capped before maturity. */
   cancelAfterFor?: (project: Project, milestone: Milestone, closeAt: Date) => Date;
-  /** Route 21: rebuild demo data (wired by the factory; fake mode only). */
-  seed?: (name: "maple-st") => Promise<void>;
+  /** Route 21: rebuild demo data (wired by the factory: "maple-st" in fake mode, "prestage" in devnet mode). */
+  seed?: (name: DemoSeed) => Promise<void>;
+  /** Route 21: validate a seed BEFORE the reset wipes anything (devnet prestage: missing/stale files -> 4xx). */
+  checkSeed?: (name: DemoSeed) => Promise<void>;
+  /** Route 21: seed used when the body names none (devnet: "prestage"). */
+  defaultSeed?: DemoSeed;
   /** Route 21: wipe ledger-side demo state (fake ledger). */
   resetLedger?: () => void;
+  /** Platform-held accounts (issuer, trustee, ...) that may never register as a builder, inspector or investor (#149).
+   *  platform / aiAgent / releaseService and every project SPV are always reserved. */
+  reservedAddresses?: XrplAddress[];
 }
 
 export const verificationFeeFor = (principal: Rlusd): Rlusd => fromMicro(maxMicro(250_000_000n, (toMicro(principal) * 20n) / 10_000n));
@@ -147,6 +172,10 @@ class KeyedMutex {
 }
 
 const OPEN_PROJECT: readonly ProjectStatus[] = ["escrowed", "repaying", "stalled"];
+/** xrpl submit outcomes where the tx may still have applied (packages/xrpl/src/submit.ts). */
+const AMBIGUOUS_TX_RESULTS = new Set(["connection_lost", "unknown_outcome", "preflight_refused_after_submit"]);
+/** Investor.kycCredentialTx when the ledger already held an accepted KYC_INVESTOR (no tx this time). */
+export const KYC_ALREADY_ON_LEDGER = "already-accepted";
 
 // ---------- service ----------
 
@@ -161,6 +190,8 @@ export class CoreService implements CoreApi {
   readonly releaseServiceAddress: XrplAddress;
   private readonly opts: CoreServiceOptions;
   private readonly locks = new KeyedMutex();
+  /** Keeper: verified milestones whose exposed release key was already reported (reported once, never retried). */
+  private readonly exposedReported = new Set<string>();
 
   constructor(opts: CoreServiceOptions) {
     this.opts = opts;
@@ -189,8 +220,9 @@ export class CoreService implements CoreApi {
     } catch (e) {
       if (e instanceof DomainError) throw e;
       if (e instanceof LedgerError) {
-        const code = e.code === "too_soon" ? "TOO_SOON" : e.code === "unsafe_release" ? "UNSAFE_RELEASE" : "LEDGER_ERROR";
-        throw new DomainError(code, `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
+        // #149 L7: a multi-tx step (e.g. builder repay = Payment + LoanPay) with an unknown outcome must not be re-run blind.
+        const unknown = e.txResult && AMBIGUOUS_TX_RESULTS.has(e.txResult) ? ` Outcome unknown: look up ${e.txHash ?? "the tx"} and the balances before retrying.` : "";
+        throw new DomainError(ledgerErrorCode(e), `${what}: ${e.message}${unknown}`, e, { txResult: e.txResult, txHash: e.txHash });
       }
       throw new DomainError("LEDGER_ERROR", `${what} failed: ${(e as Error).message}`, e);
     }
@@ -264,10 +296,18 @@ export class CoreService implements CoreApi {
 
   // ---------- participants (seed / admin; not HTTP routes) ----------
 
+  /** #149: a platform-held key must never become a builder, inspector (SPV signer) or investor. */
+  private assertNotReserved(db: DbState, address: XrplAddress, as: string): void {
+    const reserved = new Set([this.platformAddress, this.aiAgentAddress, this.releaseServiceAddress, ...(this.opts.reservedAddresses ?? [])]);
+    for (const p of db.projects) if (p.chain.spv) reserved.add(p.chain.spv);
+    if (reserved.has(address)) throw new DomainError("FORBIDDEN", `${address} is a platform-held account and cannot register as ${as}`);
+  }
+
   async registerBuilder(input: RegisterBuilderInput): Promise<Builder> {
     const d = parse(RegisterBuilderInput, input);
     const id = d.id ?? `bld-${slugify(d.name)}`;
     return this.store.write((db) => {
+      this.assertNotReserved(db, d.address, "a builder");
       if (db.builders.some((b) => b.id === id || b.address === d.address)) throw new DomainError("CONFLICT", `Builder ${id} already registered`);
       const b: Builder = {
         id,
@@ -287,14 +327,14 @@ export class CoreService implements CoreApi {
   /** Adds a licensed inspector to the verified panel and issues VERIFIED_INSPECTOR. */
   async registerInspector(input: RegisterInspectorInput): Promise<{ inspector: Inspector; events: ChainEvent[] }> {
     const d = parse(RegisterInspectorInput, input);
-    const exists = await this.read((db) => db.inspectors.some((i) => i.address === d.address));
+    const exists = await this.read((db) => (this.assertNotReserved(db, d.address, "an inspector"), db.inspectors.some((i) => i.address === d.address)));
     if (exists) throw new DomainError("CONFLICT", `Inspector ${d.address} already on the panel`);
     const txs = await this.onLedger("issue VERIFIED_INSPECTOR", () => this.ledger.issueCredential({ subject: d.address, type: "VERIFIED_INSPECTOR" }));
     const events = this.evs(txs, { projectId: PLATFORM_SCOPE, actor: d.address });
     return this.store.write((db) => {
       const inspector: Inspector = { ...d, verified: true, credentialTx: txs[0]?.hash };
       db.inspectors.push(inspector);
-      db.chainEvents.push(...events);
+      recordChainEvents(db, events);
       return { inspector, events };
     });
   }
@@ -303,15 +343,16 @@ export class CoreService implements CoreApi {
 
   async kycInvestor(address: XrplAddress, name?: string): Promise<{ events: ChainEvent[] }> {
     const addr = parse(XrplAddress, address);
-    const done = await this.read((db) => db.investors.find((i) => i.address === addr)?.kycCredentialTx);
+    const done = await this.read((db) => (this.assertNotReserved(db, addr, "an investor"), db.investors.find((i) => i.address === addr)?.kycCredentialTx));
     if (done) return { events: [] };
     const txs = await this.onLedger("issue KYC_INVESTOR", () => this.ledger.issueCredential({ subject: addr, type: "KYC_INVESTOR" }));
     const events = this.evs(txs, { projectId: PLATFORM_SCOPE, actor: addr });
     return this.store.write((db) => {
       let inv = db.investors.find((i) => i.address === addr);
       if (!inv) db.investors.push((inv = { address: addr, name: name ?? `Investor ${addr.slice(0, 6)}`, createdAt: this.nowIso() }));
-      inv.kycCredentialTx = txs[0]?.hash;
-      db.chainEvents.push(...events);
+      // [] = already issued + accepted on-ledger (devnet adapter: nothing submitted); still KYC'd.
+      inv.kycCredentialTx = txs[0]?.hash ?? inv.kycCredentialTx ?? KYC_ALREADY_ON_LEDGER;
+      recordChainEvents(db, events);
       return { events };
     });
   }
@@ -328,8 +369,31 @@ export class CoreService implements CoreApi {
       const c = d.checks[m.id];
       if (c && c.outcome === "pending" && c.required.length === 0) c.suite = [...this.verifier.policyFor(d.project, m).requiredChecks];
     }
-    const balances = await this.liveBalances(d.project.chain.spv, d.builder.address);
-    return balances ? { ...d, balances } : d;
+    const [balances, live] = await Promise.all([this.liveBalances(d.project.chain.spv, d.builder.address), this.liveSnapshots(d.project)]);
+    const out: ProjectDetail = { ...d, ...(live.vault ? { vault: live.vault } : {}), ...(live.loan ? { loan: live.loan } : {}) };
+    return balances ? { ...out, balances } : out;
+  }
+
+  /**
+   * Live mode: the vault + loan as the ledger reports them. Core's own book (read-models) recognises the loan's full
+   * interest at LoanSet, while an XRPL vault stays at principal until LoanPay lands (decisions.md "Open: simulated NAV").
+   * Best effort like liveBalances: a slow or failing read falls back to the computed snapshot. Fake mode: {}.
+   */
+  private async liveSnapshots(p: Project): Promise<{ vault?: VaultSnapshot; loan?: LoanSnapshot }> {
+    if (this.ledger.mode === "fake") return {};
+    const { vaultId, loanId } = p.chain;
+    if (!vaultId && !loanId) return {};
+    let timer: Parameters<typeof clearTimeout>[0];
+    const timeout = new Promise<{}>((r) => (timer = setTimeout(() => r({}), 2000)));
+    const read = Promise.all([
+      vaultId ? this.ledger.getVaultSnapshot({ vaultId }).catch(() => undefined) : undefined,
+      loanId ? this.ledger.getLoanSnapshot({ loanId }).catch(() => undefined) : undefined,
+    ]).then(([vault, loan]) => ({ ...(vault ? { vault } : {}), ...(loan ? { loan } : {}) }));
+    try {
+      return await Promise.race([read, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** SPV + builder RLUSD, best effort: a slow or failing ledger read never breaks the project page. */
@@ -353,6 +417,17 @@ export class CoreService implements CoreApi {
       return projectEvents(db, id);
     });
   }
+  listDemoParties(): Promise<DemoParty[]> {
+    return this.read((db) => [
+      { address: this.platformAddress, name: "Platform", role: "platform" },
+      { address: this.aiAgentAddress, name: "AI verifier", role: "ai_agent" },
+      { address: this.releaseServiceAddress, name: "Release service", role: "release_service" },
+      ...db.investors.map((i) => ({ address: i.address, name: i.name, role: "investor" as const, kyc: !!i.kycCredentialTx })),
+      ...db.builders.map((b) => ({ address: b.address, name: b.name, role: "builder" as const })),
+      ...db.inspectors.map((i) => ({ address: i.address, name: i.name, role: "inspector" as const })),
+      ...db.projects.flatMap((p) => p.chain.spv ? [{ address: p.chain.spv, name: p.name, role: "spv" as const }] : []),
+    ]);
+  }
   listBuilders(): Promise<Builder[]> {
     return this.read((db) => db.builders);
   }
@@ -369,8 +444,25 @@ export class CoreService implements CoreApi {
   inspectorQueue(address: XrplAddress): Promise<InspectorTask[]> {
     return this.read((db) => inspectorQueue(db, address));
   }
-  portfolio(investor: XrplAddress): Promise<PortfolioPosition[]> {
-    return this.read((db) => portfolio(db, investor, this.now()));
+  async portfolio(investor: XrplAddress): Promise<PortfolioPosition[]> {
+    const rows = await this.read((db) =>
+      portfolio(db, investor, this.now()).map((pos) => {
+        const p = getProjectOrThrow(db, pos.projectId);
+        return { pos, p, sharesOutstanding: investorTotals(db, p, investor).sharesOutstanding };
+      }),
+    );
+    // Live mode: value = this investor's pro-rata slice of the ledger's AssetsTotal (see liveSnapshots).
+    return Promise.all(
+      rows.map(async ({ pos, p, sharesOutstanding }) => {
+        const vault = (await this.liveSnapshots({ ...p, chain: { ...p.chain, loanId: undefined } })).vault;
+        if (!vault || sharesOutstanding <= 0n) return pos;
+        try {
+          return { ...pos, value: fromMicro((BigInt(pos.shares) * toMicro(vault.assetsTotal)) / sharesOutstanding) };
+        } catch {
+          return pos; // unparseable ledger amount: keep the computed value
+        }
+      }),
+    );
   }
 
   // ---------- route 3 ----------
@@ -433,7 +525,7 @@ export class CoreService implements CoreApi {
         const p = this.projectIn(db, id);
         this.setProjectStatus(db, p, "verifying");
         this.meta(db, id).verificationFee = { amount, tx: tx.hash, at: tx.at ?? this.nowIso() };
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, events };
       });
     });
@@ -483,7 +575,7 @@ export class CoreService implements CoreApi {
         } else {
           meta.preVisitRequested = true; // inspector pre-construction visit (route 18 needs: "pre_visit")
         }
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { verification, project: p, events };
       });
     });
@@ -546,7 +638,7 @@ export class CoreService implements CoreApi {
         const meta = this.meta(db, id);
         meta.assignment = { ...assignment, at: this.nowIso(), tx: assignTx.hash };
         meta.fundingOpenedAt = this.nowIso();
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, assignment, events };
       });
     });
@@ -579,7 +671,7 @@ export class CoreService implements CoreApi {
         db.investments.push(investment);
         const total = sumMicro(db.investments.filter((i) => i.projectId === id).map((i) => i.amount));
         if (total === toMicro(p.terms.principal)) this.setProjectStatus(db, p, "funded"); // never auto-closes
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { investment, events };
       });
     });
@@ -591,7 +683,12 @@ export class CoreService implements CoreApi {
     const d = this.opts.cancelAfterFor
       ? this.opts.cancelAfterFor(p, m, closeAt)
       : new Date(closeAt.getTime() + Math.round(((m.index + 1) / p.milestones.length) * p.terms.termDays * DAY_MS));
-    const cap = new Date(new Date(p.chain.redemptionDate!).getTime() - 3_600_000);
+    // XRPL refuses CancelAfter >= loan maturity = LEDGER now + PaymentInterval x PaymentTotal (xrpl loan-close.ts,
+    // loanScheduleFromTerms). Ledger time lags our clock and round(termDays / interval) x interval can be < termDays,
+    // so cap below that maturity with a margin (1 day, less for very short loans), and before RedemptionDate.
+    const span = Math.max(1, Math.round(p.terms.termDays / p.terms.paymentIntervalDays)) * p.terms.paymentIntervalDays * DAY_MS;
+    const maturityCap = closeAt.getTime() + span - Math.min(DAY_MS, Math.floor(span / 10));
+    const cap = new Date(Math.min(maturityCap, new Date(p.chain.redemptionDate!).getTime() - 3_600_000));
     return d < cap ? d : cap;
   }
 
@@ -611,7 +708,15 @@ export class CoreService implements CoreApi {
         throw new DomainError("CONFLICT", "Release service returned invalid or duplicate escrow conditions");
       const closeAt = this.now();
       const cancelAfters = p.milestones.map((m) => this.cancelAfterFor(p, m, closeAt).toISOString());
-      const res = await this.onLedger("loan close", () => this.ledger.closeLoanAndCreateEscrows({ project: p, builder: b, conditions, cancelAfters }));
+      let res: Awaited<ReturnType<LedgerPort["closeLoanAndCreateEscrows"]>>;
+      try {
+        res = await this.ledger.closeLoanAndCreateEscrows({ project: p, builder: b, conditions, cancelAfters });
+      } catch (e) {
+        const partial = closePartialOf(e);
+        // Best effort: the error (which lists created + pending escrows) is what the caller must see either way.
+        if (partial) await this.commitPartialClose(id, partial).catch(() => undefined);
+        return this.onLedger("loan close", () => Promise.reject(e));
+      }
       const events: ChainEvent[] = [];
       for (const t of res.txs) {
         const esc = t.kind === "escrow_created" ? res.escrows.find((e) => e.createTx === t.hash) : undefined;
@@ -642,9 +747,40 @@ export class CoreService implements CoreApi {
         p.chain.loanId = res.loanId;
         this.setProjectStatus(db, p, "escrowed");
         this.meta(db, id).escrowedAt = this.nowIso();
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, events };
       });
+    });
+  }
+
+  /**
+   * LoanSet applied but an EscrowCreate did not (xrpl CloseLoanPartialError). The loan and the escrows that exist are
+   * on-chain facts: record them (project -> escrowed, so a retry can't LoanSet twice) and leave the rest `pending`,
+   * listed in meta.closePending, for an operator (@xrlp/xrpl resumeEscrowCreation). The caller still gets the error.
+   */
+  private async commitPartialClose(id: string, partial: ClosePartial): Promise<void> {
+    await this.store.write((db) => {
+      const p = this.projectIn(db, id);
+      const events: ChainEvent[] = [];
+      const at = this.nowIso();
+      const evt = (hash: string, kind: ChainEventKind, extra: Partial<ChainEvent>): ChainEvent => ({
+        projectId: id, kind, txHash: hash, explorerUrl: explorerTxUrl(hash), at, ...(p.chain.spv ? { actor: p.chain.spv } : {}), ...extra,
+      });
+      events.push(evt(partial.loanSetTx, "loan_set", { amount: p.terms.principal }));
+      for (const esc of partial.created) {
+        const m = p.milestones.find((x) => x.id === esc.milestoneId);
+        if (!m || m.escrow) continue;
+        m.escrow = { owner: esc.owner, offerSequence: esc.offerSequence, condition: esc.condition.toUpperCase(), createTx: esc.createTx, createdAt: at };
+        m.cancelAfter = esc.cancelAfter;
+        this.setMilestoneStatus(m, "escrowed");
+        events.push(evt(esc.createTx, "escrow_created", { milestoneId: m.id, amount: m.amount }));
+      }
+      p.chain.loanId = partial.loanId;
+      this.setProjectStatus(db, p, "escrowed");
+      const meta = this.meta(db, id);
+      meta.escrowedAt = at;
+      meta.closePending = p.milestones.filter((m) => !m.escrow).map((m) => m.id);
+      recordChainEvents(db, events);
     });
   }
 
@@ -687,15 +823,21 @@ export class CoreService implements CoreApi {
     body: { report: AuditReportInput; photos: StoredFile[]; signedTxBlob?: string },
   ): Promise<{ milestone: Milestone; audit: InspectorAudit; events: ChainEvent[] }> {
     return this.locks.run(id, async () => {
-      const { p, m, round, assigned } = await this.read((db) => {
+      const { p, m, round, assigned, bundleHash } = await this.read((db) => {
         const p = this.projectIn(db, id);
-        return { p, m: getMilestoneOrThrow(p, mid), round: currentRound(db, mid), assigned: assignedInspectors(db, id) };
+        const round = currentRound(db, mid);
+        return {
+          p, m: getMilestoneOrThrow(p, mid), round, assigned: assignedInspectors(db, id),
+          bundleHash: sha256Hex(roundEvidence(db, mid, round).map((e) => e.sha256).sort().join("\n")),
+        };
       });
       const inspector = body.report.inspector;
       if (!assigned.includes(inspector)) throw new DomainError("FORBIDDEN", `${inspector} is not an assigned inspector for ${id}`);
       assertProjectStatus(id, p.status, OPEN_PROJECT, "submit audit");
       if (round === 0) throw new DomainError("ILLEGAL_TRANSITION", `No builder evidence for ${mid} yet`);
       if (m.status !== "audited") assertMilestoneTransition(mid, m.status, "audited");
+      if (body.report.evidenceBundleHash.toLowerCase() !== bundleHash)
+        throw new DomainError("VALIDATION", "Audit must cover the current builder evidence bundle");
       const at = this.nowIso();
       const photos: Evidence[] = body.photos.map((f) => ({
         id: newId("ap"),
@@ -716,7 +858,18 @@ export class CoreService implements CoreApi {
         notes: body.report.notes,
         at,
       };
-      const auditHash = sha256Hex(canonicalJson(unsigned));
+      const auditHash = await canonicalAuditHash(unsigned);
+      if (body.signedTxBlob) {
+        try {
+          if (!p.chain.spv) throw new Error("project SPV missing");
+          await verifyAuditBlob(body.signedTxBlob, unsigned, p.chain.spv);
+        } catch {
+          // Never echo the blob, signatures or parser contents in an API error.
+          throw new DomainError("VALIDATION", "Signed audit does not match the assigned inspector, project, report and uploaded photos");
+        }
+      } else if (this.ledger.mode !== "fake") {
+        throw new DomainError("FORBIDDEN", "A signed inspector audit is required outside fake demo mode");
+      }
       // Inspector-app-signed attestation when provided; otherwise core submits it with the demo key (disclosed).
       const tx = body.signedTxBlob
         ? await this.onLedger("submit signed audit", () => this.ledger.submitSignedBlob(body.signedTxBlob!))
@@ -736,7 +889,7 @@ export class CoreService implements CoreApi {
         const rec: AuditRecord = { ...audit, projectId: id, round };
         db.audits.push(rec);
         db.attestations.push({ milestoneId: mid, role: "inspector", signer: inspector, decision: allDone ? "approve" : "reject", notes: audit.notes, txHash: tx.hash, at, projectId: id, round, kind: "audit", hash: auditHash });
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { milestone: m, audit, events };
       });
     });
@@ -758,7 +911,8 @@ export class CoreService implements CoreApi {
           evidence: roundEvidence(db, mid, round).map(stripEvidence),
           audits: roundAudits(db, mid, round),
           // ALL projects' evidence except this milestone's own submissions (cross-project duplicate detection)
-          prior: db.evidence.filter((e) => e.milestoneId !== mid),
+          // projectName: verdict reasons say "from project Elm St ADU", not the raw id.
+          prior: db.evidence.filter((e) => e.milestoneId !== mid).map((e) => ({ ...e, projectName: db.projects.find((x) => x.id === e.projectId)?.name })),
           assigned: assignedInspectors(db, id),
         };
       });
@@ -802,7 +956,7 @@ export class CoreService implements CoreApi {
           round,
         });
         this.applyOutcome(m, evaluation);
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
       });
       if (evaluation.outcome !== "pass") return { verdict, events };
       const rel = await this.releaseVerifiedLocked(id, mid);
@@ -850,7 +1004,7 @@ export class CoreService implements CoreApi {
         round: currentRound(db, mid),
       });
       this.maybeComplete(db, p);
-      db.chainEvents.push(...events);
+      recordChainEvents(db, events);
     });
     return { finish: { txHash: finishTx.hash, explorerUrl: finishTx.explorerUrl }, events };
   }
@@ -892,7 +1046,7 @@ export class CoreService implements CoreApi {
         db.decisions.push({ projectId: id, milestoneId: mid, round: ctx.round, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
         db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round, kind: "decision", hash: sha256Hex(reason) });
         this.applyOutcome(m, evaluation);
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return m;
       });
       if (evaluation.outcome !== "pass") return { milestone, events };
@@ -921,7 +1075,7 @@ export class CoreService implements CoreApi {
       if (!m.cancelAfter || this.now() < new Date(m.cancelAfter))
         throw new DomainError("TOO_SOON", `Escrow for ${mid} can be cancelled after ${m.cancelAfter}`, undefined, { txResult: "tecNO_PERMISSION" });
       const tx = await this.cancelOrConfirmGone(m);
-      const evs = tx ? this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.platformAddress, amount: m.amount }) : [];
+      const evs = tx ? this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.releaseServiceAddress, amount: m.amount }) : [];
       events.push(...evs);
       await this.store.write((db) => {
         const p = this.projectIn(db, id);
@@ -932,7 +1086,7 @@ export class CoreService implements CoreApi {
           p.status = "stalled";
           this.meta(db, id).stalledAt = this.nowIso();
         }
-        db.chainEvents.push(...evs);
+        recordChainEvents(db, evs);
       });
     }
     // Refund the vault: multisig LoanPay from the SPV (separate commit; keeperTick retries if it fails). A write-ahead
@@ -954,6 +1108,7 @@ export class CoreService implements CoreApi {
     }
     await this.store.write((db) => {
       const meta = this.meta(db, id);
+      this.assertNoOtherRefundPending(meta, mid);
       meta.refundAttempts = { ...meta.refundAttempts, [mid]: { at: this.nowIso(), ...(loanNow ? { tvoBefore: loanNow.totalValueOutstanding } : {}) } };
     });
     let tx: TxResult;
@@ -961,10 +1116,31 @@ export class CoreService implements CoreApi {
       tx = await this.onLedger("escrow refund LoanPay", () => this.ledger.repayLoan({ project: p, amount: m.amount, source: "escrow_refund" }));
     } catch (e) {
       const txHash = e instanceof DomainError ? e.txHash : undefined;
-      if (txHash) await this.store.write((db) => void (this.meta(db, id).refundAttempts![mid]!.txHash = txHash));
+      const txResult = e instanceof DomainError ? e.txResult : undefined;
+      // tec / tem: this LoanPay definitely did not apply. Drop its marker, or a later LoanPay on this loan (builder repay,
+      // another milestone's refund) shrinks TotalValueOutstanding and the retry would "reconcile" a refund never paid.
+      // If an earlier attempt's outcome is still unknown, put its marker back: that attempt may land late (and may be why
+      // this one failed), and only its tvoBefore can show it.
+      if (txResult && /^te[cm][A-Z_]+$/.test(txResult))
+        await this.store.write((db) => {
+          const meta = this.meta(db, id);
+          if (prior) meta.refundAttempts = { ...meta.refundAttempts, [mid]: prior };
+          else delete meta.refundAttempts?.[mid];
+        });
+      else if (txHash) await this.store.write((db) => void (this.meta(db, id).refundAttempts![mid]!.txHash = txHash));
       throw e;
     }
     return this.commitRefund(id, m, p.chain.spv, tx, events);
+  }
+
+  /**
+   * A refund LoanPay with an unknown outcome is reconciled from the loan's TotalValueOutstanding drop. Any other LoanPay
+   * on the loan meanwhile would read as that refund having applied, so none goes out until the marker is resolved.
+   */
+  private assertNoOtherRefundPending(meta: ProjectMeta | undefined, except?: string): void {
+    const other = Object.keys(meta?.refundAttempts ?? {}).find((k) => k !== except);
+    if (other)
+      throw new DomainError("CONFLICT", `A refund LoanPay for ${other} has an unknown outcome; resolve it (route 13 / keeper tick) before another LoanPay on this loan`);
   }
 
   /** milestone -> refunded, repayment recorded, write-ahead marker cleared. No tx = reconciled without a known hash. */
@@ -975,11 +1151,14 @@ export class CoreService implements CoreApi {
       const p = this.projectIn(db, id);
       const m = getMilestoneOrThrow(p, mid);
       this.setMilestoneStatus(m, "refunded");
-      db.repayments.push({ projectId: id, milestoneId: mid, amount: m.amount, source: "escrow_refund", tx: tx?.hash ?? `reconciled:${mid}`, at: tx?.at ?? this.nowIso() });
+      // A milestone is refunded at most once. Two writers on one FileStore (keeper + server) can both reconcile the same
+      // ambiguous LoanPay; the second must not book it again (its event is dropped by recordChainEvents).
+      if (!db.repayments.some((r) => r.projectId === id && r.milestoneId === mid && r.source === "escrow_refund"))
+        db.repayments.push({ projectId: id, milestoneId: mid, amount: m.amount, source: "escrow_refund", tx: tx?.hash ?? `reconciled:${mid}`, at: tx?.at ?? this.nowIso() });
       const meta = this.meta(db, id);
       if (meta.refundAttempts) delete meta.refundAttempts[mid];
       this.maybeComplete(db, p);
-      db.chainEvents.push(...evs);
+      recordChainEvents(db, evs);
       return m;
     });
     events.push(...evs);
@@ -996,7 +1175,8 @@ export class CoreService implements CoreApi {
     try {
       return await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner, offerSequence }));
     } catch (e) {
-      if (!(e instanceof DomainError) || e.code !== "LEDGER_ERROR") throw e;
+      // Devnet maps an EscrowCancel tecNO_TARGET (escrow already gone) to not_found -> NOT_FOUND; the fake says LEDGER_ERROR.
+      if (!(e instanceof DomainError) || (e.code !== "LEDGER_ERROR" && e.code !== "NOT_FOUND")) throw e;
       const onLedger = await this.ledger.getEscrow(owner, offerSequence).catch(() => undefined);
       if (onLedger !== null) throw e; // still there (or unknown): the cancel really failed
       if (m.status === "verified")
@@ -1011,8 +1191,9 @@ export class CoreService implements CoreApi {
     const amount = fromMicro(toMicro(body.amount));
     if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Repayment must be positive");
     return this.locks.run(id, async () => {
-      const p = await this.read((db) => this.projectIn(db, id));
+      const { p, meta } = await this.read((db) => ({ p: this.projectIn(db, id), meta: metaOf(db, id) }));
       assertProjectStatus(id, p.status, OPEN_PROJECT, "repay");
+      this.assertNoOtherRefundPending(meta);
       const tx = await this.onLedger("LoanPay", () => this.ledger.repayLoan({ project: p, amount, source: "builder" }));
       const events = this.evs([tx], { projectId: id, kind: "loan_payment", actor: p.chain.spv, amount });
       return this.store.write((db) => {
@@ -1020,7 +1201,7 @@ export class CoreService implements CoreApi {
         db.repayments.push({ projectId: id, amount, source: "builder", tx: tx.hash, at: tx.at ?? this.nowIso() });
         if (canProjectTransition(p.status, "repaying")) p.status = "repaying";
         this.maybeComplete(db, p);
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, events };
       });
     });
@@ -1050,11 +1231,13 @@ export class CoreService implements CoreApi {
       if (vaultPhase(p, this.now()) !== "redemption")
         throw new DomainError("TOO_SOON", `Withdrawals open at RedemptionDate ${p.chain.redemptionDate}`, undefined, { txResult: "tecTOO_SOON" });
       if (toMicro(amount) > pos.withdrawable) throw new DomainError("CONFLICT", `Withdrawable now: ${fromMicro(pos.withdrawable)} RLUSD`);
+      // Book-value model, exact for our fake ledger. Live wiring must use validated burn metadata (decisions.md).
+      const sharesBurned = redemptionShares(toMicro(amount), pos.assetsTotal, pos.sharesOutstanding).toString();
       const tx = await this.onLedger("vault withdraw", () => this.ledger.withdraw({ project: p, investor: body.investor, amount }));
       const events = this.evs([tx], { projectId: id, kind: "vault_withdraw", actor: body.investor, amount });
       return this.store.write((db) => {
-        db.withdrawals.push({ projectId: id, investor: body.investor, amount, tx: tx.hash, at: tx.at ?? this.nowIso() });
-        db.chainEvents.push(...events);
+        db.withdrawals.push({ projectId: id, investor: body.investor, amount, sharesBurned, tx: tx.hash, at: tx.at ?? this.nowIso() });
+        recordChainEvents(db, events);
         return { events };
       });
     });
@@ -1062,12 +1245,14 @@ export class CoreService implements CoreApi {
 
   // ---------- route 21 ----------
 
-  async resetDemo(body: { seed?: "maple-st" } = {}): Promise<{ ok: true }> {
-    if (body.seed && !this.opts.seed) throw new DomainError("VALIDATION", "Demo seeding is not configured for this ledger mode (use the XRPL prestage script on devnet)");
+  async resetDemo(body: { seed?: DemoSeed } = {}): Promise<{ ok: true }> {
+    const seed = body.seed ?? this.opts.defaultSeed;
+    if (seed && !this.opts.seed) throw new DomainError("VALIDATION", "Demo seeding is not configured for this ledger mode (use the XRPL prestage script on devnet)");
+    if (seed) await this.opts.checkSeed?.(seed);
     await this.store.reset();
     await this.release.clear();
     this.opts.resetLedger?.();
-    if (body.seed) await this.opts.seed!(body.seed);
+    if (seed) await this.opts.seed!(seed);
     return { ok: true };
   }
 
@@ -1093,6 +1278,25 @@ export class CoreService implements CoreApi {
       const expired = !!t.cancelAfter && now >= new Date(t.cancelAfter);
       const cancelPath = t.status === "expired" || (expired && isLocked(t.status));
       if (!cancelPath && !(t.status === "verified" && !expired)) continue;
+      if (!cancelPath) {
+        // A failed finish exposed the release key: no release can ever use it, so retrying every tick only repeats
+        // UNSAFE_RELEASE. Report it once (per process); CancelAfter -> cancel -> refund then returns the money.
+        const exposedAt = await this.release.keyExposedAt({ projectId: t.pid, milestoneId: t.mid }).catch(() => undefined);
+        if (exposedAt) {
+          const key = `${t.pid}/${t.mid}`;
+          if (!this.exposedReported.has(key)) {
+            this.exposedReported.add(key);
+            issues.push({
+              projectId: t.pid,
+              milestoneId: t.mid,
+              step: "release",
+              code: "UNSAFE_RELEASE",
+              message: `Release key for ${t.mid} was exposed at ${exposedAt}; no release retries. The escrow is cancelled and refunded after CancelAfter ${t.cancelAfter ?? "(unset)"}.`,
+            });
+          }
+          continue;
+        }
+      }
       try {
         if (cancelPath) await this.locks.run(t.pid, () => this.cancelExpiredLocked(t.pid, t.mid, events));
         else events.push(...(await this.locks.run(t.pid, () => this.releaseVerifiedLocked(t.pid, t.mid))).events);
@@ -1122,10 +1326,130 @@ export class CoreService implements CoreApi {
       if (!m.escrow || !isLocked(m.status) || m.status === "expired") throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} has no open escrow`);
       const tx = await this.onLedger("try-steal", () => this.release.tryStealDemo({ project: p, milestone: m }));
       const events = this.evs([tx], { projectId: id, milestoneId: mid, kind: "release_refused", actor: this.platformAddress });
-      await this.store.write((db) => db.chainEvents.push(...events));
+      await this.store.write((db) => recordChainEvents(db, events));
       if (tx.result !== "tecCRYPTOCONDITION_ERROR")
         throw new DomainError("LEDGER_ERROR", `Expected tecCRYPTOCONDITION_ERROR, ledger said ${tx.result}`, undefined, { txResult: tx.result, txHash: tx.hash });
       return { result: "tecCRYPTOCONDITION_ERROR", txHash: tx.hash, explorerUrl: tx.explorerUrl };
+    });
+  }
+
+  // ---------- routes 24, 25: project-level needs_human ----------
+
+  /** Latest route-5 verification must be needs_human with the project still `verifying`. */
+  private assertProjectNeedsHuman(id: string, p: Project, latest: { decision: string } | undefined, action: string): void {
+    assertProjectStatus(id, p.status, ["verifying"], action);
+    if (latest?.decision !== "needs_human")
+      throw new DomainError("ILLEGAL_TRANSITION", `Project ${id} has no needs_human verification to ${action} (latest: ${latest?.decision ?? "none; run route 5 first"})`);
+  }
+
+  /**
+   * Route 24: a verified panel inspector's pre-construction site visit (the queue's `pre_visit` task). Attested on-chain
+   * (core signs with the platform key on the inspector's behalf, disclosed in the memo), clears the pre-visit task. Never
+   * changes the project status: the platform operator decides with it in hand (route 25).
+   */
+  async submitSiteVisit(
+    id: string,
+    body: { report: SiteVisitReportInput; photos: StoredFile[]; signedTxBlob?: string },
+  ): Promise<{ visit: InspectorSiteVisit; events: ChainEvent[] }> {
+    const report = parse(SiteVisitReportInput, body.report);
+    if (report.projectId !== id) throw new DomainError("VALIDATION", `report.projectId ${report.projectId} does not match ${id}`);
+    if (body.signedTxBlob)
+      throw new DomainError("VALIDATION", "Inspector-signed site visits are not supported yet (no `site_visit` attestation kind on the ledger adapter); omit signedTxBlob and core attests it");
+    if (!body.photos.length) throw new DomainError("VALIDATION", "photos: at least one site photo is required");
+    const answers = normalizeAnswers(report.answers);
+    const unexplained = Object.entries(answers).filter(([, a]) => a.answer !== "yes" && !a.note).map(([k]) => k);
+    if (unexplained.length) throw new DomainError("VALIDATION", `answers: say why for ${unexplained.join(", ")}`);
+    return this.locks.run(id, async () => {
+      const { p, inspector, latest } = await this.read((db) => ({
+        p: this.projectIn(db, id),
+        inspector: db.inspectors.find((i) => i.address === report.inspector),
+        latest: db.verifications.filter((v) => v.projectId === id).at(-1),
+      }));
+      if (!inspector?.verified) throw new DomainError("FORBIDDEN", `${report.inspector} is not a verified panel inspector`);
+      this.assertProjectNeedsHuman(id, p, latest, "file a site visit for");
+      const at = this.nowIso();
+      const photos: Evidence[] = body.photos.map((f) => ({
+        id: newId("sv"),
+        kind: "photo",
+        filename: f.filename,
+        mimeType: f.mimeType,
+        uri: f.uri,
+        sha256: f.sha256,
+        meta: {},
+        uploadedAt: at,
+      }));
+      const notes = report.notes.trim();
+      const hash = await siteVisitHash({ projectId: id, inspector: report.inspector, answers, notes, photos });
+      const tx = await this.attest(
+        "platform",
+        this.platformAddress,
+        { v: 1, kind: "audit", milestoneId: `${id}:site-visit`, hash, decision: siteVisitOutcome(answers), reason: `site-visit signed-for ${report.inspector}` },
+        "attest site visit",
+      );
+      // Unsigned: the inspector field is the caller's claim (route 10 audits are inspector-signed; this route can't be yet).
+      const visit: InspectorSiteVisit = { projectId: id, inspector: report.inspector, answers, photos, notes, txHash: tx.hash, at, signedByInspector: false };
+      const events = this.evs([tx], { projectId: id, kind: "audit_attested", actor: report.inspector });
+      return this.store.write((db) => {
+        const meta = this.meta(db, id);
+        meta.siteVisits = [...(meta.siteVisits ?? []), { ...visit, hash, signedByInspector: false }];
+        meta.preVisitRequested = false; // task done; the operator decides (route 25)
+        recordChainEvents(db, events);
+        return { visit, events };
+      });
+    });
+  }
+
+  /**
+   * Route 25: the platform operator resolves a needs_human project verification (mirror of route 12). The reason is
+   * attested FIRST; approve -> `verified` (+ VERIFIED_BUILDER on first pass, builder risk tier from the AI's report),
+   * reject -> `rejected`.
+   */
+  async decideProject(
+    id: string,
+    body: { actor: XrplAddress; decision: "approve" | "reject"; reason: string },
+  ): Promise<{ project: Project; events: ChainEvent[] }> {
+    this.requirePlatform(body.actor, "Decide a needs_human project verification");
+    const reason = body.reason?.trim();
+    if (!reason) throw new DomainError("VALIDATION", "A reason is required (it is attested on-chain)");
+    if (body.decision !== "approve" && body.decision !== "reject") throw new DomainError("VALIDATION", "decision must be approve | reject");
+    return this.locks.run(id, async () => {
+      const { p, b, latest } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, b: this.builderOf(db, p), latest: db.verifications.filter((v) => v.projectId === id).at(-1) };
+      });
+      this.assertProjectNeedsHuman(id, p, latest, "decide");
+      const to: ProjectStatus = body.decision === "approve" ? "verified" : "rejected";
+      assertProjectTransition(id, p.status, to);
+      const tx = await this.attest(
+        "platform",
+        this.platformAddress,
+        { v: 1, kind: "decision", milestoneId: `${id}:project`, hash: sha256Hex(reason), decision: body.decision, reason },
+        "attest operator project decision",
+      );
+      const events = this.evs([tx], { projectId: id, kind: "decision_attested", actor: body.actor });
+      let credTxs: TxResult[] = [];
+      if (to === "verified" && !b.verified) {
+        credTxs = await this.onLedger("issue VERIFIED_BUILDER", () => this.ledger.issueCredential({ subject: b.address, type: "VERIFIED_BUILDER" }));
+        events.push(...this.evs(credTxs, { projectId: id, actor: b.address }));
+      }
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        const meta = this.meta(db, id);
+        this.setProjectStatus(db, p, to);
+        meta.preVisitRequested = false;
+        db.decisions.push({ projectId: id, milestoneId: `${id}:project`, round: 0, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
+        if (to === "verified") {
+          meta.verifiedAt = this.nowIso();
+          const builder = this.builderOf(db, p);
+          builder.riskTier = latest!.riskTier;
+          if (!builder.verified) {
+            builder.verified = true;
+            builder.credentialTx = credTxs[0]?.hash;
+          }
+        }
+        recordChainEvents(db, events);
+        return { project: p, events };
+      });
     });
   }
 }

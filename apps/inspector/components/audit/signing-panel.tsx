@@ -43,7 +43,7 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
         }
       }}
     >
-      <label htmlFor="inspector-seed" className="block text-small font-medium" title="Stored in this browser only (devnet). Without a key, core attests the audit on your behalf.">
+      <label htmlFor="inspector-seed" className="block text-small font-medium" title="Stored in this browser only (devnet). A devnet core requires your signature.">
         Inspector key
       </label>
       <div className="flex gap-2">
@@ -63,6 +63,7 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
         </Button>
       </div>
       {error && <p className="text-caption text-fail">{error}</p>}
+      <p className="text-caption text-ink-2">Stored in this browser only (devnet). Without a key, only a fake-ledger core attests the audit on your behalf; devnet core requires your signature.</p>
     </form>
   );
 }

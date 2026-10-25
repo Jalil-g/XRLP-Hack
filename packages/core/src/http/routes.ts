@@ -1,9 +1,10 @@
-// Routes 1–23 of docs/05-api.md §2 + GET /api/files/:fileId. Parse -> CoreApi call -> JSON. No business logic here.
+// Routes 1–25 of docs/05-api.md §2 + GET /api/files/:fileId. Parse -> CoreApi call -> JSON. No business logic here.
 import { CreateProjectInput, EvidenceKind, InspectorAudit, ProjectStatus, Rlusd, XrplAddress } from "@xrlp/shared";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
-import type { AuditReportInput, CoreApi, EvidenceUpload } from "../api-surface.ts";
+import { DEMO_SEEDS, type AuditReportInput, type CoreApi, type EvidenceUpload } from "../api-surface.ts";
 import { DomainError } from "../errors.ts";
+import type { SiteVisitReportInput } from "../site-visit.ts";
 import type { UploadStore } from "./files.ts";
 
 const ActorBody = z.object({ actor: XrplAddress });
@@ -11,7 +12,7 @@ const InvestBody = z.object({ investor: XrplAddress, amount: Rlusd });
 const AmountBody = z.object({ amount: Rlusd });
 const FeeBody = z.object({ builder: XrplAddress });
 const DecisionBody = z.object({ actor: XrplAddress, decision: z.enum(["approve", "reject"]), reason: z.string().min(1) });
-const ResetBody = z.object({ seed: z.literal("maple-st").optional() }).default({});
+const ResetBody = z.object({ seed: z.enum(DEMO_SEEDS).optional() }).default({});
 const ListQuery = z.object({ status: ProjectStatus.optional() });
 const AuditReport = InspectorAudit.pick({ inspector: true, evidenceBundleHash: true, checklist: true, notes: true });
 
@@ -52,6 +53,17 @@ const filesOf = (vals: (string | File)[], name: string): File[] =>
     return v;
   });
 
+/** A multipart text part holding JSON. */
+function jsonPart(form: Record<string, string | File | (string | File)[]>, name: string): unknown {
+  const [raw] = field(form, name);
+  if (typeof raw !== "string") throw new DomainError("VALIDATION", `${name}: expected a JSON text part`);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new DomainError("VALIDATION", `${name}: invalid JSON`);
+  }
+}
+
 export function registerRoutes(app: Hono, api: CoreApi, uploads: UploadStore): void {
   // 1–8: projects
   app.get("/api/projects", async (c) => c.json(await api.listProjects(parse(ListQuery, c.req.query(), "query"))));
@@ -85,15 +97,7 @@ export function registerRoutes(app: Hono, api: CoreApi, uploads: UploadStore): v
   });
   app.post("/api/projects/:id/milestones/:mid/audit", async (c) => {
     const form = await formBody(c);
-    const [reportRaw] = field(form, "report");
-    if (typeof reportRaw !== "string") throw new DomainError("VALIDATION", "report: expected a JSON text part");
-    let reportJson: unknown;
-    try {
-      reportJson = JSON.parse(reportRaw);
-    } catch {
-      throw new DomainError("VALIDATION", "report: invalid JSON");
-    }
-    const report: AuditReportInput = parse(AuditReport, reportJson, "report");
+    const report: AuditReportInput = parse(AuditReport, jsonPart(form, "report"), "report");
     const photos = [];
     for (const f of filesOf(field(form, "photos"), "photos")) photos.push(await uploads.save(f));
     const [blob] = field(form, "signedTxBlob");
@@ -126,9 +130,25 @@ export function registerRoutes(app: Hono, api: CoreApi, uploads: UploadStore): v
   app.get("/api/portfolio/:investor", async (c) => c.json(await api.portfolio(parse(XrplAddress, c.req.param("investor"), "investor"))));
 
   // 21–23: admin / demo
+  app.get("/api/admin/demo/parties", async (c) => c.json(await api.listDemoParties()));
   app.post("/api/admin/demo/reset", async (c) => c.json(await api.resetDemo(parse(ResetBody, await jsonBody(c), "body"))));
   app.post("/api/admin/keeper/tick", async (c) => c.json(await api.keeperTick()));
   app.post("/api/admin/demo/try-steal/:id/:mid", async (c) => c.json(await api.tryStealDemo(c.req.param("id"), c.req.param("mid"))));
+
+  // 24–25: project-level needs_human (inspector pre-construction site visit, operator decision)
+  app.post("/api/projects/:id/site-visit", async (c) => {
+    const form = await formBody(c);
+    const report = jsonPart(form, "report");
+    const photos = [];
+    for (const f of filesOf(field(form, "photos"), "photos")) photos.push(await uploads.save(f));
+    const [blob] = field(form, "signedTxBlob");
+    if (blob !== undefined && typeof blob !== "string") throw new DomainError("VALIDATION", "signedTxBlob: expected hex text");
+    // The report schema is enforced by the service (SiteVisitReportInput); extra client fields (photos, at) are ignored.
+    return c.json(await api.submitSiteVisit(c.req.param("id"), { report: report as SiteVisitReportInput, photos, ...(blob ? { signedTxBlob: blob } : {}) }));
+  });
+  app.post("/api/projects/:id/decision", async (c) =>
+    c.json(await api.decideProject(c.req.param("id"), parse(DecisionBody, await jsonBody(c), "body"))),
+  );
 
   // files
   app.get("/api/files/:fileId", async (c) => {

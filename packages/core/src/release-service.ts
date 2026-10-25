@@ -277,6 +277,10 @@ export class ReleaseService implements ReleaseServicePort {
     return { ...tx, kind: tx.kind ?? "release_refused" };
   }
 
+  keyExposedAt({ projectId, milestoneId }: { projectId: string; milestoneId: string }): Promise<string | undefined> {
+    return this.queue.run(async () => (await this.vault.all()).find((e) => e.projectId === projectId && e.milestoneId === milestoneId)?.exposedAt);
+  }
+
   clear(): Promise<void> {
     return this.queue.run(() => this.vault.save([]));
   }

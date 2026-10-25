@@ -149,9 +149,18 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
+      '@xrlp/attest-signer':
+        specifier: workspace:*
+        version: link:../attest-signer
       '@xrlp/shared':
         specifier: workspace:*
         version: link:../shared
+      '@xrlp/verifier':
+        specifier: workspace:*
+        version: link:../verifier
+      '@xrlp/xrpl':
+        specifier: workspace:*
+        version: link:../xrpl
       hono:
         specifier: ^4.13.13
         version: 4.13.13

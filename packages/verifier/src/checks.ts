@@ -6,6 +6,8 @@ import type { VerificationPolicy } from "./policy.ts";
 import type { CheckOutcome, LoadedEvidence, MilestoneContext, MilestoneTimeline, PriorEvidence } from "./types.ts";
 import { DAY_MS, centsToString, fmtDate, fmtDistance, fmtMoney, haversineM, listJoin, pct, toCents } from "./util.ts";
 
+export { checkLienWaiverPresent, checkLienWaivers, isLienWaiver } from "./lienWaiver.ts";
+
 const DET = "deterministic" as const;
 const SURE = 0.99; // deterministic pass/fail
 const SOFT = 0.6; // deterministic warn (missing data rather than contradicting data)
@@ -23,7 +25,6 @@ function outcome(
 ): CheckOutcome {
   return { check, result, reason, evidenceIds, confidence, source: DET };
 }
-
 // ---------------------------------------------------------------------------------------------
 export function checkRequiredEvidence(
   template: MilestoneTemplate | undefined,
@@ -155,8 +156,10 @@ export function checkNoDuplicatePhoto(
   const failIds = new Set<string>();
   const warnIds = new Set<string>();
   const validHash = (hash: string | undefined): hash is string => !!hash && /^[0-9a-f]{16}$/i.test(hash);
-  for (const old of others.filter((p) => p.evidence.kind === "photo" && p.evidence.meta?.perceptualHash && !validHash(p.evidence.meta.perceptualHash))) {
-    warns.push(`Prior photo ${old.evidence.filename} has an invalid perceptual hash; reprocessing required`);
+  // A prior photo we cannot fingerprint can't be ruled out as the source of a re-encoded copy: never skip it silently.
+  for (const old of others.filter((p) => p.evidence.kind === "photo" && !validHash(p.evidence.meta?.perceptualHash))) {
+    if (photos.some((p) => p.sha256 && p.sha256 === old.evidence.sha256)) continue; // byte-identical: reported as a fail below
+    warns.push(`Prior photo ${old.evidence.filename} has ${old.evidence.meta?.perceptualHash ? "an invalid" : "no"} perceptual hash; reuse cannot be ruled out, reprocessing required`);
   }
   const where = (p: PriorEvidence) =>
     p.projectId === "unknown"
@@ -216,6 +219,7 @@ export function checkInvoiceMatchesBudget(
   items: LoadedEvidence[],
   policy: VerificationPolicy,
   llmTotals: InvoiceTotals = {},
+  prior: PriorEvidence[] = [],
 ): CheckOutcome {
   const c = "invoice_matches_budget";
   const invoices = items.filter((l) => l.evidence.kind === "invoice");
@@ -224,6 +228,29 @@ export function checkInvoiceMatchesBudget(
     return requiresInvoice
       ? outcome(c, "fail", "Template requires invoices but none were submitted.")
       : outcome(c, "skipped", "No invoices required for this milestone.");
+  }
+  // An invoice may back only one draw: the same file twice in this bundle, or one already submitted for another
+  // milestone/project, would inflate the total (prior from this same milestone = resubmission, ignored).
+  const reused: string[] = [];
+  const reusedIds = new Set<string>();
+  const others = prior.filter((p) => !(p.projectId === ctx.project.id && p.milestoneId === ctx.milestone.id));
+  const textKey = (l: LoadedEvidence) => l.text?.replace(/\s+/g, " ").trim().toLowerCase() || undefined;
+  for (const [i, inv] of invoices.entries()) {
+    for (const other of invoices.slice(i + 1)) {
+      const same = (inv.sha256 && inv.sha256 === other.sha256) || (textKey(inv) && textKey(inv) === textKey(other));
+      if (same) {
+        reused.push(`${name(inv)} and ${name(other)} are the same invoice`);
+        reusedIds.add(inv.evidence.id).add(other.evidence.id);
+      }
+    }
+    const old = inv.sha256 ? others.find((p) => p.evidence.sha256 === inv.sha256) : undefined;
+    if (old) {
+      reused.push(`${name(inv)} was already submitted as ${old.evidence.filename} (${old.projectId === "unknown" ? "another milestone" : `project ${old.projectName ?? old.projectId}, milestone "${old.milestoneId}"`})`);
+      reusedIds.add(inv.evidence.id);
+    }
+  }
+  if (reused.length) {
+    return outcome(c, "fail", `${listJoin(dedupe(reused))}; an invoice can back only one draw.`, [...reusedIds]);
   }
   const unread: LoadedEvidence[] = [];
   let total = 0n;
@@ -258,58 +285,4 @@ export function checkInvoiceMatchesBudget(
     return outcome(c, "warn", `${head}: outside the pass band (−${under}% / +${over}%) but within ${warn}%; reconcile before release.`, ids, 0.8);
   }
   return outcome(c, "pass", `${head}: within tolerance (−${under}% / +${over}%).`, ids);
-}
-
-// ---------------------------------------------------------------------------------------------
-// Lien waivers: the strongest paper trail in construction lending (a supplier waiving lien rights
-// confirms they were actually paid). STUB: shared EvidenceKind has no "lien_waiver" yet, so we
-// detect them as documents by filename/text, and parse "Invoice No" + "Amount" lines.
-// TODO: add EvidenceKind "lien_waiver" + template requirements in @xrlp/shared; LLM extraction for PDFs.
-const INVOICE_NO = /invoice\s*(?:no\.?|number|#)\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{2,})/i;
-const AMOUNT = /^\s*(?:waiver\s+)?amount\s*[:=]?\s*(?:RLUSD|USD|\$)?\s*([\d,]+(?:\.\d{1,2})?)/im;
-
-export function isLienWaiver(l: LoadedEvidence): boolean {
-  return l.evidence.kind === "document" && (/lien/i.test(l.evidence.filename) || /lien\s+waiver/i.test(l.text ?? ""));
-}
-
-export function checkLienWaivers(items: LoadedEvidence[]): CheckOutcome {
-  const c = "lien_waiver_matches_invoices";
-  const waivers = items.filter(isLienWaiver);
-  if (!waivers.length) return outcome(c, "skipped", "No lien waivers submitted (not yet required by templates).");
-  const invoices = items.filter((l) => l.evidence.kind === "invoice");
-  const invByNo = new Map<string, LoadedEvidence>();
-  for (const inv of invoices) {
-    const no = INVOICE_NO.exec(inv.text ?? "")?.[1];
-    if (no) invByNo.set(no.toUpperCase(), inv);
-  }
-  const fails: string[] = [];
-  const warns: string[] = [];
-  const ids: string[] = [];
-  const matched = new Set<string>();
-  for (const w of waivers) {
-    const no = INVOICE_NO.exec(w.text ?? "")?.[1]?.toUpperCase();
-    const amt = AMOUNT.exec(w.text ?? "")?.[1];
-    const inv = no ? invByNo.get(no) : undefined;
-    if (!no || !amt) {
-      warns.push(`${name(w)}: could not read invoice number/amount`);
-      ids.push(w.evidence.id);
-    } else if (!inv) {
-      warns.push(`${name(w)} references invoice ${no}, which was not submitted`);
-      ids.push(w.evidence.id);
-    } else {
-      matched.add(inv.evidence.id);
-      const invTotal = inv.meta.invoiceTotal;
-      if (invTotal && toCents(invTotal) !== toCents(amt)) {
-        fails.push(`${name(w)} waives ${fmtMoney(centsToString(toCents(amt)))} but invoice ${no} is ${fmtMoney(invTotal)}`);
-        ids.push(w.evidence.id, inv.evidence.id);
-      }
-    }
-  }
-  const unwaived = invoices.filter((i) => !matched.has(i.evidence.id));
-  if (fails.length) return outcome(c, "fail", `${listJoin(fails)}.`, ids);
-  if (warns.length || unwaived.length) {
-    const msg = [...warns, ...(unwaived.length ? [`no lien waiver for ${listJoin(unwaived.map(name))}`] : [])];
-    return outcome(c, "warn", `${listJoin(msg)}.`, [...ids, ...unwaived.map((i) => i.evidence.id)]);
-  }
-  return outcome(c, "pass", `${waivers.length} lien waiver(s) match their invoices exactly.`, waivers.map((w) => w.evidence.id));
 }

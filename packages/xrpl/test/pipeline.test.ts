@@ -80,6 +80,14 @@ class SeqLedger implements PipelineIo {
   /** Blobs carry minLedger (as client.ts does); false → the engine asks for the validated index itself. */
   withMinLedger = true;
   readonly submits: string[] = [];
+  /** fail_hard flag of every submit, in order. */
+  readonly failHards: boolean[] = [];
+  /** tec answers discarded under fail_hard (rippled: TapFAIL_HARD). */
+  discardedTecs = 0;
+  /** Answer tefPAST_SEQ (as rippled does) instead of tefALREADY for a blob already in the open ledger. */
+  openDupPastSeq = false;
+  /** Called at the start of every submit (e.g. another writer acts between two submits). */
+  onSubmit?: (hash: string, failHard: boolean) => void;
   readonly prepares = new Map<string, number>();
   /** By blob hash; consumed by its first submit. */
   readonly faults = new Map<string, Fault>();
@@ -149,8 +157,11 @@ class SeqLedger implements PipelineIo {
     }
   }
 
-  private accept(tx: FakeTx, f: Fault): string {
+  /** `failHard`: rippled's TapFAIL_HARD, a tec is answered but discarded (not applied, not relayed, not held). */
+  private accept(tx: FakeTx, f: Fault, failHard = false): string {
     if (this.done.has(tx.hash)) return "tefPAST_SEQ";
+    // rippled checks the Sequence before "already in the open ledger", so an open-ledger duplicate is tefPAST_SEQ there
+    if (this.openDupPastSeq && this.open.some((x) => x.hash === tx.hash)) return "tefPAST_SEQ";
     if ([...this.open, ...this.held, ...this.limbo].some((x) => x.hash === tx.hash)) return "tefALREADY";
     if (this.validated + 1 > tx.lls) return "tefMAX_LEDGER";
     const next = this.openSeq(tx.account);
@@ -161,6 +172,11 @@ class SeqLedger implements PipelineIo {
       this.held.push(e);
       this.track();
       return "terPRE_SEQ";
+    }
+    if (failHard && e.final.startsWith("tec")) {
+      this.faults.set(tx.hash, f); // the same blob without fail_hard meets the same state
+      this.discardedTecs++;
+      return e.final;
     }
     this.open.push(e);
     this.track();
@@ -215,10 +231,13 @@ class SeqLedger implements PipelineIo {
 
   // ── PipelineIo ──
 
-  async submit(blob: string) {
+  async submit(blob: string, opts?: { failHard?: boolean }) {
     this.net();
+    const failHard = opts?.failHard !== false;
     const tx = JSON.parse(blob) as FakeTx;
+    this.onSubmit?.(tx.hash, failHard);
     this.submits.push(tx.hash);
+    this.failHards.push(failHard);
     this.seen.add(tx.hash);
     const f = this.faults.get(tx.hash) ?? {};
     this.faults.delete(tx.hash);
@@ -228,10 +247,10 @@ class SeqLedger implements PipelineIo {
       return { engineResult: f.reject };
     }
     if (f.disconnect) {
-      if (f.disconnect.received) this.accept(tx, f);
+      if (f.disconnect.received) this.accept(tx, f, failHard);
       throw new DisconnectedError("websocket closed mid-submit");
     }
-    return { engineResult: this.accept(tx, f) };
+    return { engineResult: this.accept(tx, f, failHard) };
   }
 
   async lookup(hash: string, range?: { min: number; max: number }): Promise<Lookup> {
@@ -409,9 +428,45 @@ test("tec in the middle: final (never retried), its Sequence is consumed, later 
   assert.ok(e.onLedger);
   assert.equal(L.seqOfIntent("c2"), 1002);
   assert.deepEqual(range(0, 6).map((i) => L.seqOfIntent(`c${i}`)), range(1000, 6));
-  assert.equal(L.submits.length, 6);
+  // fail_hard discarded c2#1's tec; the same blob again without fail_hard (under the mutex) put it on the ledger
+  assert.equal(L.submits.length, 7);
+  assert.equal(L.discardedTecs, 1);
+  assert.deepEqual(L.submits.flatMap((h, i) => (h === "c2#1" ? [L.failHards[i]] : [])), [true, false]);
+  assert.equal(L.prepares.get("c2"), 1);
   assert.deepEqual(events, []);
   assertAppliedOnce(L, range(0, 6).map((i) => `c${i}`));
+});
+
+test("#171: tec under fail_hard, and another writer takes the Sequence between the two submits → the soft tefPAST_SEQ blob counts as sent, is proven dead from account state, re-signed once", T, async () => {
+  const L = new SeqLedger(1000);
+  const acct = "rTECRACE";
+  const events: PipelineEvent[] = [];
+  L.faults.set("s0#1", { final: "tecNO_AUTH" });
+  let stolen = 0;
+  L.onSubmit = (h, failHard) => {
+    if (h === "s0#1" && !failHard && !stolen) stolen = L.external(acct);
+  };
+  const [out] = await Promise.all(burst(L, acct, "s", 1, { margin: 5, onPipeline: (e) => events.push(e) }));
+  assert.equal(stolen, 1000);
+  assert.equal(out!.hash, "s0#2");
+  assert.equal(seqOf(out!), 1001);
+  assert.equal(L.prepares.get("s0"), 2);
+  assert.ok(!L.done.has("s0#1"), "the discarded / refused blob never applied");
+  assert.ok(L.closes >= 5, "s0#1 counted as sent until its LastLedgerSequence (R5), never re-signed before");
+  assert.ok(events.some((e) => e.kind === "dirty"));
+  assertAppliedOnce(L, ["s0"]);
+  assertIdle(acct);
+});
+
+test("#171: a pre-signed blob already provisionally applied by an earlier call → tefPAST_SEQ + 'not validated' → account state waits for it → its own result, never retriable", T, async () => {
+  const L = new SeqLedger(1000);
+  L.openDupPastSeq = true; // what rippled answers for a blob that sits in its open ledger
+  const acct = "rPREAPPLIED";
+  const b = await L.preparer("pre", { account: acct })(1000);
+  assert.equal((await L.submit(b.blob)).engineResult, "tesSUCCESS"); // the earlier call: applied provisionally, then lost
+  const out = await withAccountLock(acct, () => submitReliably(b, L, FAST));
+  assert.equal(out.hash, "pre#1");
+  assertAppliedOnce(L, ["pre"]);
 });
 
 test("tx dies after a tesSUCCESS prelim (a tef/tem at apply) → later txs stall → all settle by LLS → resync → only the unapplied are re-signed, in order", T, async () => {

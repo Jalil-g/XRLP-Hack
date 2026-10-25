@@ -95,7 +95,9 @@ releasePolicyFor(project, milestone, riskTier?) returns shared ReleasePolicy. Th
 high. Minimum confidence is 0.7/0.8/0.9 (+0.05 for high-value draws). At 50,000 RLUSD or high risk,
 two independent audits are required. SoV evidence kinds determine document/invoice optionality;
 unknown context retains conservative gates. The legacy policyFor(project, builder, milestone)
-additionally provides detail thresholds and notes.
+additionally provides detail thresholds and notes. The adapter's two-argument policyFor uses the
+risk from this process's verifyProject, else options.riskTier, else "medium" (never a silent "high"
+from a process-local cache miss); verifyMilestone still enforces the builder's own riskTier.
 
 The milestone runner combines caller policy with the baseline; callers can tighten but cannot
 remove mandatory checks or lower thresholds. Any required failure fails. Missing, skipped, warning
@@ -116,6 +118,21 @@ requires review; beyond 25% fails. High-risk/high-value policy narrows the pass 
 integer cross-multiplication, so a one-cent excess cannot hide behind a rounded display percentage.
 Unreadable/malformed totals need review. Text/JSON parsing is deterministic; PDFs/images use live
 extraction and are explicitly labeled LLM-extracted. No live PDF extraction result was measured here.
+
+## Lien-waiver reconciliation (VER-12)
+
+`lien_waiver_present` requires one conditional waiver for every current-draw invoice. Starting with
+the second milestone, it also requires one unconditional waiver for every invoice from the immediately
+preceding draw. `lien_waiver_matches_invoices` then matches waiver type and invoice number, compares
+amounts in exact integer cents, and requires the claimant/payee to match the invoice vendor.
+
+Waivers currently use `EvidenceKind: "document"` and are detected from their filename or text because
+the shared contract has no dedicated lien-waiver evidence kind yet. The milestone runner therefore
+lists both checks as optional until the shared release templates add waiver requirements; a caller may
+tighten its release policy to require them. Previous-draw invoices must arrive as `PriorEvidence` with
+the same project id and the immediately preceding milestone id. Missing provenance cannot satisfy the
+unconditional-waiver check. Parsing supports plain-text fixtures; unreadable fields require operator
+reconciliation rather than being treated as a match.
 
 ## Project verification
 
@@ -177,6 +194,25 @@ Live vision has not been demonstrated: sources span different sites, the wide fo
 a gravel floor, and the inspector rebar photo shows work in progress. Validate or replace these photos
 before claiming a live scenario A pass. Fixed EXIF dates (Oct 19–24 2026) require the seeded timeline
 or re-stamping with stampExif before a real-time demo.
+
+## AWS-native Claude provider (VER-14)
+
+The owner explicitly selected AWS Bedrock for live validation. Set VERIFIER_PROVIDER=bedrock,
+AWS_REGION=us-west-2 and AWS_BEARER_TOKEN_BEDROCK in a gitignored environment. The factory sends
+that token only to https://bedrock-mantle.<region>.api.aws/anthropic using the native Messages API.
+Model IDs carry the anthropic. prefix. Existing prompts, structured schemas, 20s deadlines and zero
+retries are unchanged. Both project and milestone review use this factory; cache keys include provider.
+Mock mode still requires no key. The direct Anthropic provider remains the default. Example values
+are in packages/verifier/.env.example; real keys must never be committed or logged.
+
+This uses the documented native Messages endpoint with the existing Anthropic SDK, rather than
+adding the legacy InvokeModel SDK. Reference: https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock
+No claim is made about AWS prize qualification or available account credits.
+
+Live check: a minimal inference request authenticated but returned HTTP 403 because the IAM identity
+lacks bedrock-mantle:CreateInference. The standard model-catalog read also returned 403. No inference
+succeeded and the full live eval was not run. An AWS administrator must grant the session suitable
+model inference permissions; there is no code-side bypass. VER-10 remains pending live acceptance.
 
 ## Environment
 

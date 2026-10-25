@@ -4,9 +4,11 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { TxLink } from "@/components/chain";
+import { InvestmentTransfer } from "@/components/project/investment-transfer";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/form";
+import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { errorDescription, errorFeedback } from "@/lib/error-feedback";
 import type { Investment, Party } from "@/lib/contract";
@@ -41,6 +43,12 @@ export function InvestDialog({
   const cents = validNumber ? toCents(raw.trim()) : 0;
   const invalid = !validNumber || !Number.isSafeInteger(cents) ? "Enter a valid amount with up to two decimal places" : cents <= 0 ? "Enter an amount" : cents > toCents(remaining) ? `Only ${formatAmount(remaining)} RLUSD is left to raise` : null;
 
+  const changeOpen = (nextOpen: boolean) => {
+    if (submitting.current) return;
+    setOpen(nextOpen);
+    if (!nextOpen && done) router.refresh();
+  };
+
   const deposit = async () => {
     if (submitting.current || invalid || !reviewing) return;
     submitting.current = true;
@@ -49,7 +57,6 @@ export function InvestDialog({
     try {
       const r = await api.invest(projectId, investor.address, fromCents(cents));
       setDone(r.investment);
-      router.refresh();
     } catch (err) {
       const feedback = errorFeedback(err);
       setError(err instanceof ApiError && err.txResult === "tecNO_AUTH" ? `${investor.name} needs a KYC credential first. Issue one from Portfolio.` : `${feedback.title}. ${errorDescription(feedback)}`);
@@ -72,29 +79,28 @@ export function InvestDialog({
       >
         Invest
       </Button>
-      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
-        <DialogContent aria-describedby={undefined}>
-          {done ? (
+      <Dialog open={open} onOpenChange={changeOpen}>
+        <DialogContent closeDisabled={busy} data-pause-auto-refresh="true">
+          {busy || done ? (
             <>
               <DialogHeader>
-                <DialogTitle>Deposit confirmed</DialogTitle>
+                <DialogTitle>{done ? "You’re invested" : "Moving your investment"}</DialogTitle>
+                <DialogDescription>
+                  {done ? `Your deposit in ${projectName} is confirmed.` : `Sending your RLUSD to the ${projectName} vault.`}
+                </DialogDescription>
               </DialogHeader>
-              <DialogBody className="space-y-4">
-                <p className="hero-amount !text-[44px]">
-                  {formatAmount(done.amount, { cents: true })}
-                  <span>{" "}RLUSD</span>
-                </p>
-                <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-small">
-                  <dt className="text-ink-2">Vault</dt>
-                  <dd>{projectName}</dd>
-                  <dt className="text-ink-2">Receipt</dt>
-                  <dd><TxLink hash={done.tx} /></dd>
-                </dl>
+              <DialogBody>
+                <InvestmentTransfer
+                  amount={done?.amount ?? fromCents(cents)}
+                  investorName={investor.name}
+                  investorAddress={investor.address}
+                  projectName={projectName}
+                  confirmed={!!done}
+                />
+                {done && <p className="mt-4 border-t border-line pt-4 text-small text-ink-2">VaultDeposit <TxLink hash={done.tx} /></p>}
               </DialogBody>
               <DialogFooter>
-                <Button variant="secondary" onClick={() => setOpen(false)}>
-                  Done
-                </Button>
+                {done ? <Button onClick={() => changeOpen(false)}>Done</Button> : <p className="w-full text-center text-caption text-ink-2">Waiting for the vault to respond.</p>}
               </DialogFooter>
             </>
           ) : reviewing ? (
@@ -111,7 +117,10 @@ export function InvestDialog({
                   <dt className="text-ink-2">Project</dt>
                   <dd className="font-medium">{projectName}</dd>
                   <dt className="text-ink-2">From</dt>
-                  <dd>{investor.name}</dd>
+                  <dd className="flex flex-wrap items-center gap-2">
+                    <span>{investor.name}</span>
+                    <Tag tone={investor.kyc ? "pass" : "review"}>{investor.kyc ? "KYC verified" : "KYC required"}</Tag>
+                  </dd>
                   <dt className="text-ink-2">Annual rate</dt>
                   <dd>{formatBps(rateBps)}</dd>
                 </dl>

@@ -452,6 +452,29 @@ Answers to the research questions (rippled `LoanSet.cpp` / `Batch.cpp`, 3.4.1 an
 - **Limits:** 2..8 inner txs, so `escrows` mode takes 2..8 milestones and `full` mode 1..7 (the LoanSet takes one slot). One milestone →
   use `createMilestoneEscrow`.
 
+**Re-check 2026-10-25 ~06:00–06:08 UTC (still blocked).** Method: JSON-RPC to `https://s.devnet.rippletest.net:51234`.
+- `server_info`: `build_version` **3.4.1**, validated ledger 6398080, `server_state` full, not amendment-blocked.
+- `feature`: 107 amendments known. `LendingProtocol`, `LendingProtocolV1_1`, `SingleAssetVault`, `BatchV1_1`, `fixBatchV1_2`,
+  `TokenEscrow` enabled. **No `LendingProtocolV1_2` entry at all**, so the server doesn't support it.
+- `ledger_entry` of the Amendments object (`7DB0788C…6EF4`, validated ledger 6398083): 90 enabled, no `Majorities`.
+  `SHA512Half("LendingProtocolV1_2")` = `5AE2B8F0B54FFB81…` is absent, while the V1_1 hash (`A360E2BF…`) is present.
+
+Two fresh-faucet `spike:batch` runs (`SPIKE_SUBSCRIPTION_S=30`, wallets only in this worktree's `.data`) gave F1 and F2 →
+`temINVALID_INNER_BATCH` "Malformed: Invalid inner batch transaction." again. The second run used the new
+`closeLoanAtomic({ mode: "auto" })` for E. It tried the full close, got the tem (nothing on ledger), and fell back to
+`"escrows"` (`result.fallback.engineResult` = `temINVALID_INNER_BATCH`):
+
+| # | step | result | explorer |
+|---|---|---|---|
+| F1/F2 | full close (platform outer / SPV outer), as above | `temINVALID_INNER_BATCH` ×2 | — (not on ledger) |
+| E1 | auto → fallback: LoanSet countersigned by the SPV multisig, ledger 6398230 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/7DB1BE0B5C78CD0A4093E58E16B71D9325165ADEB30CE72A79E7D0EEF9F651C6 |
+| E2 | auto → fallback: Batch outer = SPV (3/4), 3 × EscrowCreate 330 RLUSD, fee 8 drops, ledger 6398232 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/AEFC3C579DAD2FD88D49C81345ED2F15B9558E7D405E0C94E2E0CB5E42379C55 |
+| E2↳ | inner EscrowCreates (OfferSequence 6398203 / 04 / 05) | `tesSUCCESS` ×3 | https://devnet.xrpl.org/transactions/65338F30907B8F45EF81F322E56BC40526DF889A05B6BF86F0B7553673772C3C · https://devnet.xrpl.org/transactions/F97457411C169AA9DA741E94CAC9881331BB63FF3A9196C93F8ED97D75AE87B7 · https://devnet.xrpl.org/transactions/1D277FF5E5E5C2C040BD010795977BA00AA5EE39295E244702A92C7CAEA7BD8B |
+
+Once V1_2 is live: `feature LendingProtocolV1_2` shows `enabled: true`, and `spike:batch` F1 is `tesSUCCESS` with E reporting
+"FULL atomic close worked". `closeLoanAtomic({ mode: "auto" })` then needs no change. Moving the core close path
+(`closeLoanAndCreateEscrows`, which today does LoanSet + `createEscrowsAtomic`) onto the full close is a separate change.
+
 ### 2e. XRPL-13b devnet results (atomic escrows in close, recovery)
 
 `WALLETS_FILE=.data/wallets.<you>.json pnpm --filter @xrlp/xrpl spike:close-batch` (2026-10-25 01:20–01:24 UTC, own bootstrap

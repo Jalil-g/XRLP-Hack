@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { decode, encode, Wallet } from "xrpl";
+import { decode, encode, Wallet, type Payment } from "xrpl";
 import { buildAttestTx, verifyAttestBlob } from "@xrlp/xrpl";
 import {
   ATTEST_MEMO_TYPE,
@@ -97,4 +97,38 @@ test("auditHash ignores order, whitespace and core-assigned fields; changes with
 
 test("canonicalJson sorts keys at every level and drops undefined", () => {
   assert.equal(canonicalJson({ b: [{ d: 1, c: undefined, a: "x" }], a: null }), '{"a":null,"b":[{"a":"x","d":1}]}');
+});
+
+test("verifyAuditBlob binds signer, SPV, milestone, report and uploaded photo hashes", async () => {
+  const { verifyAuditBlob } = await import("../src/index.ts");
+  const signer = Wallet.generate();
+  const spv = Wallet.generate().classicAddress;
+  const report = { ...audit, inspector: signer.classicAddress };
+  const tx = { ...buildAttestationTx({ account: report.inspector, spv, memo: await auditMemo(report) }), ...common };
+  const blob = signer.sign(tx).tx_blob;
+  await verifyAuditBlob(blob, report, spv);
+  for (const changed of [
+    { ...report, notes: "tampered" },
+    { ...report, milestoneId: "other-milestone" },
+    { ...report, inspector: Wallet.generate().classicAddress },
+    { ...report, evidenceBundleHash: "00".repeat(32) },
+    { ...report, photos: [{ sha256: "00".repeat(32) }] },
+    { ...report, checklist: [{ sovCode: "03-300", status: "done" }] },
+  ]) await assert.rejects(verifyAuditBlob(blob, changed, spv));
+  await assert.rejects(verifyAuditBlob(blob, report, Wallet.generate().classicAddress));
+  for (const changed of [
+    { ...tx, Amount: "1000000" },
+    { ...tx, DestinationTag: 123 },
+    { ...tx, Flags: 131072 },
+    { ...tx, Memos: [...tx.Memos!, ...tx.Memos!] },
+    { ...tx, Memos: buildAttestationTx({ account: report.inspector, spv, memo: { ...(await auditMemo(report)), kind: "verdict" } }).Memos },
+  ]) await assert.rejects(verifyAuditBlob(signer.sign(changed).tx_blob, report, spv));
+  await assert.rejects(verifyAuditBlob(signer.sign({ TransactionType: "AccountSet", Account: signer.classicAddress, ...common }).tx_blob, report, spv));
+  const decoded = decode(blob) as unknown as Payment;
+  decoded.TxnSignature = "00".repeat(64);
+  await assert.rejects(verifyAuditBlob(encode(decoded), report, spv));
+  // A mathematically valid signature is not sufficient: the public key must authorize Account.
+  const attacker = Wallet.generate();
+  const impersonator = new Wallet(attacker.publicKey, attacker.privateKey, { masterAddress: signer.classicAddress });
+  await assert.rejects(verifyAuditBlob(impersonator.sign(tx).tx_blob, report, spv), /master key/);
 });

@@ -2,6 +2,7 @@ import { CheckResult, MILESTONE_CHECKS as REQUIRED_SUITE, ReleasePolicy, Verdict
 import {
   checkGpsWithinSite,
   checkInvoiceMatchesBudget,
+  checkLienWaiverPresent,
   checkLienWaivers,
   checkNoDuplicatePhoto,
   checkPhotoFresh,
@@ -51,8 +52,11 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   const { project, builder, milestone } = input;
   const timeline = { ...(input.escrowCreatedAt ? { escrowCreatedAt: input.escrowCreatedAt } : {}), ...input.timeline };
   const template = milestoneTemplate(input);
-  const prior: PriorEvidence[] = (input.priorEvidence ?? [])
-    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }));
+  // Core stores HTTP uploads with `meta: {}`: fingerprint prior photos from their bytes, or the
+  // cross-project reuse check could only catch byte-identical copies.
+  const prior: PriorEvidence[] = await Promise.all((input.priorEvidence ?? [])
+    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }))
+    .map((record) => withPerceptualHash(record, { files: input.files, dataDir: input.dataDir })));
   const ctx: MilestoneContext = { project, builder, milestone, template, riskTier: builder.riskTier };
   const policy = policyFor(project, builder, milestone);
   const standard = releasePolicyFor(project, milestone, builder.riskTier);
@@ -69,6 +73,16 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   policy.thresholds.minLlmConfidence = policy.minConfidence = Math.max(policy.minConfidence, release.minConfidence);
 
   const loaded = await Promise.all(input.evidence.map((ev) => loadEvidence(ev, { files: input.files, dataDir: input.dataDir })));
+  const previousMilestone = project.milestones
+    .filter((candidate) => candidate.index < milestone.index)
+    .sort((a, b) => b.index - a.index)[0];
+  const previousInvoiceRecords = previousMilestone
+    ? prior.filter((record) => record.projectId === project.id
+      && record.milestoneId === previousMilestone.id
+      && record.evidence.kind === "invoice")
+    : [];
+  const previousInvoices = await Promise.all(previousInvoiceRecords.map((record) =>
+    loadEvidence(record.evidence, { files: input.files, dataDir: input.dataDir })));
   const photos = loaded.filter((l) => l.evidence.kind === "photo" && l.bytes);
   const documents = loaded.filter((l) => (l.evidence.kind === "invoice" || l.evidence.kind === "document") && l.bytes);
   const inspectorPhotos = await Promise.all((input.audits ?? []).flatMap((audit) => audit.photos).map((ev) => loadEvidence(ev, { files: input.files, dataDir: input.dataDir })));
@@ -94,8 +108,9 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     checkGpsWithinSite(ctx, loaded, policy),
     checkPhotoFresh(loaded, timeline, policy),
     checkNoDuplicatePhoto(ctx, loaded, prior, policy),
-    checkInvoiceMatchesBudget(ctx, loaded, policy, judgement.invoiceTotals),
-    checkLienWaivers(loaded),
+    checkInvoiceMatchesBudget(ctx, loaded, policy, judgement.invoiceTotals, prior),
+    checkLienWaiverPresent(loaded, previousInvoices, { previousRequired: !!previousMilestone }),
+    checkLienWaivers(loaded, previousInvoices),
     ...checkInspectorAudits(input, loaded, policy.requiredInspectors),
     judgement.stage,
     judgement.documents,
@@ -118,6 +133,17 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   return { verdict, policy, checks: decided.checks, evidence: loaded };
 }
 
+const PHASH = /^[0-9a-f]{16}$/i;
+
+/** Prior photo without a usable stored pHash: compute it from the stored bytes (left as-is if unreadable; the check then warns). */
+async function withPerceptualHash(record: PriorEvidence, opts: { files?: Record<string, Uint8Array>; dataDir?: string }): Promise<PriorEvidence> {
+  const ev = record.evidence;
+  if (ev.kind !== "photo" || PHASH.test(ev.meta?.perceptualHash ?? "")) return record;
+  const loaded = await loadEvidence(ev, opts);
+  const hash = loaded.loadError ? undefined : loaded.meta.perceptualHash;
+  return hash ? { ...record, evidence: { ...ev, meta: { ...ev.meta, perceptualHash: hash } } } : record;
+}
+
 // ---------------------------------------------------------------------------------------------
 interface Decided {
   decision: Verdict["decision"];
@@ -128,7 +154,7 @@ interface Decided {
 /** Map check outcomes through the policy: deterministic fails decide; low LLM confidence -> human. */
 export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, release: ReleasePolicy = {
   riskTier: policy.riskTier, requiredChecks: [...REQUIRED_SUITE, "evidence_readable"],
-  optionalChecks: ["lien_waiver_matches_invoices"], minConfidence: policy.minConfidence,
+  optionalChecks: ["lien_waiver_present", "lien_waiver_matches_invoices"], minConfidence: policy.minConfidence,
   requiredAudits: policy.requiredInspectors,
 }): Decided {
   const complete = [...outcomes];

@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { validateVaultDates } from "../src/lending-math.ts";
-import { parsePrestageFile, PRESTAGE_VERSION, prestageVaultDates, type PrestageFile, type PrestageProject } from "../src/prestage-types.ts";
+import { FINISH_LLS_MARGIN } from "../src/escrow.ts";
+import { DEFAULT_MARGIN_S, releaseMarginS } from "../src/preflight.ts";
+import {
+  parsePrestageFile,
+  PRESTAGE_C_FINISH_LLS_MARGIN,
+  PRESTAGE_C_MIN_SLACK_S,
+  PRESTAGE_VERSION,
+  prestageCCancelAfterS,
+  prestageCReleaseSlackS,
+  prestageVaultDates,
+  type PrestageFile,
+  type PrestageProject,
+} from "../src/prestage-types.ts";
 
 const project = (key: "A" | "B" | "C"): PrestageProject => ({
   key,
@@ -84,3 +96,25 @@ test("prestageVaultDates: Project C defaults stay short (~9 min after Subscripti
 });
 
 const paymentInterval = (total: number, interval: number) => total * interval;
+
+test("releaseMarginS: preflight's release margin per LastLedgerSequence margin", () => {
+  assert.equal(releaseMarginS(), DEFAULT_MARGIN_S); // 20 ledgers x 5 s = 100 < 120
+  assert.equal(releaseMarginS(FINISH_LLS_MARGIN), 300); // releaseMilestone's default: 60 ledgers x 5 s
+  assert.equal(releaseMarginS(PRESTAGE_C_FINISH_LLS_MARGIN), 120);
+  assert.equal(releaseMarginS(10, 30), 50);
+});
+
+test("Project C: finishes keep >= PRESTAGE_C_MIN_SLACK_S before the release margin (devnet 2026-10-25 regression)", () => {
+  const intervalS = 240; // PRESTAGE_C_INTERVAL_S default
+  const cancelAfterS = prestageCCancelAfterS(intervalS);
+  assert.equal(cancelAfterS, 360);
+  assert.ok(cancelAfterS < 2 * intervalS, "CancelAfter must be before maturity (2 intervals)");
+  const slack = prestageCReleaseSlackS({ intervalS, releaseMarginS: releaseMarginS(PRESTAGE_C_FINISH_LLS_MARGIN) });
+  assert.equal(slack, 240);
+  assert.ok(slack >= PRESTAGE_C_MIN_SLACK_S);
+  // The old schedule: C finished with the default 60-ledger margin (300 s) -> 60 s of slack; a one-minute devnet stall
+  // after LoanSet left "only 280s to CancelAfter (< 300s margin)" and failed the whole prestage. Prestage now refuses it.
+  assert.ok(prestageCReleaseSlackS({ intervalS, releaseMarginS: releaseMarginS(FINISH_LLS_MARGIN) }) < PRESTAGE_C_MIN_SLACK_S);
+  // A shorter interval that can't hold the slack is refused up front.
+  assert.ok(prestageCReleaseSlackS({ intervalS: 180, releaseMarginS: releaseMarginS(PRESTAGE_C_FINISH_LLS_MARGIN) }) < PRESTAGE_C_MIN_SLACK_S);
+});

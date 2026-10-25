@@ -25,6 +25,7 @@ import type {
   XrplAddress,
   Evidence,
 } from "@xrlp/shared";
+import type { InspectorSiteVisit, SiteVisitReportInput } from "./site-visit.ts";
 
 /** A file the HTTP layer already stored under DATA_DIR (multipart upload). */
 export interface StoredFile {
@@ -44,6 +45,14 @@ export interface EvidenceUpload extends StoredFile {
 /** Route 10 report body (the JSON part of the multipart). Photos come as StoredFile[]. */
 export type AuditReportInput = Pick<InspectorAudit, "inspector" | "evidenceBundleHash" | "checklist" | "notes">;
 
+/** Public demo identities for the presenter role picker; never wallet material. */
+export interface DemoParty {
+  address: XrplAddress;
+  name: string;
+  role: "investor" | "builder" | "inspector" | "platform" | "release_service" | "ai_agent" | "spv";
+  kyc?: boolean;
+}
+
 /** One step the keeper tried and could not finish this tick; it retries the same step on the next tick. */
 export interface KeeperIssue {
   projectId: string;
@@ -60,6 +69,7 @@ export interface KeeperTickResult {
 }
 
 export interface CoreApi {
+  listDemoParties(): Promise<DemoParty[]>;
   listProjects(q?: { status?: ProjectStatus }): Promise<ProjectSummary[]>; // 1
   getProject(id: string): Promise<ProjectDetail>; // 2
   createProject(input: CreateProjectInput): Promise<Project>; // 3
@@ -96,10 +106,26 @@ export interface CoreApi {
   inspectorQueue(address: XrplAddress): Promise<InspectorTask[]>; // 18
   kycInvestor(address: XrplAddress): Promise<{ events: ChainEvent[] }>; // 19
   portfolio(investor: XrplAddress): Promise<PortfolioPosition[]>; // 20
-  resetDemo(body: { seed?: "maple-st" }): Promise<{ ok: true }>; // 21
+  resetDemo(body: { seed?: DemoSeed }): Promise<{ ok: true }>; // 21
   keeperTick(): Promise<KeeperTickResult>; // 22
   tryStealDemo(id: string, mid: string): Promise<TryStealResult>; // 23
+  submitSiteVisit(
+    id: string,
+    body: { report: SiteVisitReportInput; photos: StoredFile[]; signedTxBlob?: string },
+  ): Promise<{ visit: InspectorSiteVisit; events: ChainEvent[] }>; // 24
+  decideProject(
+    id: string,
+    body: { actor: XrplAddress; decision: "approve" | "reject"; reason: string },
+  ): Promise<{ project: Project; events: ChainEvent[] }>; // 25
 }
+
+/**
+ * Route 21 seeds. Fake mode: "maple-st" = the back-dated scenario (others are refused). LEDGER_MODE=devnet: "prestage",
+ * "maple-st" (what the web's Reset button sends) and no seed all load the XRPL prestage (CORE-07); "participants" = the
+ * devnet builder, inspector panel and KYC'd investors only, no projects (CORE-05 live-flow e2e).
+ */
+export const DEMO_SEEDS = ["maple-st", "prestage", "participants"] as const;
+export type DemoSeed = (typeof DEMO_SEEDS)[number];
 
 /**
  * CORE-12. Owns escrow preimages (CSPRNG 32 bytes, unique per escrow, encrypted at rest under DATA_DIR) and the finish.
@@ -116,6 +142,8 @@ export interface ReleaseServicePort {
   release(p: { project: Project; milestone: Milestone }): Promise<TxResult[]>;
   /** Route 23: platform-signed finish with RANDOM bytes. Never reads the preimage store. */
   tryStealDemo(p: { project: Project; milestone: Milestone }): Promise<TxResult>;
+  /** When this milestone's release key was marked exposed by a failed finish (no release can ever use it), else undefined. */
+  keyExposedAt(p: { projectId: string; milestoneId: string }): Promise<string | undefined>;
   /** Demo reset. */
   clear(): Promise<void>;
 }

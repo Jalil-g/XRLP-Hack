@@ -141,7 +141,8 @@ export class FakeVerifier implements VerifierPort {
       ),
     );
 
-    // gps_within_site (EXIF: catches lazy fraud only)
+    // gps_within_site. EXIF GPS is spoofable, so this only catches lazy fraud; the shown reason states what was read, and
+    // packages/verifier strips the same caveat from its displayed reasons.
     const noGps = photos.filter((p) => !p.meta.gps);
     const far = photos.filter((p) => p.meta.gps && haversineM(p.meta.gps, project.siteGeo) > project.siteGeo.radiusM);
     checks.push(
@@ -152,7 +153,7 @@ export class FakeVerifier implements VerifierPort {
           ? `${far.map((p) => `${p.filename} ${Math.round(haversineM(p.meta.gps!, project.siteGeo))}m from site`).join("; ")}`
           : noGps.length
             ? `${noGps.length} photos without GPS`
-            : `All photos within ${project.siteGeo.radiusM}m of the site (EXIF; catches lazy fraud)`,
+            : `All ${photos.length} photos within ${project.siteGeo.radiusM} m of the site (GPS from the photo files)`,
         (far.length ? far : noGps).map((p) => p.id),
       ),
     );
@@ -160,13 +161,17 @@ export class FakeVerifier implements VerifierPort {
     // photo_fresh
     const stale = escrowCreatedAt ? photos.filter((p) => p.meta.takenAt && p.meta.takenAt < escrowCreatedAt) : [];
     const noDate = photos.filter((p) => !p.meta.takenAt);
-    const daysBefore = (p: Evidence) => Math.round((new Date(escrowCreatedAt!).getTime() - new Date(p.meta.takenAt!).getTime()) / 86_400_000);
+    const daysBefore = (p: Evidence) => Math.floor((new Date(escrowCreatedAt!).getTime() - new Date(p.meta.takenAt!).getTime()) / 86_400_000);
+    const howLongBefore = (p: Evidence) => {
+      const d = daysBefore(p);
+      return d < 1 ? "taken before this escrow existed" : `taken ${d} day${d === 1 ? "" : "s"} before this escrow existed`;
+    };
     checks.push(
       check(
         "photo_fresh",
         stale.length ? "fail" : noDate.length ? "warn" : "pass",
         stale.length
-          ? stale.map((p) => `${p.filename} taken ${daysBefore(p)} days before this escrow existed`).join("; ")
+          ? stale.map((p) => `${p.filename} ${howLongBefore(p)}`).join("; ")
           : noDate.length
             ? `${noDate.length} photos without EXIF time`
             : "All photos taken after the escrow was created",
@@ -175,12 +180,12 @@ export class FakeVerifier implements VerifierPort {
     );
 
     // no_duplicate_photo (sha256 + pHash across ALL projects)
-    const seen = new Map<string, Evidence & { projectId?: string }>();
+    const seen = new Map<string, Evidence & { projectId?: string; projectName?: string }>();
     for (const p of priorEvidence) {
       seen.set(p.sha256, p);
       if (p.meta.perceptualHash) seen.set(`p:${p.meta.perceptualHash}`, p);
     }
-    const dupes: { e: Evidence; of: Evidence & { projectId?: string } }[] = [];
+    const dupes: { e: Evidence; of: Evidence & { projectId?: string; projectName?: string } }[] = [];
     for (const p of photos) {
       const of = seen.get(p.sha256) ?? (p.meta.perceptualHash ? seen.get(`p:${p.meta.perceptualHash}`) : undefined);
       if (of) dupes.push({ e: p, of });
@@ -190,7 +195,7 @@ export class FakeVerifier implements VerifierPort {
         "no_duplicate_photo",
         dupes.length ? "fail" : "pass",
         dupes.length
-          ? dupes.map((d) => `${d.e.filename} matches ${d.of.filename}${d.of.projectId && d.of.projectId !== project.id ? ` from project ${d.of.projectId}` : ""} (distance 0/64)`).join("; ")
+          ? dupes.map((d) => `${d.e.filename} matches ${d.of.filename}${d.of.projectId && d.of.projectId !== project.id ? ` from project ${d.of.projectName ?? d.of.projectId}` : ""} (distance 0/64)`).join("; ")
           : `${photos.length} photos unique across all projects`,
         dupes.map((d) => d.e.id),
       ),
@@ -243,11 +248,18 @@ export class FakeVerifier implements VerifierPort {
         unclear.map((p) => p.id),
       ),
     );
+    // The inspector marking a line not done / partial is a disagreement with the builder's claim that the stage is done:
+    // say so (warn) instead of "agrees", so the row never contradicts the inspector's checklist on screen.
+    const behind = items.filter((i) => i.status !== "done");
     checks.push(
       check(
         "audit_matches_evidence",
-        audits.length ? "pass" : "fail",
-        audits.length ? "[mock] Inspector checklist agrees with builder evidence" : "No audit to compare",
+        !audits.length ? "fail" : behind.length ? "warn" : "pass",
+        !audits.length
+          ? "No audit to compare"
+          : behind.length
+            ? `[mock] Inspector marked ${behind.length} of ${items.length} item${items.length === 1 ? "" : "s"} not done; the builder's evidence claims the stage complete`
+            : "[mock] Inspector checklist agrees with builder evidence",
       ),
     );
     checks.push(check("document_consistency", "pass", "[mock] Dates, parties and site address agree across documents"));

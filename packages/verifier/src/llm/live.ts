@@ -7,6 +7,7 @@ import { centsToString, clamp01, round2, toCents } from "../util.ts";
 import { isImage, isTextLike } from "../meta.ts";
 import { withDeadline } from "../deadline.ts";
 import { readReviewCache, reviewCacheKey, writeReviewCache } from "./cache.ts";
+import { createLiveClient } from "./client.ts";
 import {
   LlmMilestoneOutput,
   unavailableJudgement,
@@ -72,7 +73,7 @@ async function evidenceBlocks(l: LoadedEvidence): Promise<Anthropic.Beta.BetaCon
 export class LiveJudge implements MilestoneJudge {
   constructor(
     private readonly model: string,
-    private readonly client: Anthropic = new Anthropic({ timeout: 20_000, maxRetries: 0 }),
+    private readonly client: Anthropic = createLiveClient(),
     private readonly options: { timeoutMs?: number; cacheDir?: string | false } = {},
   ) {}
 
@@ -131,7 +132,7 @@ export class LiveJudge implements MilestoneJudge {
       return judgement;
     } catch (e) {
       const msg =
-        e instanceof Anthropic.AuthenticationError ? "invalid or missing ANTHROPIC_API_KEY"
+        e instanceof Anthropic.AuthenticationError ? "provider credentials are invalid or missing"
         : e instanceof Anthropic.RateLimitError ? "rate limited"
         : e instanceof Anthropic.APIError ? `API error ${e.status ?? "unknown"}`
         : "image processing, transport or structured review failed";

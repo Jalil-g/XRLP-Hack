@@ -56,6 +56,13 @@ export function assertDevnetNetworkId(reported: unknown, env: Record<string, str
 
 assertDevnetEndpoint(config);
 
+/** Throws on any mainnet endpoint or network name. Exported so other packages (core's LEDGER_MODE=devnet) reuse the same guard. */
+export function assertNotMainnet(wsUrl: string, network: string): void {
+  if (/mainnet|s1\.ripple\.com|s2\.ripple\.com|xrplcluster/i.test(wsUrl) || network === "mainnet") {
+    throw new Error(`Refusing to run against mainnet (${wsUrl}). Devnet only.`);
+  }
+}
+
 // ---------------------------------------------------------------- secret paths (security review L2)
 
 /**

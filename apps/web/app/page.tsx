@@ -5,17 +5,20 @@ import { buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
-import { PROJECT_STATUS } from "@/lib/display";
+import { PROJECT_STATUS, PROJECT_TYPE } from "@/lib/display";
+import { fundingCountdown, MARKETPLACE_TYPES, marketplaceProjects, parseProjectType } from "@/lib/marketplace";
 import { cn, formatAmount, formatBps, formatDate, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 const GRID = "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-2 md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_72px_150px]";
 
-export default async function ProjectsPage() {
-  const listed = await api.listProjects({ status: "verified" });
-  // Open for funding first, then the rest in their given order.
-  const projects = [...listed].sort((a, b) => Number(b.status === "funding") - Number(a.status === "funding"));
+type Props = { searchParams: Promise<{ type?: string | string[] }> };
+
+export default async function ProjectsPage({ searchParams }: Props) {
+  const selectedType = parseProjectType((await searchParams).type);
+  // Verified projects in every later status (funding, escrowed, completed...), open-for-funding first (lib/marketplace).
+  const projects = marketplaceProjects(await api.listProjects(), selectedType);
   const target = projects.reduce((total, project) => total + toCents(project.principal), 0);
   const raised = projects.reduce((total, project) => total + toCents(project.raised), 0);
   const open = projects.filter((project) => project.status === "funding").length;
@@ -25,19 +28,35 @@ export default async function ProjectsPage() {
       <AutoRefresh ms={5000} />
       <h1 className="sr-only">Projects</h1>
 
-      {projects.length === 0 ? (
-        <Empty title="No verified projects" action={<Link href="/demo" className={buttonClass("secondary")}>Open demo</Link>} />
-      ) : (
-        <>
-          <ProjectHero
-            money={{ mode: "funding", raisedCents: raised, targetCents: target }}
-            facts={[
-              { label: "Projects", value: String(projects.length) },
-              { label: "Open for funding", value: String(open) },
-            ]}
-          />
+      {projects.length > 0 && (
+        <ProjectHero
+          money={{ mode: "funding", raisedCents: raised, targetCents: target }}
+          facts={[
+            { label: "Projects", value: String(projects.length) },
+            { label: "Open for funding", value: String(open) },
+          ]}
+        />
+      )}
 
-          <section aria-label="Projects">
+      <section aria-label="Projects">
+        <nav className="mb-4 flex flex-wrap gap-2" aria-label="Filter projects by type">
+          <FilterLink href="/" active={!selectedType}>All</FilterLink>
+          {MARKETPLACE_TYPES.map((type) => (
+            <FilterLink key={type} href={`/?type=${type}`} active={selectedType === type}>{PROJECT_TYPE[type]}</FilterLink>
+          ))}
+        </nav>
+
+        {projects.length === 0 ? (
+          <Empty
+            title={selectedType ? "No matching verified projects" : "No verified projects"}
+            action={selectedType
+              ? <Link href="/" className={buttonClass("secondary")}>Clear the type filter</Link>
+              : <Link href="/demo" className={buttonClass("secondary")}>Open demo</Link>}
+          >
+            {selectedType ? `No ${PROJECT_TYPE[selectedType].toLowerCase()} projects are listed right now.` : "Projects appear here after they pass verification. This list refreshes automatically."}
+          </Empty>
+        ) : (
+          <>
             <div aria-hidden className={cn(GRID, "hidden border-b border-line px-3 pb-2 text-caption text-ink-2 md:grid")}>
               <span>Project</span>
               <span>Raised</span>
@@ -58,11 +77,18 @@ export default async function ProjectsPage() {
                     >
                       <span className="min-w-0">
                         <span className="block truncate text-body font-semibold">{p.name}</span>
-                        <span className="block text-small text-ink-2">{place}</span>
+                        <span className="block truncate text-small text-ink-2">
+                          {place} · {PROJECT_TYPE[p.type]}
+                          {p.builderName && <> · {p.builderName}{p.builderVerified && <span className="text-pass"> (verified)</span>}</>}
+                        </span>
                       </span>
                       <span className="text-right md:order-4 md:text-left">
                         {funding ? <Tag tone={status.tone}>{status.label}</Tag> : <span className="text-small text-ink-3">{status.label}</span>}
-                        {funding && <span className="mt-1 block text-caption text-ink-2 tabular-nums">Closes {formatDate(p.fundingDeadline)}</span>}
+                        {funding && (
+                          <span className="mt-1 block text-caption text-ink-2 tabular-nums" title={`Funding closes ${formatDate(p.fundingDeadline)}`}>
+                            {fundingCountdown(p.fundingDeadline)}
+                          </span>
+                        )}
                       </span>
                       <span className="col-span-2 md:order-2 md:col-span-1">
                         <span className="block text-small tabular-nums">
@@ -89,9 +115,21 @@ export default async function ProjectsPage() {
                 );
               })}
             </ul>
-          </section>
-        </>
-      )}
+          </>
+        )}
+      </section>
     </div>
+  );
+}
+
+function FilterLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn("rounded-control px-3 py-1.5 text-small transition-colors duration-150", active ? "bg-ink text-page" : "bg-band text-ink hover:bg-line")}
+    >
+      {children}
+    </Link>
   );
 }

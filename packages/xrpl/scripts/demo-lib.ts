@@ -26,6 +26,7 @@ import { config, REPO_ROOT } from "../src/config.ts";
 import { revokeCredential } from "../src/credentials.ts";
 import { toChainEvent } from "../src/events.ts";
 import { COVER_RATE_LIQUIDATION, COVER_RATE_MINIMUM, defaultCoverDeposit, expectedInterest, MANAGEMENT_FEE_RATE, minimumCover, originationFeeFor } from "../src/lending-math.ts";
+import { FINISH_LLS_MARGIN } from "../src/escrow.ts";
 import { createLoanBroker, depositBrokerCover } from "../src/loan.ts";
 import { preflightFinish, type PreflightResult } from "../src/preflight.ts";
 import { getEscrow, getLoanSnapshot, getVaultSnapshot } from "../src/reads.ts";
@@ -453,18 +454,21 @@ export function canonicalJson(v: unknown): string {
 
 /**
  * Release-service path (CORE-12): suite passed -> preflightFinish (XRPL-14) -> `release` attestation -> EscrowFinish
- * by releaseService. Throws (nothing revealed) if preflight refuses.
+ * by releaseService. Throws (nothing revealed) if preflight refuses. The preflight here uses the SAME LastLedgerSequence
+ * margin as the EscrowFinish (`lastLedgerMargin`, default FINISH_LLS_MARGIN), so it can't pass with less than the
+ * finish's release margin and attest a release that the finish then refuses.
  */
 export async function releaseWithSuite(
   log: TxLog,
   project: Project,
   esc: MilestoneEscrowInfo,
   rs: ReleaseServiceStandIn,
-  suite: { passed: string[]; attestRelease?: boolean },
+  suite: { passed: string[]; attestRelease?: boolean; lastLedgerMargin?: number },
 ): Promise<{ preflight: PreflightResult; finish: TxResult; event: ChainEvent }> {
   const w = loadWallets();
   const fulfillment = rs.fulfillmentFor(project.id, esc.milestoneId, esc.condition);
-  const pf = await preflightFinish({ owner: esc.owner, offerSequence: esc.offerSequence, destination: w.builder.classicAddress, condition: esc.condition, fulfillment, submitter: w.releaseService.classicAddress });
+  const lastLedgerMargin = suite.lastLedgerMargin ?? FINISH_LLS_MARGIN;
+  const pf = await preflightFinish({ owner: esc.owner, offerSequence: esc.offerSequence, destination: w.builder.classicAddress, condition: esc.condition, fulfillment, submitter: w.releaseService.classicAddress, lastLedgerOffset: lastLedgerMargin });
   if (!pf.ok) throw new Error(`preflight refused ${esc.milestoneId}: ${pf.reason} ${pf.message ?? ""} — nothing submitted, preimage not revealed`);
   log.info(`preflight ok: escrow open, ${pf.details.secondsToCancelAfter}s to CancelAfter, builder trust line ok, condition matches (fee ${pf.details.recommendedFee} drops)`);
   if (suite.attestRelease !== false) {
@@ -477,7 +481,7 @@ export async function releaseWithSuite(
     log.rec(`attest release (releaseService: ${suite.passed.length} checks green)`, rel.tx);
   }
   // Submitted by releaseService (default); preflights again inside (destination pinned to the builder).
-  const fin = await releaseMilestone({ projectId: project.id, milestoneId: esc.milestoneId, escrow: esc.escrow, fulfillment, amount: esc.amount, destination: w.builder.classicAddress });
+  const fin = await releaseMilestone({ projectId: project.id, milestoneId: esc.milestoneId, escrow: esc.escrow, fulfillment, amount: esc.amount, destination: w.builder.classicAddress, lastLedgerMargin });
   log.rec(`EscrowFinish ${esc.milestoneId.split("-").slice(-2).join("-")} ${esc.amount} -> builder`, fin.tx);
   return { preflight: pf, finish: fin.tx, event: fin.event };
 }

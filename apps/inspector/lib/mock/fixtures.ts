@@ -252,7 +252,7 @@ export const PROJECTS: Project[] = [
   },
 ];
 
-/** AI-assigned inspectors per project (route 6 output). */
+/** Inspectors assigned from the verified panel per project (route 6 output). */
 export const ASSIGNMENTS: Record<string, string[]> = {
   "maple-st-duplex": [ADDR.dana],
   "rhinebeck-farmhouse": [ADDR.marcus],

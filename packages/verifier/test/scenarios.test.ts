@@ -4,10 +4,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Inspector, InspectorAudit, Verdict } from "@xrlp/shared";
-import { verifyBuilder, verifyMilestone, verifyMilestoneDetailed, type MilestoneJudge } from "../src/index.ts";
+import { extractEvidenceMeta, verifyBuilder, verifyMilestone, verifyMilestoneDetailed, type MilestoneJudge } from "../src/index.ts";
 import { unavailableJudgement } from "../src/llm/types.ts";
 import { evidenceBundleHash } from "../src/audit.ts";
 import { builder, builderOnboardingInput, FIXTURES_DIR, project, SCENARIOS } from "../fixtures/scenarios.ts";
+import type { PriorEvidence } from "../src/types.ts";
 
 for (const s of SCENARIOS) {
   test(`scenario ${s.key}: ${s.title} -> ${s.expect}`, { skip: s.pending && `needs ${s.pending}` }, async () => {
@@ -26,6 +27,36 @@ test("scenario B flags exactly the copied photo by pHash alone (its EXIF date is
   assert.deepEqual(dup.evidenceIds, ["ev_IMG_5121"]);
   assert.match(dup.reason, /Oak Ave/);
   assert.equal(fresh.result, "pass");
+});
+
+test("scenario A with one half-size invoice uploaded twice (audit covers the padded bundle) does not pass", async () => {
+  const input = await SCENARIOS[0]!.input();
+  const text = (await readFile(join(FIXTURES_DIR, "evidence/maple-st/foundation/invoice_GRM-24117.txt"), "utf8")).replace("TOTAL: $24,850.00", "TOTAL: $12,425.00");
+  const bytes = new TextEncoder().encode(text);
+  const { sha256, meta } = await extractEvidenceMeta({ bytes, mimeType: "text/plain", filename: "invoice.txt" });
+  const copy = (id: string) => ({ id, kind: "invoice" as const, filename: `${id}.txt`, mimeType: "text/plain", uri: `mem/${id}`, sha256, meta, uploadedAt: input.evidence[0]!.uploadedAt });
+  const evidence = [...input.evidence.filter((e) => e.kind !== "invoice" && !/lien/.test(e.filename)), copy("inv_a"), copy("inv_b")];
+  const files: Record<string, Uint8Array> = { inv_a: bytes, inv_b: bytes };
+  const bundle = evidenceBundleHash(evidence.map((e) => ({ sha256: e.sha256 })));
+  const audits = input.audits!.map((a) => ({ ...a, evidenceBundleHash: bundle }));
+  const v = await verifyMilestone({ ...input, evidence, files, audits, mode: "mock" });
+  const invoice = v.checks.find((c) => c.check === "invoice_matches_budget")!;
+  assert.equal(invoice.result, "fail", invoice.reason);
+  assert.deepEqual(invoice.evidenceIds.sort(), ["inv_a", "inv_b"]);
+  assert.equal(v.decision, "fail", v.summary);
+});
+
+test("scenario B still catches the copy when prior evidence arrives without meta (core's HTTP upload shape)", async () => {
+  const input = await SCENARIOS[1]!.input();
+  const priorEvidence = (input.priorEvidence as PriorEvidence[]).map((p) => ({ ...p, evidence: { ...p.evidence, meta: {} } }));
+  const dup = (await verifyMilestone({ ...input, priorEvidence, mode: "mock" })).checks.find((c) => c.check === "no_duplicate_photo")!;
+  assert.equal(dup.result, "fail", dup.reason);
+  assert.deepEqual(dup.evidenceIds, ["ev_IMG_5121"]);
+  // Prior photo bytes unavailable and no stored hash: warn (operator review), never a silent pass.
+  const missing = priorEvidence.map((p) => ({ ...p, evidence: { ...p.evidence, uri: "missing/nope.jpg" } }));
+  const v = await verifyMilestone({ ...input, priorEvidence: missing, mode: "mock" });
+  assert.equal(v.checks.find((c) => c.check === "no_duplicate_photo")!.result, "warn");
+  assert.notEqual(v.decision, "pass");
 });
 
 for (const s of SCENARIOS) {
