@@ -93,6 +93,12 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   blob leaves. No key → the audit is filed unsigned and core signs with the demo key (05-api §1), labelled as such in the UI.
   Seeds are never put in `NEXT_PUBLIC_*` env (they would ship in the JS bundle). Autofill uses `XRPL_WS_URL`, `LastLedgerSequence` +75.
 - [10-25] `@xrlp/attest-signer` tests run with `node --import tsx` (like core/verifier) because the parity test imports `@xrlp/xrpl`.
+- [10-25] Submission package `docs/submission/` cites only tx hashes already published in our docs or PR bodies: the v2 proof (#126) first,
+  then Batch from protocol-notes §2d and the platform try-steal / inspector-app signer / adapter private vault from #125 / #128 / #121.
+  `node docs/submission/check-links.mjs --devnet` re-checks every link (published, validated, result = link text): 64/64 green on 10-25. (Jalil's agent, PITCH-04)
+- [10-25] PITCH-04 wording calls: `LoanManage` is under "not used" (no code, no devnet tx) although 00-overview lists it; the `demo.ts`
+  attestation rows aren't cited (deprecated `xrlp/attestation/v1` memo); the v2 demo's `EscrowFinish` isn't called a suite-gated release
+  (it was sent from `platform`, before #125 made `releaseService` the default). (Jalil's agent, PITCH-04)
 
 ## Open
 
