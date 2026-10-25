@@ -56,6 +56,10 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 - [10-25] Bootstrap grants the demo credentials idempotently (KYC_INVESTOR investor1/2, VERIFIED_INSPECTOR inspector1..3; VERIFIED_BUILDER only with `preVerifyBuilder`) and **deletes** a stray KYC_INVESTOR from investor3 (`NO_KYC_ROLES`), since the tecNO_AUTH beat needs investor3 uncredentialed; `issueCredential` delegates to `grantCredential` (deprecated); platform RLUSD default stays 25 000 (= cover for 3 concurrent ~68k projects), sized with `platformRlusdFor`; `submitMultisigned` goes through `submitWithSigner` so SPV multisig txs hold the per-SPV lock (Jalil's agent, hardening)
 
+- [10-25] `closeLoanAndCreateEscrows` validates everything before the first tx (`planLoanClose`): `PaymentTotal ≥ 2`, `0 < InterestRate ≤ 100%`, `PaymentInterval ≥ 60s`, loan fits `RedemptionDate`, 32-byte PREIMAGE-SHA-256 conditions only (`A0258020…810120`), unique within the call **and vs the SPV's open escrows** (doubles as a re-run guard), `now + 60s < CancelAfter < maturity` with maturity = ledger now + interval × total (a lower bound of the real one), SPV signer quorum. Failure after LoanSet → `CloseLoanPartialError {loanId, created, pending}`. — never leave principal liquid in the SPV because escrow #2 was bad (Jalil's agent, XRPL-06)
+- [10-25] Default escrow `CancelAfter` = **maturity − one payment interval** (was now + termDays, which equals maturity and would now be rejected) — a refunded escrow still lands in time to pay the last installment. Callers (core, demo, prestage) should pass `cancelAfters` explicitly. (Jalil's agent, XRPL-06)
+- [10-25] `generateMilestoneCondition` dropped from the public API (only a `@deprecated` re-export so `scripts/demo.ts` compiles); tests/spikes use `packages/xrpl/test/support/conditions.ts`. Remove the deprecated export once demo.ts and the G-owned spikes switch. (Jalil's agent, XRPL-06)
+
 ## Open
 
 - Product name.
