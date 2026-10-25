@@ -699,9 +699,6 @@ export class CoreService implements CoreApi {
     id: string,
     mid: string,
     body: { report: AuditReportInput; photos: StoredFile[]; signedTxBlob?: string },
-    /** In-process callers only (never reachable over HTTP): `platformSignedReason` lets a devnet core accept an unsigned
-     *  audit, attested by the platform "signed-for" the inspector, e.g. the CORE-07 prestage import. Logged. */
-    internal?: { platformSignedReason?: string },
   ): Promise<{ milestone: Milestone; audit: InspectorAudit; events: ChainEvent[] }> {
     return this.locks.run(id, async () => {
       const { p, m, round, assigned, bundleHash } = await this.read((db) => {
@@ -749,9 +746,7 @@ export class CoreService implements CoreApi {
           throw new DomainError("VALIDATION", "Signed audit does not match the assigned inspector, project, report and uploaded photos");
         }
       } else if (this.ledger.mode !== "fake") {
-        const why = internal?.platformSignedReason?.trim();
-        if (!why) throw new DomainError("FORBIDDEN", "A signed inspector audit is required outside fake demo mode");
-        console.warn(`[core] platform-signed audit for ${inspector} on ${id}/${mid} (${this.ledger.mode}): ${why}`);
+        throw new DomainError("FORBIDDEN", "A signed inspector audit is required outside fake demo mode");
       }
       // Inspector-app-signed attestation when provided; otherwise core submits it with the demo key (disclosed).
       const tx = body.signedTxBlob
@@ -759,7 +754,7 @@ export class CoreService implements CoreApi {
         : await this.attest(
             "platform",
             p.chain.spv!,
-            { v: 1, kind: "audit", milestoneId: mid, hash: auditHash, reason: `signed-for ${inspector}${internal?.platformSignedReason ? ` (${internal.platformSignedReason.trim()})` : ""}` },
+            { v: 1, kind: "audit", milestoneId: mid, hash: auditHash, reason: `signed-for ${inspector}` },
             "attest audit",
           );
       const audit: InspectorAudit = { ...unsigned, txHash: tx.hash };
