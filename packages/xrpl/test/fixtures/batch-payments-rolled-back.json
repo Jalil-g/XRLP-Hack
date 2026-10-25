@@ -1,0 +1,151 @@
+{
+ "capturedAt": "2026-10-25T01:09:49.494Z",
+ "network": "devnet",
+ "description": "Batch https://devnet.xrpl.org/transactions/436DCDD497BAE3BA433CE9EBDCD2652AB6D3A20817CE15A50F562F5A736C96E7 (ledger 6391563) + ranged lookups of its 2 inner txs",
+ "outer": {
+  "close_time_iso": "2026-10-25T00:17:42Z",
+  "ctid": "C061870B00010002",
+  "hash": "436DCDD497BAE3BA433CE9EBDCD2652AB6D3A20817CE15A50F562F5A736C96E7",
+  "ledger_hash": "FE1EE44FFD00199A7C5AB22ADA551A90C69BFF20E2929A76894C9E47B0645C4E",
+  "ledger_index": 6391563,
+  "meta": {
+   "AffectedNodes": [
+    {
+     "ModifiedNode": {
+      "FinalFields": {
+       "Account": "rHoVKshZoEJaqgKKZJwpXj4mTf65ppnGJY",
+       "Balance": "99999983",
+       "Flags": 1048576,
+       "OwnerCount": 2,
+       "Sequence": 6391538
+      },
+      "LedgerEntryType": "AccountRoot",
+      "LedgerIndex": "9F92C2AD84A70D830AFB6EFC56932EEADDF960A8FBD0DFD51E4B11697B4B820A",
+      "PreviousFields": {
+       "Balance": "99999990",
+       "Sequence": 6391537
+      },
+      "PreviousTxnID": "BBDEA55C585A9441414B30CA86CCA16BAA1FFF2B4EF7A99D21A9B1DD4D6CBC78",
+      "PreviousTxnLgrSeq": 6391561
+     }
+    }
+   ],
+   "TransactionIndex": 1,
+   "TransactionResult": "tesSUCCESS"
+  },
+  "tx_json": {
+   "Account": "rHoVKshZoEJaqgKKZJwpXj4mTf65ppnGJY",
+   "Fee": "7",
+   "Flags": 65536,
+   "LastLedgerSequence": 6391581,
+   "RawTransactions": [
+    {
+     "RawTransaction": {
+      "Account": "rHoVKshZoEJaqgKKZJwpXj4mTf65ppnGJY",
+      "Amount": {
+       "currency": "524C555344000000000000000000000000000000",
+       "issuer": "r315ArUxbP8rqcTvgczEdpUnQ5f2xRum2y",
+       "value": "1"
+      },
+      "Destination": "rBpNWLY2dHXkzeFNmzWnbqF4JpTRwmduhf",
+      "Fee": "0",
+      "Flags": 1073741824,
+      "Sequence": 6391538,
+      "SigningPubKey": "",
+      "TransactionType": "Payment"
+     }
+    },
+    {
+     "RawTransaction": {
+      "Account": "rHoVKshZoEJaqgKKZJwpXj4mTf65ppnGJY",
+      "Amount": {
+       "currency": "524C555344000000000000000000000000000000",
+       "issuer": "r315ArUxbP8rqcTvgczEdpUnQ5f2xRum2y",
+       "value": "999"
+      },
+      "Destination": "rBpNWLY2dHXkzeFNmzWnbqF4JpTRwmduhf",
+      "Fee": "0",
+      "Flags": 1073741824,
+      "Sequence": 6391539,
+      "SigningPubKey": "",
+      "TransactionType": "Payment"
+     }
+    }
+   ],
+   "Sequence": 6391537,
+   "Signers": [
+    {
+     "Signer": {
+      "Account": "rBpNWLY2dHXkzeFNmzWnbqF4JpTRwmduhf",
+      "SigningPubKey": "ED170411BC135EBC0DE927281C9D9F35042E849AC860F999D488373DB4DEB410BE",
+      "TxnSignature": "9F626D35D34F2D770B6C5DEC274AE751FA5A30F7488E342474EA8DD79F202625D23D092A2E1C10A16E503B567368547AD6A59D5AB4ECF74F05D617E0B8CA8B0E"
+     }
+    },
+    {
+     "Signer": {
+      "Account": "rKmuqhXQ4nnP8pgb94huGJZQHtpAqmdmWG",
+      "SigningPubKey": "ED8C2F28DC5F0D25BE7A17D9B39C177B1A2C0C4698876EDB3F1D1B66B5E6907F6F",
+      "TxnSignature": "9F40C9D1B5963D2C9C4796F0F19EAA955D806938413408D8622B8026BA823E8A9A6FC481C249B37082FDACD3D4D9456F2CBF349EA2BD8222193DE7E263B86D08"
+     }
+    },
+    {
+     "Signer": {
+      "Account": "rLz5wvgtY6tCtYWTE1fLd3pUMx6k69s8EK",
+      "SigningPubKey": "ED3E27313CF9E3DA401B4EDEE2023D1C1ED722114B67033FDC50F473E126848965",
+      "TxnSignature": "2387466E4550F12883DF2D6B5239F9DA8E2ED25F6D53443B302A29972120D5060D55D928D68421478B3305AB193F9FFC807590FC8C319AD10E9F2046F730F305"
+     }
+    }
+   ],
+   "SigningPubKey": "",
+   "TransactionType": "Batch",
+   "ctid": "C061870B00010002",
+   "date": 846202662,
+   "ledger_index": 6391563
+  },
+  "validated": true
+ },
+ "inners": [
+  {
+   "hash": "F6DC525EAB13E6CB517D8AF862CE9398CE369E359046FD5C7AF498A2063FE6D4",
+   "lookup": {
+    "api_version": 2,
+    "error": "txnNotFound",
+    "error_code": 29,
+    "error_message": "Transaction not found.",
+    "id": 2,
+    "request": {
+     "api_version": 2,
+     "command": "tx",
+     "id": 2,
+     "max_ledger": 6391563,
+     "min_ledger": 6391563,
+     "transaction": "F6DC525EAB13E6CB517D8AF862CE9398CE369E359046FD5C7AF498A2063FE6D4"
+    },
+    "searched_all": true,
+    "status": "error",
+    "type": "response"
+   }
+  },
+  {
+   "hash": "F267680730D0BC5F869CA5433F556183EDA83E083B1F7767DACCC9EEF92EA44A",
+   "lookup": {
+    "api_version": 2,
+    "error": "txnNotFound",
+    "error_code": 29,
+    "error_message": "Transaction not found.",
+    "id": 3,
+    "request": {
+     "api_version": 2,
+     "command": "tx",
+     "id": 3,
+     "max_ledger": 6391563,
+     "min_ledger": 6391563,
+     "transaction": "F267680730D0BC5F869CA5433F556183EDA83E083B1F7767DACCC9EEF92EA44A"
+    },
+    "searched_all": true,
+    "status": "error",
+    "type": "response"
+   }
+  }
+ ]
+}
