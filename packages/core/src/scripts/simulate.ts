@@ -1,86 +1,56 @@
 // pnpm --filter @xrlp/core simulate
-// Runs docs/04-demo-script.md end-to-end through CoreService with fakes (in-memory) and prints the timeline.
+// Runs docs/04-demo-script.md end to end through CoreService (in-memory, fake ledger + verifier, real ReleaseService)
+// and prints the on-chain timeline.
 import { FakeClock } from "../clock.ts";
-import {
-  DEMO,
-  MAPLE_ID,
-  MAPLE_M,
-  mapleExpireMilestone3,
-  mapleMilestone1,
-  mapleMilestone2Fraud,
-  mapleToEscrowed,
-  registerParticipants,
-  verifyBuilder,
-} from "../demo/scenario.ts";
+import { DAY_MS } from "../clock.ts";
+import { demoCancelAfter, MAPLE_ID, OAK_ID, seedDemo, SEED_BACKDATE_MS } from "../demo/scenario.ts";
 import { isDomainError } from "../errors.ts";
 import { createCore } from "../factory.ts";
-import { FakeLedger } from "../fakes/fake-ledger.ts";
-import { FakeVerifier } from "../fakes/fake-verifier.ts";
-import { MemoryInspectorKeyring, type InspectorKeyring } from "../fakes/inspector-keyring.ts";
-import { generateMilestoneCondition } from "../conditions.ts";
 
-const clock = new FakeClock("2026-10-25T14:00:00Z");
-const delayMs = Number(process.env.FAKE_LEDGER_DELAY_MS ?? 0);
-const core = createCore({ inMemory: true, clock, ledger: new FakeLedger({ clock, delayMs }), verifier: new FakeVerifier(clock) });
-const keyrings = new Map<string, InspectorKeyring>();
-const keyringFor = (a: string) => {
-  if (!keyrings.has(a)) keyrings.set(a, new MemoryInspectorKeyring(a));
-  return keyrings.get(a)!;
-};
-
+const clock = new FakeClock(new Date(Date.now() - SEED_BACKDATE_MS));
+const core = createCore({ inMemory: true, clock, cancelAfterFor: demoCancelAfter });
+const svc = core.service;
 let step = 0;
-const section = (title: string) => console.log(`\n== ${++step}. ${title} ==`);
+const section = (t: string) => console.log(`\n== ${++step}. ${t} ==`);
 const log = (l: string) => console.log(`  ${l}`);
-const expectRejected = async (what: string, fn: () => Promise<unknown>) => {
-  try {
-    await fn();
-    throw new Error(`EXPECTED FAILURE DID NOT HAPPEN: ${what}`);
-  } catch (e) {
-    if (!isDomainError(e)) throw e;
-    log(`(guard) ${what} -> ${e.code}: ${e.message}`);
-  }
-};
 
-section("Participants + builder verification");
-await registerParticipants(core, log);
-await verifyBuilder(core, DEMO.builders.hudson.id, log);
+section("Pre-stage (seed)");
+await seedDemo(svc, clock, log);
 
-section("Project + locked terms + funding + loan close -> escrows");
-await mapleToEscrowed(core, clock, keyringFor, log);
+const maple = await svc.getProject(MAPLE_ID);
+const [m1, m2] = maple.project.milestones;
 
-section("Milestone 1 (Foundation) — the money shot");
-await expectRejected("release foundation before any review", () =>
-  core.service.releaseMilestone(MAPLE_ID, MAPLE_M.foundation, { fulfillment: keyringFor(DEMO.inspectors[0].address).fulfillmentFor(MAPLE_M.foundation)! }),
-);
-await mapleMilestone1(core, clock, keyringFor, log);
+section("Beat 3 — money shot: run checks on Maple M1");
+const r1 = await svc.runChecks(MAPLE_ID, m1!.id);
+log(`verdict ${r1.verdict.decision} (${r1.verdict.confidence}) -> released ${r1.release?.explorerUrl}`);
 
-section("Milestone 2 (Framing) — fraud caught");
-await mapleMilestone2Fraud(core, clock, log);
-await expectRejected("inspector tries to approve a rejected milestone", () =>
-  core.service.inspectorAttest(MAPLE_ID, MAPLE_M.framing, { inspector: DEMO.inspectors[0].address, decision: "approve" }),
-);
-await expectRejected("release framing with a forged fulfillment", () =>
-  core.service.releaseMilestone(MAPLE_ID, MAPLE_M.framing, { fulfillment: generateMilestoneCondition().fulfillment }),
-);
+section("Beat 4 — fraud held: run checks on Maple M2");
+const r2 = await svc.runChecks(MAPLE_ID, m2!.id);
+for (const c of r2.verdict.checks.filter((c) => c.result === "fail")) log(`RED ${c.check}: ${c.reason}`);
 
-section("Stall — Milestone 3 escrow expires, refund flows back to the vault");
-await mapleExpireMilestone3(core, clock, log);
+section("Beat 5 — ledger says no");
+const steal = await svc.tryStealDemo(MAPLE_ID, m2!.id);
+log(`${steal.result} ${steal.explorerUrl}`);
 
-section("Final state");
-const d = await core.read.getProjectDetail(MAPLE_ID);
-log(`Project status: ${d.project.status}${d.stalledReason ? ` (${d.stalledReason})` : ""}`);
-for (const m of d.milestones) log(`  ${m.title.padEnd(38)} ${m.amount.padStart(10)}  ${m.status}`);
-log(`Vault: deposits ${d.vault.deposits}, loaned ${d.vault.loaned}, repaid ${d.vault.repaid}, withdrawn ${d.vault.withdrawn}, outstanding ${d.vault.outstanding}`);
-for (const inv of DEMO.investors) {
-  const p = await core.read.getInvestorPortfolio(inv.address);
-  log(`${inv.name.padEnd(15)} deposited ${p.totals.deposited.padStart(10)}  withdrawn ${p.totals.withdrawn.padStart(10)}  value ${p.totals.currentValue}`);
+section("Beat 6 — stall -> keeper tick (Oak Ave)");
+const tick = await svc.keeperTick();
+for (const e of tick.events) log(`${e.kind} ${e.amount ?? ""} ${e.explorerUrl}`);
+log(`Oak Ave status: ${(await svc.getProject(OAK_ID)).project.status}`);
+
+section("Guards");
+try {
+  await svc.withdraw(MAPLE_ID, { investor: maple.investments[0]!.investor, amount: "1" });
+} catch (e) {
+  if (!isDomainError(e)) throw e;
+  log(`withdraw before RedemptionDate -> ${e.code}`);
 }
-const dash = await core.read.getBuilderDashboard(DEMO.builders.hudson.id);
-log(`Builder: released ${dash.totals.released}, still locked ${dash.totals.locked}, next: ${dash.projects[0]?.nextAction}`);
+clock.advance(400 * DAY_MS);
+const w = await svc.withdraw(OAK_ID, { investor: maple.investments[0]!.investor, amount: "100" });
+log(`withdraw after RedemptionDate -> ${w.events[0]?.kind}`);
 
-section(`On-chain timeline (${d.timeline.length} txs)`);
-for (const e of d.timeline) {
-  const mTitle = e.milestoneId ? d.milestones.find((m) => m.id === e.milestoneId)?.title : undefined;
-  console.log(`  ${e.at.slice(0, 16)}  ${e.kind.padEnd(19)} ${(e.amount ?? "").padStart(10)}  ${(mTitle ?? "").padEnd(18)} ${e.explorerUrl}`);
-}
+section("Final");
+const d = await svc.getProject(MAPLE_ID);
+for (const m of d.project.milestones) log(`${m.title.padEnd(22)} ${m.amount.padStart(8)}  ${m.status}  checks: ${d.checks[m.id]?.outcome}`);
+section(`Maple St on-chain timeline (${d.events.length} txs)`);
+for (const e of [...d.events].reverse()) console.log(`  ${e.at.slice(0, 16)}  ${e.kind.padEnd(22)} ${(e.result ?? "").padEnd(25)} ${e.explorerUrl}`);
 console.log("\nSIMULATION OK");

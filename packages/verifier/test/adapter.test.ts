@@ -16,7 +16,7 @@ test("adapter satisfies actual shared and legacy core ports, and real core relea
   assert.equal(core.verifier, adapter);
   for (const scenario of SCENARIOS) {
     const input = await scenario.input();
-    const policy = legacy.policyFor(input.project, input.builder, input.milestone);
+    const policy = adapter.policyFor(input.project, input.builder, input.milestone); // 3-arg overload on the adapter (core's port is v2 now)
     assert.equal(policy.riskTier, input.builder.riskTier);
     const verdict = await adapter.verifyMilestone(input);
     assert.equal(verdict.decision, scenario.expect, verdict.summary);

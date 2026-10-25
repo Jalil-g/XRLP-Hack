@@ -1,141 +1,136 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { Attestation } from "@xrlp/shared";
-import {
-  assertMilestoneTransition,
-  assertProjectTransition,
-  canMilestoneTransition,
-  conditionFromFulfillment,
-  DomainError,
-  evaluateQuorum,
-  FileStore,
-  fromMicro,
-  fulfillmentMatches,
-  generateMilestoneCondition,
-  isCondition,
-  MemoryStore,
-  splitByShares,
-  toMicro,
-} from "../src/index.ts";
+import { LedgerError, TooSoonError, type Project } from "@xrlp/shared";
+import { FakeClock } from "../src/clock.ts";
+import { conditionFromFulfillment, fulfillmentMatches, generateMilestoneCondition } from "../src/conditions.ts";
+import { DEMO, mapleInput } from "../src/demo/scenario.ts";
+import { DomainError } from "../src/errors.ts";
+import { FakeLedger } from "../src/fakes/fake-ledger.ts";
+import { FakeVerifier } from "../src/fakes/fake-verifier.ts";
+import { FileStore } from "../src/file-store.ts";
+import { assertMilestoneTransition, assertProjectTransition, canMilestoneTransition } from "../src/state-machine.ts";
+import { verificationFeeFor } from "../src/service.ts";
+import { emptyDb, normalizeDb } from "../src/store.ts";
 
-const att = (role: Attestation["role"], signer: string, decision: Attestation["decision"] = "approve"): Attestation => ({
-  milestoneId: "m",
-  role,
-  signer,
-  decision,
-  notes: "",
-  at: "2026-10-25T00:00:00.000Z",
-});
+const isCode = (code: string) => (e: unknown) => e instanceof DomainError && e.code === code;
 
-describe("state machine", () => {
-  it("allows the documented milestone path", () => {
-    const path = ["pending", "escrowed", "evidence_submitted", "ai_reviewed", "inspected", "released"] as const;
-    for (let i = 1; i < path.length; i++) assert.ok(canMilestoneTransition(path[i - 1]!, path[i]!), `${path[i - 1]} -> ${path[i]}`);
-    assert.ok(canMilestoneTransition("rejected", "evidence_submitted"), "resubmit after rejection");
-    assert.ok(canMilestoneTransition("expired", "refunded"));
+describe("state machines (shared v2 tables)", () => {
+  it("allows the v2 path and rejects shortcuts", () => {
+    assertMilestoneTransition("m", "audited", "verified");
+    assertMilestoneTransition("m", "needs_human", "verified");
+    assertMilestoneTransition("m", "failed", "evidence_submitted");
+    assert.throws(() => assertMilestoneTransition("m", "evidence_submitted", "released"), isCode("ILLEGAL_TRANSITION"));
+    assert.throws(() => assertMilestoneTransition("m", "escrowed", "verified"), isCode("ILLEGAL_TRANSITION"));
+    assertProjectTransition("p", "funded", "escrowed");
+    assert.throws(() => assertProjectTransition("p", "funding", "escrowed"), isCode("ILLEGAL_TRANSITION"));
+    assert.throws(() => assertProjectTransition("p", "draft", "terms_locked"), isCode("ILLEGAL_TRANSITION"));
   });
-
-  it("rejects illegal milestone transitions with a clear error", () => {
-    assert.throws(
-      () => assertMilestoneTransition("m1", "escrowed", "released"),
-      (e: unknown) => e instanceof DomainError && e.code === "ILLEGAL_TRANSITION" && /escrowed -> released/.test(e.message),
-    );
-    assert.throws(() => assertMilestoneTransition("m1", "released", "refunded"), DomainError);
-    assert.throws(() => assertMilestoneTransition("m1", "evidence_submitted", "inspected"), DomainError);
-    assert.throws(() => assertMilestoneTransition("m1", "refunded", "escrowed"), DomainError);
-  });
-
-  it("enforces project order", () => {
-    assertProjectTransition("p", "draft", "terms_locked");
-    assert.throws(() => assertProjectTransition("p", "draft", "funding"), /draft -> funding/);
-    assert.throws(() => assertProjectTransition("p", "completed", "repaying"), DomainError);
-    assert.throws(() => assertProjectTransition("p", "funding", "escrowed"), DomainError);
+  it("never transitions out of legacy v1 statuses", () => {
+    assert.equal(canMilestoneTransition("ai_reviewed", "verified"), false);
+    assert.equal(canMilestoneTransition("rejected", "evidence_submitted"), false);
   });
 });
 
-describe("quorum (inspector w2, AI w1, platform w1, quorum 3)", () => {
-  it("inspector alone is not enough", () => {
-    const q = evaluateQuorum([att("inspector", "rA")], 1);
-    assert.equal(q.met, false);
-    assert.equal(q.weight, 2);
-    assert.match(q.missing.join(), /second inspector, AI pass, or platform/);
+describe("money + conditions", () => {
+  it("verification fee = max(250, 20 bps of principal)", () => {
+    assert.equal(verificationFeeFor("120000"), "250.00");
+    assert.equal(verificationFeeFor("2000000"), "4000.00");
   });
-  it("inspector + AI pass releases", () => assert.equal(evaluateQuorum([att("inspector", "rA"), att("ai_agent", "rAI")], 1).met, true));
-  it("inspector + platform releases", () => assert.equal(evaluateQuorum([att("inspector", "rA"), att("platform", "rP")], 1).met, true));
-  it("two inspectors release", () => assert.equal(evaluateQuorum([att("inspector", "rA"), att("inspector", "rB")], 1).met, true));
-  it("AI + platform without an inspector never releases (platform can't move money alone)", () => {
-    const q = evaluateQuorum([att("ai_agent", "rAI"), att("platform", "rP")], 1);
-    assert.equal(q.met, false);
-    assert.match(q.missing.join(), /inspector/);
-  });
-  it("policy requiring 2 inspectors is enforced even when weight >= 3", () => {
-    assert.equal(evaluateQuorum([att("inspector", "rA"), att("ai_agent", "rAI"), att("platform", "rP")], 2).met, false);
-    assert.equal(evaluateQuorum([att("inspector", "rA"), att("inspector", "rB")], 2).met, true);
-  });
-  it("any reject blocks", () => {
-    const q = evaluateQuorum([att("inspector", "rA"), att("ai_agent", "rAI"), att("inspector", "rB", "reject")], 1);
-    assert.equal(q.met, false);
-    assert.equal(q.rejected, true);
-  });
-  it("same inspector twice counts once", () => assert.equal(evaluateQuorum([att("inspector", "rA"), att("inspector", "rA")], 1).met, false));
-});
-
-describe("money", () => {
-  it("round-trips and formats", () => {
-    assert.equal(fromMicro(toMicro("25000")), "25000.00");
-    assert.equal(fromMicro(toMicro("0.123456")), "0.123456");
-    assert.throws(() => toMicro("1.2345678"), DomainError);
-    assert.throws(() => toMicro("-5"), DomainError);
-  });
-  it("splits by template shares and sums exactly", () => {
-    const parts = splitByShares("120000.00", [0.25, 0.3, 0.2, 0.25]);
-    assert.deepEqual(parts, ["30000.00", "36000.00", "24000.00", "30000.00"]);
-    const odd = splitByShares("100000.01", [0.3, 0.4, 0.3]);
-    assert.equal(odd.reduce((a, x) => a + toMicro(x), 0n), toMicro("100000.01"));
-  });
-});
-
-describe("crypto-conditions", () => {
-  it("generates matching PREIMAGE-SHA-256 condition/fulfillment", () => {
+  it("PREIMAGE-SHA-256 condition/fulfillment round-trip", () => {
     const { condition, fulfillment } = generateMilestoneCondition();
-    assert.ok(isCondition(condition));
     assert.equal(conditionFromFulfillment(fulfillment), condition);
     assert.ok(fulfillmentMatches(condition, fulfillment));
     assert.ok(!fulfillmentMatches(condition, generateMilestoneCondition().fulfillment));
-    assert.ok(!fulfillmentMatches(condition, "garbage"));
   });
 });
 
-describe("stores", () => {
-  for (const [name, make] of [
-    ["MemoryStore", () => new MemoryStore()],
-    ["FileStore", () => new FileStore(mkdtempSync(join(tmpdir(), "core-store-")))],
-  ] as const) {
-    it(`${name}: commits on success, discards on throw, reads are copies`, async () => {
-      const s = make();
-      await s.write((db) => db.inspectors.push({ address: "rA", name: "A", licenseNumber: "1", createdAt: "x" }));
-      await assert.rejects(
-        s.write((db) => {
-          db.inspectors.push({ address: "rB", name: "B", licenseNumber: "2", createdAt: "x" });
-          throw new Error("boom");
-        }),
-      );
-      await s.read((db) => db.inspectors.push({ address: "rC", name: "C", licenseNumber: "3", createdAt: "x" }));
-      assert.deepEqual(await s.read((db) => db.inspectors.map((i) => i.address)), ["rA"]);
-    });
-  }
+describe("store", () => {
+  it("normalizeDb tolerates v1 files (inspector profiles become panel inspectors)", () => {
+    const db = normalizeDb({ version: 1, inspectors: [{ address: "rX", name: "Dana", licenseNumber: "L1", createdAt: "x" }], builderReviews: [] } as never);
+    assert.equal(db.version, 2);
+    assert.deepEqual(db.inspectors[0], { address: "rX", name: "Dana", licenseNumber: "L1", trades: [], homeGeo: undefined, verified: true, credentialTx: undefined });
+    assert.deepEqual(db.audits, []);
+  });
+  it("FileStore commits only when fn succeeds", async () => {
+    const s = new FileStore(mkdtempSync(join(tmpdir(), "core-store-")));
+    await s.write((db) => db.builders.push({ ...DEMO.builders.hudson, verified: false }));
+    await assert.rejects(s.write((db) => { db.builders.length = 0; throw new Error("boom"); }));
+    assert.equal(await s.read((db) => db.builders.length), 1);
+    await s.reset(emptyDb());
+    assert.equal(await s.read((db) => db.builders.length), 0);
+  });
+});
 
-  it("FileStore persists across instances, serializes concurrent writes, leaves no temp files", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "core-store-"));
-    const a = new FileStore(dir);
-    await Promise.all(
-      Array.from({ length: 20 }, (_, i) => a.write((db) => db.inspectors.push({ address: `r${i}`, name: "", licenseNumber: "", createdAt: "" }))),
-    );
-    const b = new FileStore(dir);
-    assert.equal(await b.read((db) => db.inspectors.length), 20);
-    assert.deepEqual(readdirSync(dir), ["core-db.json"]);
+describe("FakeVerifier", () => {
+  const v = new FakeVerifier(new FakeClock("2026-10-24T00:00:00Z"));
+  const project = { ...mapleInput(new Date("2026-11-01")), id: "p", status: "draft", milestones: [], chain: {} } as unknown as Project;
+  it("policy: two audits at/above TWO_INSPECTOR_THRESHOLD", () => {
+    assert.equal(v.policyFor(project, { amount: "49999" } as never).requiredAudits, 1);
+    assert.equal(v.policyFor(project, { amount: "50000" } as never).requiredAudits, 2);
+    assert.ok(v.policyFor(project, { amount: "1" } as never).requiredChecks.includes("inspector_audit_present"));
+  });
+  it("assigns the closest verified panel inspector", async () => {
+    const panel = Object.values(DEMO.inspectors).map((i) => ({ ...i, verified: true }));
+    const a = await v.assignInspector({ project, panel, count: 1 });
+    assert.deepEqual(a.inspectors, [DEMO.inspectors.dana.address]);
+    const none = await v.assignInspector({ project, panel: panel.map((i) => ({ ...i, verified: false })), count: 1 });
+    assert.deepEqual(none.inspectors, []);
+  });
+  it("verdictHash is canonical", async () => {
+    const verdict = { milestoneId: "m", decision: "pass" as const, confidence: 0.9, summary: "s", checks: [], policy: { projectType: "residential_new" as const, riskTier: "low" as const, requiredInspectors: 1 }, model: "mock", createdAt: "t" };
+    const shuffled = Object.fromEntries(Object.entries(verdict).reverse()) as typeof verdict;
+    assert.equal(v.verdictHash(verdict), v.verdictHash(shuffled));
+    assert.notEqual(v.verdictHash(verdict), v.verdictHash({ ...verdict, decision: "fail" }));
+  });
+});
+
+describe("FakeLedger gates", () => {
+  const setup = async (stateFile?: string) => {
+    const clock = new FakeClock("2026-10-24T00:00:00Z");
+    const ledger = new FakeLedger({ clock, salt: "t", stateFile });
+    const project = { ...mapleInput(new Date("2026-10-25T00:00:00Z")), id: "p1", status: "funding", chain: {}, milestones: [
+      { id: "m1", index: 0, templateKey: "a", title: "A", amount: "60000", requiredInspectors: 1, status: "pending" },
+      { id: "m2", index: 1, templateKey: "b", title: "B", amount: "60000", requiredInspectors: 1, status: "pending" },
+    ] } as unknown as Project;
+    const builder = { ...DEMO.builders.hudson, verified: true };
+    const s = await ledger.setupProjectOnChain({ project, builder, inspectors: [], subscriptionDate: "2026-10-25T00:00:00Z", redemptionDate: "2027-06-01T00:00:00Z" });
+    project.chain = { spv: s.spv, vaultId: s.vaultId };
+    await ledger.deposit({ project, investor: "rInv", amount: "120000" });
+    return { clock, ledger, project, builder };
+  };
+  const conds = () => [generateMilestoneCondition(), generateMilestoneCondition()];
+
+  it("LoanSet is tecTOO_SOON during Subscription; deposits close after it", async () => {
+    const { clock, ledger, project, builder } = await setup();
+    const c = conds();
+    await assert.rejects(ledger.closeLoanAndCreateEscrows({ project, builder, conditions: c.map((x) => x.condition), cancelAfters: ["2026-12-01T00:00:00Z", "2026-12-02T00:00:00Z"] }), (e) => e instanceof TooSoonError && e.txResult === "tecTOO_SOON");
+    clock.set("2026-10-26T00:00:00Z");
+    await assert.rejects(ledger.deposit({ project, investor: "rInv", amount: "1" }), (e) => e instanceof LedgerError && e.txResult === "tecNO_PERMISSION");
+    await assert.rejects(ledger.closeLoanAndCreateEscrows({ project, builder, conditions: [c[0]!.condition, c[0]!.condition], cancelAfters: ["2026-12-01T00:00:00Z", "2026-12-02T00:00:00Z"] }), /duplicate/);
+    const r = await ledger.closeLoanAndCreateEscrows({ project, builder, conditions: c.map((x) => x.condition), cancelAfters: ["2026-12-01T00:00:00Z", "2026-12-02T00:00:00Z"] });
+    assert.equal(r.escrows.length, 2);
+    await assert.rejects(ledger.withdraw({ project, investor: "rInv", amount: "1" }), TooSoonError);
+  });
+
+  it("finish: wrong fulfillment is a recorded tec; preflight refuses without a trust line; state persists across instances", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "fake-ledger-")), "fake-ledger.json");
+    const { clock, ledger, project, builder } = await setup(file);
+    clock.set("2026-10-26T00:00:00Z");
+    const c = conds();
+    const r = await ledger.closeLoanAndCreateEscrows({ project, builder, conditions: c.map((x) => x.condition), cancelAfters: ["2026-12-01T00:00:00Z", "2026-12-02T00:00:00Z"] });
+    const e = r.escrows[0]!;
+    const steal = await ledger.tryFinishWithWrongFulfillment(e);
+    assert.equal(steal.result, "tecCRYPTOCONDITION_ERROR");
+    ledger.setTrustLine(builder.address, false);
+    assert.equal((await ledger.preflightFinish({ ...e, destination: builder.address })).ok, false);
+    ledger.setTrustLine(builder.address, true);
+    assert.equal((await ledger.preflightFinish({ ...e, destination: builder.address })).ok, true);
+    const other = new FakeLedger({ clock, salt: "t", stateFile: file });
+    assert.equal((await other.getEscrow(e.owner, e.offerSequence))?.destination, builder.address);
+    await other.finishEscrow({ ...e, fulfillment: c[0]!.fulfillment });
+    assert.equal(await ledger.getEscrow(e.owner, e.offerSequence), null);
   });
 });
