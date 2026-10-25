@@ -1,18 +1,21 @@
 // CORE-05: LEDGER_MODE=devnet / VERIFIER_MODE wiring, devnet identities, ledger error mapping, and the devnet e2e flow
 // (scripts/devnet-e2e.ts) over real HTTP on a fake ledger + the real verifier in mock mode. Offline: no network.
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { serve, type ServerType } from "@hono/node-server";
+import { SoftwareSigner } from "@xrlp/attest-signer";
 import { LedgerError } from "@xrlp/shared";
 import { XrplLedgerAdapter, XrplLedgerError, type WalletFile } from "@xrlp/xrpl";
 import { DEVNET_ROLE_MAP, identitiesFromWalletFile, seedDevnetParticipants } from "../src/adapters/devnet-identities.ts";
 import { UploadedEvidenceMeta } from "../src/adapters/evidence-meta.ts";
 import { CoreVerifierAdapter, evidencePath } from "../src/adapters/verifier.ts";
 import { FakeClock } from "../src/clock.ts";
+import { walletAuditSigner } from "../src/demo/prestage-import.ts";
 import { DEMO_ADDRESSES } from "../src/demo/scenario.ts";
 import { DomainError, ledgerErrorCode, toApiError } from "../src/errors.ts";
 import { cancelAfterFromEnv, createCore, devnetConfigFromEnv, DEVNET_COVER_BPS, type Core } from "../src/factory.ts";
@@ -161,12 +164,23 @@ describe("devnet e2e flow over HTTP (fake ledger, devnet verifier wiring, offlin
   let server: ServerType;
   let core: Core;
   const clock = new FakeClock("2026-10-24T15:00:00.000Z");
-  const ids = identitiesFromWalletFile(walletFile());
+  // The inspectors (and the SPV they attest to) get real keys from public test labels, so the flow signs its audits exactly
+  // as it does on devnet and core's verifyAuditBlob checks them.
+  const testKey = (label: string) => SoftwareSigner.fromEntropy(new Uint8Array(createHash("sha256").update(`core05:${label}`).digest().subarray(0, 16))).wallet;
+  const flowWallets = walletFile();
+  for (const r of DEVNET_ROLE_MAP.inspectors) {
+    const w = testKey(r);
+    flowWallets.wallets[r] = { address: w.classicAddress, seed: w.seed! };
+  }
+  const ids = identitiesFromWalletFile(flowWallets);
   let dataDir: string;
+  let flowWalletsPath: string;
 
   before(async () => {
     dataDir = join(dir, "flow");
-    const ledger = new FakeLedger({ clock, platformAddress: ids.platform });
+    flowWalletsPath = join(dir, "flow-wallets.json");
+    writeFileSync(flowWalletsPath, JSON.stringify(flowWallets));
+    const ledger = new FakeLedger({ clock, platformAddress: ids.platform, spvAddress: (projectId) => testKey(`spv:${projectId}`).classicAddress });
     const store = new FileStore(dataDir);
     core = createCore({
       dataDir,
@@ -196,8 +210,15 @@ describe("devnet e2e flow over HTTP (fake ledger, devnet verifier wiring, offlin
       waitUntil: async (t) => {
         if (clock.now() < t) clock.set(new Date(t.getTime() + 1_000));
       },
+      // Offline autofill; core verifies the blob (verifyAuditBlob) before the fake ledger records it.
+      auditSigner: (inspector) => {
+        let seq = 1;
+        return walletAuditSigner(flowWalletsPath, inspector, async (tx) => ({ ...tx, Fee: "12", Sequence: seq++, LastLedgerSequence: 5_000_000 }));
+      },
     });
     const by = (s: string) => rows.find((r) => r.step.startsWith(s))!;
+    assert.match(by("10 M1 audit").outcome, /^audited, signed by r/);
+    assert.match(by("10 M2 audit").outcome, /^audited, signed by r/);
     assert.equal(by("11 M1 run checks").outcome, "pass -> released");
     assert.match(by("11 M2 run checks").outcome, /^fail: .*no_duplicate_photo.*, no release$/);
     assert.equal(by("23 try-steal").outcome, "tecCRYPTOCONDITION_ERROR");
