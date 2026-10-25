@@ -67,3 +67,8 @@ aerial of a government building, a framed house with a stencilled celebrity-styl
 
 Regenerate: pnpm --filter @xrlp/verifier fixtures   (deterministic; run it after changing times in fixtures/scenarios.ts)
 Total fixtures size is well under the 15 MB limit in VER-01.
+
+VER-11 adversarial fixtures: code in adversarial-scenarios.ts derives temporary images from the
+credited source photos above (an APPROVED text overlay or EXIF-stripping re-encode). Added text,
+audit instructions and altered invoices are synthetic adversarial inputs. They are not real
+inspection approvals. No additional uncredited image source is introduced.

@@ -1,4 +1,9 @@
 // @xrlp/verifier — AI + deterministic evidence verification. See ../API.md.
+export { ClaudeVerifierAdapter } from "./adapter.ts";
+export type { AdapterOptions } from "./adapter.ts";
+export { verifyProject } from "./verifyProject.ts";
+export type { VerifyProjectInput, ProjectHistory, ProjectVerificationResult } from "./verifyProject.ts";
+export { canonicalJson, verdictHash } from "./hash.ts";
 export { assignInspector } from "./assignInspector.ts";
 export type { AssignInspectorInput, InspectorAvailability } from "./assignInspector.ts";
 export { createLiveJudge, verifyMilestone, verifyMilestoneDetailed, decide } from "./verifyMilestone.ts";
@@ -6,7 +11,7 @@ export type { VerifyMilestoneResult, VerifyOptions } from "./verifyMilestone.ts"
 export { verifyBuilder, MOCK_REGISTRY } from "./verifyBuilder.ts";
 export type { BuilderDocument, BuilderRegistry, BuilderVerdict, InsuranceRecord, LicenseRecord, VerifyBuilderInput } from "./verifyBuilder.ts";
 export { ChecklistStatus, evidenceBundleHash, InspectorAudit } from "./audit.ts";
-export { policyFor } from "./policy.ts";
+export { policyFor, releasePolicyFor } from "./policy.ts";
 export type { CheckRule, Escalation, PolicyThresholds, VerificationPolicy } from "./policy.ts";
 export {
   extractEvidenceMeta,

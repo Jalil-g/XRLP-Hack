@@ -6,7 +6,7 @@
 //  - "now" is the validated ledger close time (Ripple epoch s), never the local clock.
 //  - rippled omits zero/default fields (e.g. Vault.AssetsAvailable, Loan.PaymentRemaining) → read as 0.
 //  - RLUSD amounts are shared `Rlusd` strings: plain decimal, ≤ 6 decimals, truncated (never rounded up).
-import type { Rlusd } from "@xrlp/shared";
+import type { EscrowSnapshot, LoanSnapshot, Rlusd, VaultSnapshot } from "@xrlp/shared";
 import { rippleTimeToISOTime } from "xrpl";
 import { getClient } from "./client.ts";
 import { RLUSD_CURRENCY } from "./config.ts";
@@ -14,29 +14,13 @@ import type { LoanEntry } from "./loan.ts";
 import { vaultPhase, type VaultLedgerEntry } from "./vault.ts";
 
 // ---------------------------------------------------------------------------------------------------------
-// Snapshot types. Mirror docs/05-api.md §2 exactly; not in @xrlp/shared yet — switch to the shared import
-// once core adds them (contract change goes through issue #53).
+// Snapshot types: the shared v2 contract (`@xrlp/shared` api.ts / ports.ts), re-exported. What we fill in:
+//  VaultSnapshot.sharesOutstanding  raw share MPT units (MPTokenIssuance.OutstandingAmount); 1 whole share = 10^Scale.
+//  VaultSnapshot.sharePrice         RLUSD per whole share = assetsTotal / (sharesOutstanding / 10^Scale), ≤ 6 dp; "1" with no shares.
+//  LoanSnapshot.nextPaymentDueDate  ISO; "" once no payment remains (rippled drops NextPaymentDueDate on a paid-off loan).
+//  EscrowSnapshot.amount            Rlusd for RLUSD escrows (≤ 6 dp, truncated); XRP decimal for XRP escrows.
 
-export type VaultSnapshot = {
-  assetsTotal: Rlusd;
-  assetsAvailable: Rlusd;
-  /** Raw share MPT units (MPTokenIssuance.OutstandingAmount), integer string. 1 whole share = 10^Scale units. */
-  sharesOutstanding: string;
-  /** RLUSD per whole share = assetsTotal / (sharesOutstanding / 10^Scale), ≤ 6 decimals. "1" when no shares. */
-  sharePrice: string;
-  subscriptionDate: string;
-  redemptionDate: string;
-  phase: "subscription" | "investment" | "redemption";
-};
-
-export type LoanSnapshot = {
-  principalOutstanding: Rlusd;
-  totalValueOutstanding: Rlusd;
-  periodicPayment: Rlusd;
-  paymentRemaining: number;
-  /** ISO; "" once no payment remains (rippled drops NextPaymentDueDate when the loan is paid off). */
-  nextPaymentDueDate: string;
-};
+export type { EscrowSnapshot, LoanSnapshot, VaultSnapshot };
 
 // ---------------------------------------------------------------------------------------------------------
 // Raw response plumbing
@@ -56,7 +40,7 @@ function assertOk(r: RawResult, what: string): void {
 }
 
 /** `client.request`, but rippled errors come back as their payload (so parsers see what the fixtures recorded). */
-async function rawRequest(req: Json): Promise<RawResult> {
+export async function rawRequest(req: Json): Promise<RawResult> {
   const client = await getClient();
   try {
     const res = (await client.request(req as never)) as { result: RawResult };
@@ -78,6 +62,32 @@ async function validatedLedger(): Promise<RawResult> {
 const ledgerIndexOf = (ledger: RawResult): number => Number(ledger.ledger_index);
 const closeTimeOf = (ledger: RawResult): number => Number(ledger.close_time);
 const nodeOf = <T>(r: RawResult): T => r.node as T;
+
+/** Ledger "now": index + close time (Ripple epoch s) of the latest validated ledger. */
+export interface ValidatedLedgerNow {
+  ledgerIndex: number;
+  closeTime: number;
+}
+
+/** The latest validated ledger's index + close time. Pin every follow-up read to `ledgerIndex` for a consistent view. */
+export async function fetchLedgerNow(): Promise<ValidatedLedgerNow> {
+  const ledger = await validatedLedger();
+  return { ledgerIndex: ledgerIndexOf(ledger), closeTime: closeTimeOf(ledger) };
+}
+
+type LedgerSel = number | "validated";
+
+/**
+ * AccountRoot at `ledgerIndex`, or `null` if the account doesn't exist (actNotFound). Throws other rippled errors.
+ * `Balance` is in drops.
+ */
+export async function fetchAccountRoot(address: string, ledgerIndex: LedgerSel = "validated"): Promise<{ Account: string; Balance: string; Flags: number } | null> {
+  const r = await rawRequest({ command: "account_info", account: address, ledger_index: ledgerIndex });
+  if (isNotFoundResult(r)) return null;
+  assertOk(r, "account_info");
+  const d = r.account_data as { Account?: string; Balance: string | number; Flags: number };
+  return { Account: d.Account ?? address, Balance: String(d.Balance), Flags: d.Flags };
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // Decimals (no floats: amounts go through BigInt)
@@ -245,7 +255,8 @@ export async function getLoanSnapshot(loanId: string): Promise<LoanSnapshot | un
 // ---------------------------------------------------------------------------------------------------------
 // Escrow
 
-interface EscrowNode {
+/** Raw Escrow ledger node (the `ledger_entry` / `account_objects` JSON). */
+export interface EscrowNode {
   index: string;
   Account: string;
   Destination: string;
@@ -340,11 +351,44 @@ export function parseEscrowList(accountObjectsResult: RawResult, nowRipple: numb
   return objs.filter((o) => o.LedgerEntryType === "Escrow").map((o) => parseEscrowNode(o, nowRipple));
 }
 
+/** `ledger_entry { escrow: {owner, seq} }` raw result at `ledgerIndex` (not-found comes back as the error payload). */
+export function fetchEscrowRaw(owner: string, offerSequence: number, ledgerIndex: LedgerSel = "validated"): Promise<RawResult> {
+  return rawRequest({ command: "ledger_entry", escrow: { owner, seq: offerSequence }, ledger_index: ledgerIndex });
+}
+
+/** Raw Escrow ledger node at `ledgerIndex`, or `null` if consumed / never created. Throws other rippled errors. */
+export async function fetchEscrowNode(owner: string, offerSequence: number, ledgerIndex: LedgerSel = "validated"): Promise<EscrowNode | null> {
+  const res = await fetchEscrowRaw(owner, offerSequence, ledgerIndex);
+  if (isNotFoundResult(res)) return null;
+  assertOk(res, "ledger_entry escrow");
+  return nodeOf<EscrowNode>(res);
+}
+
 /** Escrow `owner`/`offerSequence` at the latest validated ledger; `undefined` = consumed (finished/cancelled) or never created. */
 export async function getEscrow(owner: string, offerSequence: number): Promise<EscrowView | undefined> {
   const ledger = await validatedLedger();
-  const res = await rawRequest({ command: "ledger_entry", escrow: { owner, seq: offerSequence }, ledger_index: ledgerIndexOf(ledger) });
+  const res = await fetchEscrowRaw(owner, offerSequence, ledgerIndexOf(ledger));
   return parseEscrow(res, closeTimeOf(ledger), offerSequence);
+}
+
+/** Pure: `EscrowView` → shared `EscrowSnapshot` (the LedgerPort shape). `offerSequence` fills in when the node has no Sequence. */
+export function toEscrowSnapshot(v: EscrowView, offerSequence?: number): EscrowSnapshot {
+  const seq = v.offerSequence ?? offerSequence;
+  if (seq === undefined) throw new Error(`escrow ${v.index}: unknown offerSequence`);
+  return {
+    owner: v.owner,
+    offerSequence: seq,
+    destination: v.destination,
+    amount: v.amount,
+    ...(v.condition ? { condition: v.condition } : {}),
+    ...(v.cancelAfter ? { cancelAfter: v.cancelAfter } : {}),
+  };
+}
+
+/** Shared `EscrowSnapshot` for `owner`/`offerSequence` (LedgerPort.getEscrow), or `null` if consumed / never created. */
+export async function getEscrowSnapshot(owner: string, offerSequence: number): Promise<EscrowSnapshot | null> {
+  const v = await getEscrow(owner, offerSequence);
+  return v ? toEscrowSnapshot(v, offerSequence) : null;
 }
 
 /** Escrows OWNED by `owner` (account_objects also lists escrows where it is the destination; those are dropped). */
@@ -364,7 +408,8 @@ export async function listEscrowsParsed(owner: string): Promise<EscrowView[]> {
 // ---------------------------------------------------------------------------------------------------------
 // Balances
 
-interface TrustLine {
+/** One `account_lines` entry (raw). */
+export interface TrustLine {
   account: string;
   balance: string;
   currency: string;
@@ -383,6 +428,16 @@ export interface RlusdTrustline {
   limit: string;
   /** Issuer froze the line (freeze_peer): payments / escrow finishes to it fail. */
   frozen: boolean;
+}
+
+/**
+ * Pure: the raw line for `currency` (hex code) in an `account_lines` result. `null` if the account doesn't exist or has
+ * no such line; throws other rippled errors.
+ */
+export function findTrustLine(accountLinesResult: RawResult, currency: string): TrustLine | null {
+  if (isNotFoundResult(accountLinesResult)) return null;
+  assertOk(accountLinesResult, "account_lines");
+  return ((accountLinesResult.lines ?? []) as TrustLine[]).find((l) => l.currency === currency) ?? null;
 }
 
 /** Pure: `account_lines` result → the RLUSD line (optionally from a given issuer), or `undefined`. actNotFound → `undefined`. */
@@ -420,9 +475,12 @@ export function parseXrpBalance(accountInfoResult: RawResult): string {
   return dropsToXrpDecimal(data?.Balance ?? "0");
 }
 
-async function fetchAccountLines(account: string, issuer?: string): Promise<RawResult> {
-  // With `peer` the result is a single small page; without it, walk the pages and merge.
-  const base = { command: "account_lines", account, ledger_index: "validated", ...(issuer ? { peer: issuer } : {}) };
+/**
+ * `account_lines` raw result for `account` (optionally only the line with `issuer`) at `ledgerIndex`. Not-found comes
+ * back as the error payload. With `issuer` it is one small page; without, all pages are merged.
+ */
+export async function fetchAccountLines(account: string, issuer?: string, ledgerIndex: LedgerSel = "validated"): Promise<RawResult> {
+  const base = { command: "account_lines", account, ledger_index: ledgerIndex, ...(issuer ? { peer: issuer } : {}) };
   const first = await rawRequest(base);
   if (first.error || issuer) return first;
   const lines = [...((first.lines ?? []) as TrustLine[])];
