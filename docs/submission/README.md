@@ -43,10 +43,11 @@ Sources and caveats: [`docs/01-problem.md`](../01-problem.md).
 builder   --Payment 250 RLUSD (verification fee)--> platform   → AI verifies identity, feasibility, capability → VERIFIED_BUILDER credential
 investors --VaultDeposit (KYC_INVESTOR only)--> closed-ended Vault (XLS-65), one per project
 Vault     --LoanSet (XLS-66), countersigned 3 of 4--> project account (SPV: multisig, master key disabled)
-SPV       --EscrowCreate × N (XLS-85)--> one escrow per milestone: Destination = builder, PREIMAGE-SHA-256 condition, CancelAfter
+SPV       --one Batch (XLS-56) of EscrowCreate × N (XLS-85)--> one escrow per milestone: Destination = builder, PREIMAGE-SHA-256 condition, CancelAfter
           per milestone: builder evidence → inspector's signed audit (on-chain) → AI runs the suite (verdict on-chain)
 release service --EscrowFinish--> RLUSD to the builder, only when the suite is green
 stall:    CancelAfter passes → EscrowCancel → SPV → LoanPay → Vault; investors redeem from RedemptionDate
+default:  released money not repaid → LoanManage default → first-loss cover pays the vault 10% of the debt, investors absorb the rest
 ```
 
 - **`packages/xrpl`**: every ledger operation, devnet scripts and proofs, the `LedgerPort` adapter core uses.
@@ -117,12 +118,15 @@ pnpm --filter @xrlp/verifier demo       # the test suite over the Maple St fixtu
 
 ```bash
 pnpm --filter @xrlp/xrpl bootstrap      # 12 faucet-funded roles, mock RLUSD, credentials; idempotent (2nd run: 0 tx)
-pnpm --filter @xrlp/xrpl demo           # full money path, ~6 min: vault, broker, cover, 3-of-4 LoanSet, escrows, finish, cancel, refund
+pnpm --filter @xrlp/xrpl demo           # full money path, ~6 min: private vault, broker, cover, 3-of-4 LoanSet, escrows in one Batch, finish, cancel, refund
+pnpm --filter @xrlp/xrpl prestage       # stage projects A ready / B stalled / C repaid for the live demo (~13 min) → .data/prestage.json
 pnpm --filter @xrlp/xrpl compliance     # 3 credential types, domain + private vault, tecNO_AUTH, fee, attestations
 pnpm --filter @xrlp/xrpl spike:escrow   # tecCRYPTOCONDITION_ERROR, tecNO_LINE leak vs preflight refusal, tecNO_PERMISSION
 pnpm --filter @xrlp/xrpl spike:loanset  # 3-of-4 countersigned LoanSet, tecNO_PERMISSION, tecTOO_SOON
 pnpm --filter @xrlp/xrpl spike:broker   # cover rates, tecINSUFFICIENT_FUNDS, origination fee
 pnpm --filter @xrlp/xrpl spike:batch    # XLS-56 Batch: atomic escrows; LoanSet as inner tx → temINVALID_INNER_BATCH
+pnpm --filter @xrlp/xrpl spike:close-batch  # the close path's escrow Batch, a rolled-back Batch, and the exact resume
+pnpm --filter @xrlp/xrpl spike:default  # LoanManage impair / default: tecTOO_SOON, first-loss cover pays 10% of the debt, tecKILLED
 ```
 
 TODO(T+32h): re-run these on the `demo-v1` tag. On `main` @ 3edbe71, `demo` stops at the loan close (`scripts/demo.ts:174`, see #115)
