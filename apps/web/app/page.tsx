@@ -9,7 +9,7 @@ import { BRAND, formatAmount, formatBps, formatDate, toCents } from "@/lib/utils
 export const dynamic = "force-dynamic";
 
 export default async function ProjectsPage() {
-  const projects = await api.listProjects({ status: "verified" });
+  const projects = (await api.listProjects()).filter((project) => project.verified);
 
   return (
     <div className="space-y-16">
