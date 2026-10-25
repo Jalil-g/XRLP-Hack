@@ -267,6 +267,48 @@ Observations:
 - Any 3 of 4 work, so no single party (including the platform) can block. The AI key is not a signer.
 - Fee: `autofill(tx, signers.length)` = base × (1 + 3) = 4 drops. Enough.
 
+### 2c. XRPL-06 devnet results (loan close: LoanSet + N escrows, conditions from the caller, 2026-10-25 ~00:17 UTC)
+
+`WALLETS_FILE=.data/wallets.<you>.json pnpm --filter @xrlp/xrpl spike:close` (bootstrap store, fresh SPV/vault/broker per run).
+Project: principal 3000 RLUSD, 3 milestones (1000 / 1200 / 800), 10% APR, `PaymentTotal 3 × 300 s`, origination fee 1.5% = 45.
+Conditions come from the script (stand-in for core's release service, CORE-12); this package no longer generates preimages on the
+close path. SPV `rEZDzFFLieyLVD3fLXTNUKwsEAuPna3QeP`, loan `BB7BADF09A3D032E2E408B5E96E40E907A9537E9EA5D9BD1FEC356462FCA8809`.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | SPV TrustSet RLUSD | `tesSUCCESS` | https://devnet.xrpl.org/transactions/0199D5DFBDB746A2AD689B1A8A777F6F44A8BD64D5E14F7314949D69943E4044 |
+| 2 | SPV SignerListSet {platform, builder, inspector, trustee} w1, quorum 3 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BBACD441E62BF6E88F45282ACEF4DD89724990ADDADB18DBFCB3996F2A0029DF |
+| 3 | SPV AccountSet asfDisableMaster | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C21E844FBFF51ADA733F0E7E4C510F23D10EFF262511C45BA63F008792812B77 |
+| 4 | VaultCreate (closed-ended, `AssetsMaximum` 3000) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/3E26DADC0646B5B055EBBDE273F251B1C8523D3F57FBDD4FC5BDC2D61BCA9940 |
+| 5 | LoanBrokerSet (10% / 100% cover, 10% mgmt fee) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A163A876EA2DBD9936CF5220909082A602919154F52F868F6F0AEBEC923B444B |
+| 6 | LoanBrokerCoverDeposit | `tesSUCCESS` | https://devnet.xrpl.org/transactions/43D93BA3E473D94C6E250E0A4843F45AF575CCB20D29AFCEF8BD22A219AC71E9 |
+| 7 | VaultDeposit investor1 3000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/BE720B6B42A5AE15F17CDD31E22918710C0A6AC52C406A2C80B4E20F23B14F84 |
+| 8 | close during Subscription, `waitForInvestmentPhase: false` | **`TooSoonError`** (client-side) | — (nothing submitted) |
+| 9 | duplicate condition (m3 = m1) | **`CloseValidationError`** (client-side) | — (nothing submitted) |
+| 10 | CancelAfter ≥ maturity (m2 = now + 30 days) | **`CloseValidationError`** (client-side) | — (nothing submitted) |
+| 11 | malformed condition (a fulfillment) + `PaymentTotal 1` | **`CloseValidationError`** (client-side, all issues listed) | — (nothing submitted) |
+| 12 | builder → SPV origination-fee shortfall 45 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/3F9C07BA2938ABF3422F58112B5CE18DD5D797FC023E567847AA5B9208741BE6 |
+| 13 | **LoanSet** (platform `Account`, SPV 3-of-4 countersign, `tfLoanOverpayment`, fee 45) | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/79685931320311866541E6286DA92B0CBF5296F5B4C07CED829A2311CC6A9D72 |
+| 14 | EscrowCreate m1 1000 (seq 6391515) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/C99135974E70EF351E8CC5B758C9AF81A64FCAAC6EFB268A8CA4AB8CA0A11BB2 |
+| 15 | EscrowCreate m2 1200 (seq 6391516) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/1F71B6B7167E563B0C45C918EA27D1E4F7EC2B3E391EFA6236CE5E4641889B79 |
+| 16 | EscrowCreate m3 800 (seq 6391517) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/E5AC7836059DAC59EA48EF2CB6B3C65F6296A79260F237186A6B47DDF0636DF4 |
+| 17 | re-close with the same conditions | **`CloseValidationError`** (already on open SPV escrows) | — (nothing submitted) |
+
+Observations:
+- **SPV liquid RLUSD after close = 0** (before 0, +45 fee shortfall, +2955 from LoanSet, −3000 into 3 escrows). Escrows sum to the
+  principal (3000); `principalOutstanding` 3000, 3 payments remaining.
+- "Nothing submitted" is checked, not assumed: the script compares `Sequence` + RLUSD of platform, SPV and builder before/after each
+  negative. All were unchanged.
+- Default `CancelAfter` = **maturity − one payment interval** (here 00:27:12 < maturity ≥ 00:32:12). Maturity is a lower bound
+  computed before LoanSet (`ledger now + interval × total`). The real LoanSet starts a few seconds later, so every CancelAfter that
+  passes the check is also before the real maturity.
+- All validation runs **before the first tx** (including the origination-fee top-up): conditions (`A0258020…810120`, 78 hex, unique
+  within the call and vs the SPV's open escrows via `account_objects`), `now + 60 s < CancelAfter < maturity`, `PaymentTotal ≥ 2`,
+  `0 < InterestRate ≤ 100%`, `PaymentInterval ≥ 60 s`, loan fits before `RedemptionDate`, milestone sum ≤ principal, SPV signers reach the
+  on-ledger quorum. If an EscrowCreate still fails after LoanSet, `CloseLoanPartialError` carries `loanId`, the created escrows and the pending milestones.
+- The cross-SPV duplicate check doubles as a **re-run guard**: calling close again for a closed project is refused before any tx.
+- LoanSet autofill → sign → countersign → submit now runs under `withAccountLock(platform)` (XRPL-12).
+
 ### 2d. XRPL-13 Batch atomic close (devnet)
 
 `pnpm --filter @xrlp/xrpl spike:batch` (2026-10-25 ~00:18 UTC, fresh faucet wallets, rippled **3.4.1**: `BatchV1_1` + `fixBatchV1_2`

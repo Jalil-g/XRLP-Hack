@@ -8,6 +8,7 @@ import {
   checkRequiredEvidence,
 } from "./checks.ts";
 import { resolveMode, resolveModel } from "./config.ts";
+import { checkInspectorAudits } from "./auditChecks.ts";
 import { MockJudge } from "./llm/mock.ts";
 import type { MilestoneJudge } from "./llm/types.ts";
 import { loadEvidence } from "./meta.ts";
@@ -46,10 +47,8 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   const { project, builder, milestone } = input;
   const timeline = { ...(input.escrowCreatedAt ? { escrowCreatedAt: input.escrowCreatedAt } : {}), ...input.timeline };
   const template = input.template ?? MILESTONE_TEMPLATES[project.type].find((t) => t.key === milestone.templateKey);
-  const currentIds = new Set(input.evidence.map((e) => e.id));
   const prior: PriorEvidence[] = (input.priorEvidence ?? [])
-    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }))
-    .filter((p) => !currentIds.has(p.evidence.id)); // same evidence object re-sent: not a duplicate
+    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }));
   const ctx: MilestoneContext = { project, builder, milestone, template, riskTier: builder.riskTier };
   const policy = policyFor(project, builder, milestone);
 
@@ -68,6 +67,7 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     checkNoDuplicatePhoto(ctx, loaded, prior, policy),
     checkInvoiceMatchesBudget(ctx, loaded, policy, judgement.invoiceTotals),
     checkLienWaivers(loaded),
+    ...checkInspectorAudits(input, loaded, policy.requiredInspectors),
     judgement.stage,
     judgement.documents,
   ];

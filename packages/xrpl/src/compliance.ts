@@ -17,17 +17,13 @@ type WalletRef = WalletRole | string | Wallet;
 const toAddress = (w: WalletRef): string => (typeof w !== "string" ? w.classicAddress : isValidClassicAddress(w) ? w : resolveWallet(w).classicAddress);
 
 /**
- * TODO(#53): shared v2 adds these ChainEvent kinds (seanpatrickmay/CORE-01-shared-contract-v2). Until it merges they
- * are not in main's enum, so cast. Remove the cast once #53 lands.
+ * Shared v2 ChainEvent kind per attestation kind. Shared v2 has no dedicated kind for the `release` memo (releaseService
+ * attests the evaluateRelease outcome right before EscrowFinish), so it maps to `approval_attested` (noted on #53).
  */
-type V2EventKind = "verification_fee_paid" | "credential_accepted" | "audit_attested" | "verdict_attested" | "decision_attested";
-const v2Kind = (k: V2EventKind | ChainEventKind) => k as ChainEventKind;
-
-/** ChainEvent kind per attestation kind. `release` has no dedicated kind in shared v2 yet -> approval_attested. TODO(#53) */
 export const ATTEST_EVENT_KIND: Record<AttestKind, ChainEventKind> = {
-  audit: v2Kind("audit_attested"),
-  verdict: v2Kind("verdict_attested"),
-  decision: v2Kind("decision_attested"),
+  audit: "audit_attested",
+  verdict: "verdict_attested",
+  decision: "decision_attested",
   release: "approval_attested",
 };
 
@@ -52,7 +48,7 @@ export async function payVerificationFee(p: {
   const tx = await payRlusd(builder, platform, issuer, amount);
   return {
     tx,
-    event: toChainEvent(tx, { projectId: p.projectId ?? PLATFORM_SCOPE, kind: v2Kind("verification_fee_paid"), actor: builder.classicAddress, amount }),
+    event: toChainEvent(tx, { projectId: p.projectId ?? PLATFORM_SCOPE, kind: "verification_fee_paid", actor: builder.classicAddress, amount }),
   };
 }
 
@@ -84,7 +80,7 @@ export async function grantCredential(p: {
   }
   if (r.acceptTx) {
     txs.push(r.acceptTx);
-    events.push(toChainEvent(r.acceptTx, { projectId, kind: v2Kind("credential_accepted"), actor: toAddress(p.subject) }));
+    events.push(toChainEvent(r.acceptTx, { projectId, kind: "credential_accepted", actor: toAddress(p.subject) }));
   }
   return { ...r, txs, events };
 }
