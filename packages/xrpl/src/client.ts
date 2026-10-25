@@ -113,17 +113,18 @@ const rpcError = (e: unknown) => (e as { data?: { error?: string; searched_all?:
  * provisional result is ter* / tel* / tef* (except tefPAST_SEQ), re-applies it at later ledgers and relays it once it
  * passes, so a "refused" blob could still apply after the retry engine re-signed (security review H1b; devnet proof:
  * `pnpm --filter @xrlp/xrpl spike:fail-hard`). With fail_hard such a result is final at that server, which is what
- * submit.ts's classification assumes.
+ * submit.ts's classification assumes. The one exception the engine makes: a tec* under fail_hard is discarded (nothing
+ * lands on-ledger), so submit.ts resubmits that SAME blob once with `failHard: false` (same hash: applies at most once).
  */
-export function submitRequest(blob: string): { command: "submit"; tx_blob: string; fail_hard: true } {
-  return { command: "submit", tx_blob: blob, fail_hard: true };
+export function submitRequest(blob: string, failHard = true): { command: "submit"; tx_blob: string; fail_hard: boolean } {
+  return { command: "submit", tx_blob: blob, fail_hard: failHard };
 }
 
 /** The real `LedgerIo` for submit.ts: shared client, re-fetched per call so a reconnect is picked up. */
 export const realLedgerIo: PipelineIo = {
-  async submit(blob) {
+  async submit(blob, opts) {
     const client = await getClient();
-    const res = await client.request(submitRequest(blob));
+    const res = await client.request(submitRequest(blob, opts?.failHard !== false));
     return { engineResult: res.result.engine_result, message: res.result.engine_result_message };
   },
   async lookup(hash, range): Promise<Lookup> {
@@ -293,7 +294,7 @@ export async function submitWithSigner<T extends SubmittableTransaction>(
       return describeBlob(sign(prepared), tx.TransactionType);
     };
     const first = await prepare("first");
-    return toResult(await submitReliably(first, realLedgerIo, { ...withLog(opts), resign: prepare }));
+    return toResult(await submitReliably(first, realLedgerIo, { ...withLog(opts), resign: prepare, freshFirst: true }));
   });
 }
 

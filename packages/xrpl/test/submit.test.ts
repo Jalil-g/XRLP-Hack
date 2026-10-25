@@ -136,21 +136,42 @@ test("toErrorCode maps to docs/05-api.md ErrorCode", () => {
 
 // ── retry engine against a scripted fake ledger ───────────────────────────────────────────
 
-type Step = string | Error | { prelim: string; final?: string };
+type Step = string | Error | { prelim: string; final?: string; soft?: Step };
 
-/** Fake ledger: each submit consumes one scripted step; `final` (or tesSUCCESS for tesSUCCESS/terQUEUED) gets validated next ledger. */
+/**
+ * Fake ledger: each submit consumes one scripted step; `final` (or tesSUCCESS for tesSUCCESS/terQUEUED) gets validated
+ * next ledger. Models fail_hard like rippled (TapFAIL_HARD): a tec* answered to a fail_hard submit is DISCARDED (not
+ * applied, nothing validates); the same blob resubmitted without fail_hard is answered by the step's `soft` (default:
+ * the same tec, now applied) without consuming a new step. `cached`: like rippled, a lookup of any blob it has seen
+ * answers "known, not validated" instead of txnNotFound.
+ */
 class FakeLedger implements LedgerIo {
   validated = 100;
   submits: string[] = [];
+  /** fail_hard flag of every submit, in order. */
+  failHard: boolean[] = [];
   reconnects = 0;
+  cached = false;
+  private readonly seen = new Set<string>();
   private readonly applied = new Map<string, { result: string; ledger: number }>();
+  /** Blobs whose tec was discarded under fail_hard → the step that answers their soft resubmit. */
+  private readonly discarded = new Map<string, { prelim: string; final?: string; soft?: Step }>();
   constructor(private readonly steps: Step[]) {}
 
-  async submit(blob: string) {
+  async submit(blob: string, opts?: { failHard?: boolean }) {
+    const failHard = opts?.failHard !== false;
     this.submits.push(blob);
-    const step = this.steps.shift() ?? "tesSUCCESS";
+    this.failHard.push(failHard);
+    this.seen.add(blob);
+    const pending = !failHard ? this.discarded.get(blob) : undefined;
+    if (pending) this.discarded.delete(blob);
+    const step = pending ? (pending.soft ?? { prelim: pending.prelim, final: pending.final ?? pending.prelim }) : (this.steps.shift() ?? "tesSUCCESS");
     if (step instanceof Error) throw step;
     const s = typeof step === "string" ? { prelim: step } : step;
+    if (failHard && s.prelim.startsWith("tec")) {
+      this.discarded.set(blob, s); // TapFAIL_HARD: "would fail with a tec", nothing applied, not relayed, not held
+      return { engineResult: s.prelim };
+    }
     const final = s.final ?? (s.prelim === "tesSUCCESS" ? "tesSUCCESS" : undefined);
     if (final && !this.applied.has(blob)) this.applied.set(blob, { result: final, ledger: this.validated + 1 });
     return { engineResult: s.prelim };
@@ -162,7 +183,7 @@ class FakeLedger implements LedgerIo {
   async lookup(hash: string): Promise<Lookup> {
     const a = this.applied.get(hash); // blob == hash in this fake
     if (a && a.ledger <= this.validated) return { status: "validated", result: { hash, validated: true, meta: { TransactionResult: a.result } } };
-    if (a) return { status: "pending" };
+    if (a || (this.cached && this.seen.has(hash))) return { status: "pending" };
     return { status: "missing", searchedAll: true };
   }
   async validatedLedgerIndex() {
@@ -234,9 +255,12 @@ test("tec* final result is never retried; error carries hash + explorer link", a
     assert.equal(e.hash, "A");
     assert.equal(e.retriable, false);
     assert.equal(toErrorCode(e), "too_soon");
+    assert.ok(e.onLedger);
     return true;
   });
-  assert.deepEqual(io.submits, ["A"]);
+  // fail_hard discarded the tec → the same blob once more without fail_hard, which lands it on-ledger
+  assert.deepEqual(io.submits, ["A", "A"]);
+  assert.deepEqual(io.failHard, [true, false]);
   assert.deepEqual(r.calls, []);
 });
 
@@ -576,6 +600,108 @@ test("findings 3+4: a failed reconnect is connection_lost (with every unsettled 
     assert.equal(e.engineResult, "connection_lost");
     assert.equal(e.retriable, false);
     assert.match(e.message, /check A, B1/, "the maybe-sent A and the re-signed B1 are both listed");
+    return true;
+  });
+});
+
+// ── PR #171 review: tec under fail_hard (issue 1), tefPAST_SEQ vs rippled's tx cache (issue 2) ─────────────────
+
+const rpcRefusal = (code: string) => Object.assign(new Error(code), { data: { error: code } });
+
+test("#171 issue 1: a tec under fail_hard is discarded by rippled → the SAME blob once more without fail_hard → the tec lands on-ledger (beat 5, tecNO_AUTH, TooSoon)", async () => {
+  for (const code of ["tecCRYPTOCONDITION_ERROR", "tecNO_AUTH", "tecNO_PERMISSION", "tecTOO_SOON"]) {
+    for (const withResign of [false, true]) {
+      const io = new FakeLedger([code]);
+      const r = resigner();
+      await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0, ...(withResign ? { resign: r.resign, freshFirst: true } : {}) }), (e: unknown) => {
+        assert.ok(e instanceof XrplTxError);
+        assert.equal(e.engineResult, code);
+        assert.equal(e.hash, "A");
+        assert.ok(e.onLedger, `${code}: validated on-ledger, with an explorer link`);
+        assert.equal(e.retriable, false);
+        return true;
+      });
+      assert.deepEqual(io.submits, ["A", "A"], "same blob, same hash: applies at most once");
+      assert.deepEqual(io.failHard, [true, false]);
+      assert.deepEqual(r.calls, [], "never re-signed");
+      assert.ok(io.validated <= 102, `validated next ledger, not waited out to LastLedgerSequence (at ${io.validated})`);
+    }
+  }
+});
+
+test("#171 issue 1: the soft resubmit is held by rippled (answers tel*) → tracked, never re-signed while it may apply; when it applies, that's the result", async () => {
+  const io = new FakeLedger([{ prelim: "tecNO_AUTH", soft: { prelim: "telINSUF_FEE_P", final: "tecNO_AUTH" } }]);
+  const r = resigner();
+  await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0, resign: r.resign, freshFirst: true }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "tecNO_AUTH" && e.hash === "A");
+    return true;
+  });
+  assert.deepEqual(r.calls, [], "the held blob was waited for, not superseded");
+});
+
+test("#171 issue 1: a held soft resubmit that never applies → re-signed (same Sequence) only after its LastLedgerSequence provably passed", async () => {
+  const io = new FakeLedger([{ prelim: "tecNO_AUTH", soft: "telINSUF_FEE_P" }, "tesSUCCESS"]);
+  const r = resigner();
+  const out = await submitReliably(blob("A", 105), io, { pollMs: 0, backoffMs: 0, resign: r.resign, freshFirst: true });
+  assert.equal(out.hash, "B1");
+  assert.deepEqual(r.calls, ["same_seq"]);
+  assert.ok(io.validated >= 105, `A's LastLedgerSequence 105 passed before the re-sign (at ${io.validated})`);
+});
+
+test("#171 issue 1: the soft resubmit answers tefPAST_SEQ (Sequence taken in between) → still tracked as maybe-applied: never a fresh Sequence, never retriable", async () => {
+  const io = new FakeLedger([{ prelim: "tecNO_AUTH", soft: "tefPAST_SEQ" }]);
+  io.cached = true;
+  const r = resigner();
+  await assert.rejects(submitReliably(blob("A", 103), io, { pollMs: 0, backoffMs: 0, resign: r.resign, freshFirst: true }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "unknown_outcome" && !e.retriable && e.hash === "A");
+    return true;
+  });
+  assert.deepEqual(r.calls, []);
+});
+
+test("#171 issue 1: the soft resubmit refused by the RPC layer → the tec (for the caller's mapping), not on-ledger, non-retriable", async () => {
+  const io = new FakeLedger([{ prelim: "tecNO_PERMISSION", soft: rpcRefusal("invalidTransaction") }]);
+  await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0 }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError);
+    assert.equal(e.engineResult, "tecNO_PERMISSION");
+    assert.equal(e.retriable, false);
+    assert.equal(e.hash, undefined);
+    assert.ok(!e.onLedger);
+    assert.match(e.message, /discarded the provisional tecNO_PERMISSION under fail_hard and refused the resubmit without it \(invalidTransaction\)/);
+    return true;
+  });
+  assert.deepEqual(io.failHard, [true, false]);
+});
+
+test("#171 issue 1: the socket dies during the soft resubmit (the server took it) → same blob again, tefPAST_SEQ, its validated tec", async () => {
+  const io = new FakeLedger([{ prelim: "tecCRYPTOCONDITION_ERROR", soft: new DisconnectedError("websocket closed") }, "tefPAST_SEQ"]);
+  io.applyQuietly("A", "tecCRYPTOCONDITION_ERROR");
+  const r = resigner();
+  await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0, resign: r.resign, freshFirst: true }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "tecCRYPTOCONDITION_ERROR" && e.hash === "A" && e.onLedger);
+    return true;
+  });
+  assert.deepEqual(io.submits, ["A", "A", "A"]);
+  assert.deepEqual(io.failHard, [true, false, true]);
+  assert.equal(io.reconnects, 1);
+  assert.deepEqual(r.calls, []);
+});
+
+test("#171 issue 2: tefPAST_SEQ on a blob signed in this call, looked up as 'known, not validated' (rippled's cache) → fresh Sequence at once", async () => {
+  const io = new FakeLedger(["tefPAST_SEQ", "tesSUCCESS"]);
+  io.cached = true; // the refused blob is in rippled's tx cache: `tx` says validated:false, never txnNotFound
+  const r = resigner();
+  const out = await submitReliably(blob("A", 120), io, { pollMs: 0, backoffMs: 0, resign: r.resign, freshFirst: true });
+  assert.equal(out.hash, "B1");
+  assert.deepEqual(r.calls, ["new_seq"]);
+  assert.ok(io.validated <= 102, `no wait for A's LastLedgerSequence 120 (at ${io.validated})`);
+});
+
+test("#171 issue 2: …but a pre-signed blob (may have an earlier history) is never called dead from a cached lookup: without account state it is waited for", async () => {
+  const io = new FakeLedger(["tefPAST_SEQ"]);
+  io.cached = true;
+  await assert.rejects(submitReliably(blob("A", 103), io, { pollMs: 0, backoffMs: 0 }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "unknown_outcome" && !e.retriable && e.hash === "A");
     return true;
   });
 });
