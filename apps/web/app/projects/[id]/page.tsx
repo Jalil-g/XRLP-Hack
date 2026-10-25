@@ -134,7 +134,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
               labelWidth={124}
               items={[
                 { label: "Phase", value: <Val main={VAULT_PHASE[d.vault.phase]} note={`${formatAmount(raised / 100)} RLUSD from ${new Set(d.investments.map((i) => i.investor)).size} investors`} /> },
-                { label: "Share price", value: <span title="Contracted interest, net of fees, is booked into the share price when the loan closes (LoanSet). Repayments add liquidity, not value."><Val main={`${Number(d.vault.sharePrice).toFixed(4)} RLUSD`} note="Booked at loan close" /></span> },
+                { label: "Share price", value: <span title="Devnet vaults are cash basis: assets stay at principal when the loan closes, and the interest in each repayment raises the share price."><Val main={`${Number(d.vault.sharePrice).toFixed(4)} RLUSD`} note="Rises as interest is repaid" /></span> },
                 { label: "Available", value: <Val main={`${formatAmount(d.vault.assetsAvailable)} RLUSD`} note="Repayments and refunds land here" /> },
                 { label: "Withdrawals", value: <Val main={d.vault.phase === "redemption" ? "Open" : `From ${formatDate(d.vault.redemptionDate)}`} note="Vault RedemptionDate" /> },
               ]}

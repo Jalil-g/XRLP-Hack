@@ -1,6 +1,7 @@
 // Mock world for NEXT_PUBLIC_API_MODE=mock: the docs/04-demo-script.md pre-stage as canned data. DATA ONLY.
-// The mock never decides anything: verdicts, verifications, inspector assignments and the share price booked at LoanSet are
-// canned here (SCRIPT) and played back by ./server.ts. Real outcomes come from core (verifier + ledger) in http mode.
+// The mock never decides anything: verdicts, verifications and inspector assignments are canned here (SCRIPT) and played
+// back by ./server.ts. Vault snapshots follow devnet (cash basis, decisions.md 10-24): AssetsTotal stays at principal when the
+// loan closes and each repayment's interest raises the share price. Real outcomes come from core (verifier + ledger) in http mode.
 //   A maple-st  the demo: verified, funded, closed, 3 escrows; M1 evidence + audit (passes), M2 reused photo + audit (fails)
 //   B birch-rd  one escrow already past CancelAfter (keeper tick → cancel → LoanPay)
 //   C oak-ave   repaid, vault in Redemption (withdrawable); source of the photo M2 reuses
@@ -338,9 +339,6 @@ export interface MockScript {
   genericVerification: (at: string) => ProjectVerification;
   assignments: Record<string, InspectorAssignment>;
   genericAssignment: InspectorAssignment;
-  /** Vault share price booked at LoanSet (contracted interest net of the management fee). */
-  bookedSharePrice: Record<string, string>;
-  genericBookedSharePrice: string;
 }
 
 export function seed(): { db: MockDb; script: MockScript } {
@@ -584,7 +582,7 @@ export function seed(): { db: MockDb; script: MockScript } {
     audit(oak, m, MARCUS, at, (oak.sov ?? []).filter((l) => (m.sovCodes ?? []).includes(l.code)).map((l) => ({ sovCode: l.code, status: "done" as const })), [], "Complete per plans.");
     released(oak, m, RIDGELINE.address, at, genericPassFor(oak, m, at));
   });
-  push({ projectId: oak.id, kind: "loan_payment", actor: oak.chain.spv, amount: "96300.00", at: iso("2026-10-06T15:00:00Z") });
+  push({ projectId: oak.id, kind: "loan_payment", actor: oak.chain.spv, amount: "96480.00", at: iso("2026-10-06T15:00:00Z") });
 
   // ======================================================== D · Cedar Ln ADU (draft: onboarding)
   const cedar: Project = {
@@ -654,8 +652,8 @@ export function seed(): { db: MockDb; script: MockScript } {
   // ======================================================== snapshots, verifications, assignments
   const vault = (v: VaultSnapshot) => v;
   const vaults: Record<string, VaultSnapshot> = {
-    [maple.id]: vault({ assetsTotal: "131340.00", assetsAvailable: "0.00", sharesOutstanding: "120000.000000", sharePrice: "1.094500", subscriptionDate: maple.terms.fundingDeadline, redemptionDate: iso("2027-11-30T00:00:00Z"), phase: "investment" }),
-    [birch.id]: vault({ assetsTotal: "63660.00", assetsAvailable: "0.00", sharesOutstanding: "60000.000000", sharePrice: "1.061000", subscriptionDate: birch.terms.fundingDeadline, redemptionDate: iso("2027-07-31T00:00:00Z"), phase: "investment" }),
+    [maple.id]: vault({ assetsTotal: "120000.00", assetsAvailable: "0.00", sharesOutstanding: "120000.000000", sharePrice: "1.000000", subscriptionDate: maple.terms.fundingDeadline, redemptionDate: iso("2027-11-30T00:00:00Z"), phase: "investment" }),
+    [birch.id]: vault({ assetsTotal: "60000.00", assetsAvailable: "0.00", sharesOutstanding: "60000.000000", sharePrice: "1.000000", subscriptionDate: birch.terms.fundingDeadline, redemptionDate: iso("2027-07-31T00:00:00Z"), phase: "investment" }),
     [oak.id]: vault({ assetsTotal: "96480.00", assetsAvailable: "96480.00", sharesOutstanding: "90000.000000", sharePrice: "1.072000", subscriptionDate: oak.terms.fundingDeadline, redemptionDate: iso("2026-10-15T00:00:00Z"), phase: "redemption" }),
     [elm.id]: vault({ assetsTotal: "38500.00", assetsAvailable: "38500.00", sharesOutstanding: "38500.000000", sharePrice: "1.000000", subscriptionDate: elm.terms.fundingDeadline, redemptionDate: iso("2028-01-31T00:00:00Z"), phase: "subscription" }),
   };
@@ -812,8 +810,6 @@ export function seed(): { db: MockDb; script: MockScript } {
       }),
     assignments: { [cedar.id]: assign(MARCUS, 0.91, ["14 km from site", "Trades match: carpentry, roofing", "1 open audit", "Robot/sensor auditors would use the same interface"], [[DANA, 0.84], [PRIYA, 0.38]]) },
     genericAssignment: assign(DANA, 0.85, ["Closest verified inspector with matching trades"], [[MARCUS, 0.8], [PRIYA, 0.4]]),
-    bookedSharePrice: { [cedar.id]: "1.081200", [elm.id]: "1.096800" },
-    genericBookedSharePrice: "1.080000",
   };
 
   return { db, script };

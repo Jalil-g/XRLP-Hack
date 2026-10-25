@@ -1,7 +1,7 @@
 // In-memory stand-in for @xrlp/core's HTTP API (docs/05-api.md routes 1–23) for NEXT_PUBLIC_API_MODE=mock.
 // It gates on state the way core does (invalid_state, too_soon, validation) and keeps balances as bookkeeping.
-// It never decides anything: verdicts, verifications, assignments and booked share prices are played back from
-// ./fixtures (MockScript). State lives on globalThis (shared by route handlers + server components, survives HMR).
+// It never decides anything: verdicts, verifications and assignments are played back from ./fixtures (MockScript).
+// Vault/loan snapshots mimic devnet's cash basis: interest reaches the vault (and the share price) only on LoanPay. State lives on globalThis (shared by route handlers + server components, survives HMR).
 import { explorerTxUrl } from "@xrlp/shared";
 import { ApiError, type ApiRequest } from "../api";
 import type {
@@ -358,9 +358,8 @@ const routes: Route[] = [
       m.escrow.createTx = events[events.length - 1]!.txHash;
     });
     if (v) {
+      // Devnet: AssetsTotal stays at principal after LoanSet; the money is lent out, so nothing is available.
       v.phase = "investment";
-      v.sharePrice = s.bookedSharePrice[p.id] ?? s.genericBookedSharePrice;
-      v.assetsTotal = (Number(v.sharesOutstanding) * Number(v.sharePrice)).toFixed(2);
       v.assetsAvailable = "0.00";
     }
     const periods = Math.max(2, Math.ceil(p.terms.termDays / p.terms.paymentIntervalDays));
@@ -492,11 +491,21 @@ const routes: Route[] = [
     const ev = emit(db, { projectId: p.id, kind: "loan_payment", actor: p.chain.spv, amount });
     addBalance(db, builderOf(db, p).address, -toCents(amount));
     const v = db.vaults[p.id];
-    if (v) v.assetsAvailable = fromCents(toCents(v.assetsAvailable) + toCents(amount));
     const l = db.loans[p.id];
+    // Split the payment pro rata between interest and principal still owed (ledger stand-in). Devnet books the interest
+    // into AssetsTotal on LoanPay, which is what moves the share price.
+    const owed = l ? toCents(l.totalValueOutstanding) : 0;
+    const interestCents = l && owed > 0 ? Math.round((toCents(amount) * (owed - toCents(l.principalOutstanding))) / owed) : 0;
     if (l) {
-      l.totalValueOutstanding = fromCents(Math.max(0, toCents(l.totalValueOutstanding) - toCents(amount)));
+      l.totalValueOutstanding = fromCents(Math.max(0, owed - toCents(amount)));
+      l.principalOutstanding = fromCents(Math.max(0, toCents(l.principalOutstanding) - (toCents(amount) - interestCents)));
       l.paymentRemaining = Math.max(0, l.paymentRemaining - 1);
+    }
+    if (v) {
+      v.assetsAvailable = fromCents(toCents(v.assetsAvailable) + toCents(amount));
+      v.assetsTotal = fromCents(toCents(v.assetsTotal) + interestCents);
+      const shares = Number(v.sharesOutstanding);
+      if (shares > 0) v.sharePrice = (toCents(v.assetsTotal) / 100 / shares).toFixed(6);
     }
     return { project: p, events: [ev] };
   }],
