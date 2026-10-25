@@ -1,0 +1,50 @@
+{
+  "capturedAt": "2026-10-24T22:57:35.349Z",
+  "network": "devnet",
+  "description": "XRPL-01 spike loan: 1000 RLUSD, 2 x 120s, SPV multisig borrower",
+  "ledger": {
+    "account_hash": "3B9483FA0CE379D5A3B9CF33668331419632101117702882BBF5B1A79BAC7D5F",
+    "close_flags": 0,
+    "close_time": 846197851,
+    "close_time_human": "2026-Oct-24 22:57:31.000000000 UTC",
+    "close_time_iso": "2026-10-24T22:57:31Z",
+    "close_time_resolution": 10,
+    "closed": true,
+    "ledger_hash": "70D1042E3381CD6AC57AC498751C470BE603A38C5E0F0EB532889E130811A239",
+    "ledger_index": 6390119,
+    "parent_close_time": 846197850,
+    "parent_hash": "9FE18E52DA6E9BFEFA009F0C562D4739413E4B6997B829F50C838110C43626B3",
+    "total_coins": "99999210470733502",
+    "transaction_hash": "180D8EF8F3E19BA4B12A7B0A0BA263D4DA07716FE776D7E19ADF03C3472B5DD0"
+  },
+  "loan": {
+    "index": "66FE03B2BFDE7B6AD7C55272384707A9EADC2166C349604858474E5C43D12018",
+    "ledger_hash": "70D1042E3381CD6AC57AC498751C470BE603A38C5E0F0EB532889E130811A239",
+    "ledger_index": 6390119,
+    "node": {
+      "Borrower": "rUkEQZJci363W8GwX32tMXe1mXzG9q2VFT",
+      "Flags": 262144,
+      "GracePeriod": 60,
+      "InterestRate": 10000,
+      "LedgerEntryType": "Loan",
+      "LoanBrokerID": "2051782AC550EEB96E9A1923B5AB0FAC02867B8FE564E6A52EBFF20932F1BFB0",
+      "LoanBrokerNode": "0",
+      "LoanOriginationFee": "10",
+      "LoanScale": -12,
+      "LoanSequence": 1,
+      "ManagementFeeOutstanding": "0.000005707761",
+      "NextPaymentDueDate": 846197620,
+      "OwnerNode": "0",
+      "PaymentInterval": 120,
+      "PaymentRemaining": 2,
+      "PeriodicPayment": "500.0002853880939045",
+      "PreviousTxnID": "A927ECA82FEDF97889BF49DEFF70A885CCBE3BB9FDC01E70927FFD1FEBB9CC7B",
+      "PreviousTxnLgrSeq": 6390013,
+      "PrincipalOutstanding": "1000",
+      "StartDate": 846197500,
+      "TotalValueOutstanding": "1000.000570776188",
+      "index": "66FE03B2BFDE7B6AD7C55272384707A9EADC2166C349604858474E5C43D12018"
+    },
+    "validated": true
+  }
+}

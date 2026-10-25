@@ -46,6 +46,8 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] Bootstrap roles v2: `issuer, platform, releaseService, builder, investor1..3, inspector1..3, aiAgent, trustee`. RLUSD trust lines only for holders (`platform, builder, investor1..3`); signer-only roles (releaseService, trustee, inspectors, aiAgent) get none. Mint: investors 50k, platform 25k (cover for several prestaged projects), builder 1k (≥ 250 fee). v1 `inspectorA/B` renamed to `inspector1/2` (same account), unknown roles kept under `retired`. Until XRPL-05, SPV list stays v1-shaped with inspector1/2 in the inspector slots and default signers platform + inspector1 (builder isn't on that list yet). (Jalil's agent, XRPL-03)
 - [10-24] SPV default multisig quorum = platform + builder + trustee (any 3 of 4 is valid). These are fixed per project whichever inspector the AI assigned; callers pass the inspector explicitly when it should sign. `submitMultisigned` checks quorum against the on-ledger SignerList before submitting, because xrpl.js `submitAndWait` hangs ~1 min on `tef*` instead of throwing (Jalil's agent, XRPL-05)
 
+- [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
+
 ## Open
 
 - Product name.
