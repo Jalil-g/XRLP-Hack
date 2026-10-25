@@ -51,11 +51,28 @@ export function isPreimageSha256Condition(condition: string): boolean {
   return PREIMAGE_CONDITION_RE.test(normalizeCondition(condition));
 }
 
+/** DER prefixes that are safe to name in an error: a condition's and a fulfillment's (the secret starts after them). */
+const KNOWN_DER_PREFIXES = new Set(["A0258020", "A0228020"]);
+
+/**
+ * Describe a value that should have been a condition WITHOUT echoing it (security review M2): callers mix up condition
+ * and fulfillment (both hex from the release service), and a fulfillment or raw preimage in an error message ends up
+ * in HTTP responses and logs.
+ */
+export function describeConditionInput(raw: unknown): string {
+  if (typeof raw !== "string") return `a ${raw === null ? "null" : typeof raw}`;
+  const s = raw.trim();
+  if (/^A0228020[0-9A-F]{64}$/i.test(s)) return "a PREIMAGE-SHA-256 FULFILLMENT, which is the secret (value not echoed): pass its condition";
+  if (/^[0-9A-F]{64}$/i.test(s)) return "64 hex chars, a raw preimage or a hash (value not echoed)";
+  const prefix = s.slice(0, 8).toUpperCase();
+  return `${s.length} chars${KNOWN_DER_PREFIXES.has(prefix) ? `, starting ${prefix}` : ""} (value not echoed)`;
+}
+
 /** Throws unless `condition` is a 32-byte PREIMAGE-SHA-256 condition. Returns it normalized (uppercase). */
 export function assertPreimageSha256Condition(condition: string, label = "condition"): string {
   const c = normalizeCondition(condition);
   if (!PREIMAGE_CONDITION_RE.test(c)) {
-    throw new Error(`${label}: not a 32-byte PREIMAGE-SHA-256 condition (want A0258020<64 hex>810120, 78 hex chars), got ${JSON.stringify(condition.slice(0, 90))}`);
+    throw new Error(`${label}: not a 32-byte PREIMAGE-SHA-256 condition (want A0258020<64 hex>810120, 78 hex chars); got ${describeConditionInput(condition)}`);
   }
   return c;
 }

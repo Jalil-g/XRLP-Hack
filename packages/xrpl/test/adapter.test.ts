@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { LedgerError, TooSoonError, type Builder, type LedgerPort, type Project } from "@xrlp/shared";
 import { rippleTimeToISOTime, Wallet } from "xrpl";
 import { XrplLedgerAdapter } from "../src/adapter.ts";
-import { apiCodeOf, pickQuorumSigners, toAdapterError, toPortTx, XrplLedgerError } from "../src/adapter-map.ts";
+import { apiCodeOf, keyForRole, NEVER_SPV_SIGNERS, pickQuorumSigners, SIGNING_ROLES, spvSignerCandidates, toAdapterError, toPortTx, XrplLedgerError } from "../src/adapter-map.ts";
 import type { TxResult } from "../src/client.ts";
 import { XrplTxError } from "../src/errors.ts";
 import { LoanPayAmountError } from "../src/loan.ts";
@@ -245,4 +245,52 @@ test("XrplLedgerAdapter: mode devnet, implements LedgerPort, guards fail with ty
   );
   assert.ok(logs.every((l) => /failed \[validation\]/.test(l)));
   assert.equal(logs.length, 7);
+});
+
+// ---------------------------------------------------------------- security review M4 / M6: which key signs what
+
+test("M4 keyForRole: a role's key never signs for another role; unknown address → validation", () => {
+  const { wallets } = tempWallets();
+  assert.equal(keyForRole(wallets, wallets.investor2!.classicAddress, SIGNING_ROLES.investor, "investor"), wallets.investor2);
+  for (const role of ["issuer", "platform", "releaseService", "aiAgent", "trustee", "builder", "inspector1"]) {
+    assert.throws(
+      () => keyForRole(wallets, wallets[role]!.classicAddress, SIGNING_ROLES.investor, "investor"),
+      (e: unknown) => e instanceof XrplLedgerError && e.apiCode === "validation" && new RegExp(`is the demo ${role} key; refusing to sign as investor`).test(e.message),
+    );
+  }
+  assert.throws(() => keyForRole(wallets, Wallet.generate().classicAddress, SIGNING_ROLES.builder, "builder"), /no key for builder/);
+  assert.deepEqual([...SIGNING_ROLES.KYC_INVESTOR], ["investor1", "investor2", "investor3"]);
+  assert.deepEqual([...SIGNING_ROLES.VERIFIED_INSPECTOR], ["inspector1", "inspector2", "inspector3"]);
+});
+
+test("M4 adapter: core-supplied addresses of platform-held keys are refused before any request", async () => {
+  const { file, wallets } = tempWallets();
+  const ledger = new XrplLedgerAdapter({ walletsFile: file });
+  const isValidation = (re: RegExp) => (e: unknown) => e instanceof LedgerError && apiCodeOf(e) === "validation" && re.test((e as Error).message);
+  await assert.rejects(ledger.deposit({ project: project({ vaultId: "V" }), investor: wallets.issuer!.classicAddress, amount: "1" }), isValidation(/demo issuer key; refusing to sign as investor/));
+  await assert.rejects(ledger.issueCredential({ subject: wallets.platform!.classicAddress, type: "KYC_INVESTOR" }), isValidation(/demo platform key; refusing to sign as KYC_INVESTOR subject/));
+  await assert.rejects(ledger.issueCredential({ subject: wallets.investor1!.classicAddress, type: "VERIFIED_INSPECTOR" }), isValidation(/demo investor1 key/));
+  await assert.rejects(ledger.payVerificationFee({ builder: wallets.releaseService!.classicAddress, amount: "250" }), isValidation(/demo releaseService key; refusing to sign as builder/));
+  await assert.rejects(ledger.attest({ signer: "issuer" as never, spv: wallets.trustee!.classicAddress, memo: { v: 1, kind: "verdict", milestoneId: "m1", hash: "ab".repeat(32) } }), isValidation(/signer must be one of aiAgent, platform, releaseService/));
+});
+
+test("M6: the AI / releaseService / issuer key can't become an SPV signer or be picked for a quorum", async () => {
+  const { file, wallets } = tempWallets();
+  const ledger = new XrplLedgerAdapter({ walletsFile: file });
+  const builder: Builder = { id: "b1", name: "B", address: wallets.builder!.classicAddress, licenseNumber: "L", insurancePolicy: "I", completedProjects: 0, riskTier: "low", verified: true };
+  for (const role of ["aiAgent", "releaseService", "issuer"]) {
+    await assert.rejects(
+      ledger.setupProjectOnChain({ project: project(), builder, inspectors: [wallets[role]!.classicAddress], subscriptionDate: "2026-10-25T00:00:00Z", redemptionDate: "2026-10-30T00:00:00Z" }),
+      (e: unknown) => e instanceof LedgerError && apiCodeOf(e) === "validation" && new RegExp(`inspector .* is the ${role} key, which must never be an SPV signer`).test((e as Error).message),
+    );
+  }
+  const candidates = spvSignerCandidates(wallets).map((w) => w.classicAddress);
+  for (const role of NEVER_SPV_SIGNERS) assert.ok(!candidates.includes(wallets[role]!.classicAddress), `${role} is never a candidate`);
+  assert.ok(candidates.includes(wallets.platform!.classicAddress) && candidates.includes(wallets.trustee!.classicAddress));
+  // Even an on-ledger list that (wrongly) names the AI key can't make us sign with it.
+  const list = { quorum: 3, signers: [wallets.aiAgent!, wallets.platform!, wallets.builder!, wallets.trustee!].map((w) => ({ account: w.classicAddress, weight: 1 })) };
+  const byAddress = new Map(spvSignerCandidates(wallets).map((w) => [w.classicAddress, w]));
+  const picked = pickQuorumSigners(list, (a) => byAddress.get(a));
+  assert.ok(!picked.includes(wallets.aiAgent!));
+  assert.equal(picked.length, 3);
 });
