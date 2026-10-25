@@ -4,20 +4,22 @@
 //               loan, generous RedemptionDate. On stage: release M1, fraud on M2, try-steal M2.
 //   B "stalled" M1 released; M2's CancelAfter already PAST (EscrowCancel ready); 12 x 30-day loan so the refund LoanPay
 //               is on time and >= one periodic payment. On stage: keeper tick -> EscrowCancel -> refund LoanPay.
-//   C "repaid"  all escrows released, builder repaid, SPV LoanPay paid the loan off, vault past RedemptionDate.
+//   C "repaid"  2 x 240 s loan; all escrows released, builder pays the SPV, two SPV LoanPays pay it off; vault past
+//               RedemptionDate.
 //               On stage: investors can VaultWithdraw.
 // Writes .data/prestage.json (shape: src/prestage-types.ts PrestageFile; read by core, CORE-07) and the escrow
 // preimages to .data/prestage-preimages.json (release-service stand-in, mode 600, never printed).
 // Re-runs reuse wallets/credentials/domain and create fresh projects. `--only A,B` re-stages a subset and keeps the
 // other projects of the existing prestage.json (e.g. after a rehearsal consumed A's M1 and B's expired escrow: ~4 min).
 //
-// Timing: ~11 min for A+B+C (dominated by C waiting for its RedemptionDate), ~3-5 min for --only A,B.
+// Timing: ~13 min for A+B+C (dominated by C waiting for its RedemptionDate), ~3-5 min for --only A,B.
 // Env knobs (seconds):
 //   PRESTAGE_SUBSCRIPTION_S=60      deposit window per project.
-//   PRESTAGE_B_STALL_CANCEL_S=75    B's M2 CancelAfter after B's close (prestage waits until it has passed).
-//   PRESTAGE_C_INTERVAL_S=300       C's single PaymentInterval (escrows + release x3 + repay should land inside it;
-//                                   a late LoanPay still pays off: late fees are 0).
-//   PRESTAGE_C_CLOSE_WINDOW_S=240   C's LoanSet must land within this after C's SubscriptionDate.
+//   PRESTAGE_B_STALL_CANCEL_S=90    B's M2 CancelAfter after B's close (>= 60 + a few s: planLoanClose floor; prestage
+//                                   waits until it has passed).
+//   PRESTAGE_C_INTERVAL_S=240       C's PaymentInterval (2 payments; escrow CancelAfter = 1.5 intervals after the close,
+//                                   so it is before maturity and > 120 s preflight margin when the finishes run).
+//   PRESTAGE_C_CLOSE_WINDOW_S=180   C's LoanSet must land within this after C's SubscriptionDate.
 import { existsSync, readFileSync } from "node:fs";
 import { isoTimeToRippleTime } from "xrpl";
 import { bootstrapWallets, disconnect, getShareBalance, ledgerTime, rlusdBalance, waitForLedgerTimeAfter } from "../src/index.ts";
@@ -66,9 +68,9 @@ import {
 } from "./demo-lib.ts";
 
 const SUBSCRIPTION_S = envNum("PRESTAGE_SUBSCRIPTION_S", 60);
-const B_STALL_CANCEL_S = envNum("PRESTAGE_B_STALL_CANCEL_S", 75);
-const C_INTERVAL_S = envNum("PRESTAGE_C_INTERVAL_S", 300);
-const C_CLOSE_WINDOW_S = envNum("PRESTAGE_C_CLOSE_WINDOW_S", 240);
+const B_STALL_CANCEL_S = envNum("PRESTAGE_B_STALL_CANCEL_S", 90);
+const C_INTERVAL_S = envNum("PRESTAGE_C_INTERVAL_S", 240);
+const C_CLOSE_WINDOW_S = envNum("PRESTAGE_C_CLOSE_WINDOW_S", 180);
 const MONTH_S = 30 * DAY_S;
 const CHECKS = ["required_evidence_present", "gps_within_site", "photo_fresh", "no_duplicate_photo", "invoice_matches_budget", "inspector_audit_present", "audit_checklist_complete", "stage_visually_consistent"];
 
@@ -143,12 +145,13 @@ const PLANS: Record<PrestageKey, Plan> = {
         ["framing", "Framing", "5000"],
         ["dry_in", "Roof & Dry-in", "4000"],
       ],
-      paymentTotal: 1,
+      paymentTotal: 2, // XRPL-06 planLoanClose: PaymentTotal >= 2
       paymentIntervalS: C_INTERVAL_S,
     },
     closeWindowS: C_CLOSE_WINDOW_S,
     bufferS: 0,
-    cancelAfterS: [DAY_S, DAY_S, DAY_S],
+    // Before maturity (2 intervals) and far enough out for the 120 s preflight margin at finish time.
+    cancelAfterS: [1.5, 1.5, 1.5].map((f) => Math.round(f * C_INTERVAL_S)),
   },
 };
 
@@ -210,16 +213,17 @@ async function stageClose(s: Staged) {
   log.say(`${plan.key} close: LoanSet + ${project.milestones.length} escrows`);
   const sub = isoTimeToRippleTime(setup.subscriptionEndsAt);
   await waitForLedgerTimeAfter(sub, tick(`${plan.key} SubscriptionDate`));
-  const now = await ledgerTime();
   const red = isoTimeToRippleTime(setup.redemptionAt);
-  if (now + plan.spec.paymentTotal * plan.spec.paymentIntervalS + 60 > red) {
+  if ((await ledgerTime()) + plan.spec.paymentTotal * plan.spec.paymentIntervalS + 60 > red) {
     throw new Error(
-      `${plan.key}: too late for LoanSet (ledger ${iso(now)} + schedule + 60s > RedemptionDate ${setup.redemptionAt}); the close window was missed. ` +
+      `${plan.key}: too late for LoanSet (ledger now + schedule + 60s > RedemptionDate ${setup.redemptionAt}); the close window was missed. ` +
         `Re-run (or raise PRESTAGE_C_CLOSE_WINDOW_S).`,
     );
   }
+  await ensureRlusd(log, "builder", Math.ceil(Number(originationFeeFor(project.terms.principal))) + 1_250);
   const conditions = rs.conditionsFor(project);
   rs.save();
+  const now = await ledgerTime(); // right before planning: short CancelAfters (B's M2) stay > now + 60 s
   s.close = await closeProject(log, project, {
     conditions,
     cancelAfters: plan.cancelAfterS.map((d) => iso(now + d)),
@@ -248,17 +252,19 @@ async function stageB(s: Staged) {
 
 async function stageC(s: Staged) {
   const { log, project } = s;
-  log.say("C: all milestones released, builder repays the SPV, SPV LoanPay pays the loan off");
+  log.say("C: all milestones released, builder repays the SPV, SPV LoanPays pay the loan off");
   for (const esc of s.close!.escrows) await releaseM(s, esc, false);
   const w = loadWallets();
   const snap = await snapshot(project);
-  const due = Number(snap.loan?.periodicPayment ?? "0");
-  const short = Math.ceil((due - Number(snap.spvRlusd)) * 100) / 100 + 1; // +1: headroom if the payment lands late
+  const total = snap.loan?.paymentRemaining ?? 0;
+  // Every remaining installment (early payments are on time) + headroom for rounding / a late one.
+  const due = Number(snap.loan?.periodicPayment ?? "0") * total;
+  const short = Math.ceil((due - Number(snap.spvRlusd)) * 100) / 100 + 1;
   if (short > 0) {
     await ensureRlusd(log, "builder", Math.ceil(short) + 1_000);
     await builderPayToSpv(log, project.chain.spv!, short.toFixed(2));
   }
-  await spvLoanPay(log, project, { label: "full repayment (1 of 1)" });
+  for (let i = 1; i <= total; i++) await spvLoanPay(log, project, { label: `repayment ${i} of ${total}` });
   const after = await snapshot(project);
   if (!after.loan || after.loan.paymentRemaining !== 0) {
     throw new Error(`C: loan not paid off after LoanPay (paymentRemaining=${after.loan?.paymentRemaining}, totalOutstanding=${after.loan?.totalValueOutstanding})`);
@@ -348,7 +354,7 @@ async function toPrestageProject(s: Staged, nowRipple: number): Promise<Prestage
 async function main() {
   const startedAt = new Date().toISOString();
   console.log(`prestage ${runId}: projects ${only.join(",")}  (wallets ${repoRel(config.walletsFile)})`);
-  console.log(`  expected duration: ${only.includes("C") ? "~11 min (C waits for its RedemptionDate)" : "~3-5 min"}`);
+  console.log(`  expected duration: ${only.includes("C") ? "~13 min (C waits for its RedemptionDate)" : "~3-5 min"}`);
 
   common.say("common: wallets, credentials, domain (idempotent)");
   const { wallets: w, txs } = await bootstrapWallets({ log: (s) => common.info(s) });

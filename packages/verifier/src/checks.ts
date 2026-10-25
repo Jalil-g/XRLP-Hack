@@ -154,6 +154,10 @@ export function checkNoDuplicatePhoto(
   const warns: string[] = [];
   const failIds = new Set<string>();
   const warnIds = new Set<string>();
+  const validHash = (hash: string | undefined): hash is string => !!hash && /^[0-9a-f]{16}$/i.test(hash);
+  for (const old of others.filter((p) => p.evidence.kind === "photo" && p.evidence.meta?.perceptualHash && !validHash(p.evidence.meta.perceptualHash))) {
+    warns.push(`Prior photo ${old.evidence.filename} has an invalid perceptual hash; reprocessing required`);
+  }
   const where = (p: PriorEvidence) =>
     p.projectId === "unknown"
       ? "previously submitted evidence"
@@ -184,7 +188,7 @@ export function checkNoDuplicatePhoto(
         continue;
       }
       const oh = o.evidence.meta?.perceptualHash;
-      if (!oh || !p.meta.perceptualHash) continue;
+      if (!validHash(oh) || !validHash(p.meta.perceptualHash)) continue;
       const d = hammingDistance(p.meta.perceptualHash, oh);
       if (d <= failD) {
         fails.push(`${name(p)} is a re-used copy of ${o.evidence.filename} from ${where(o)} (perceptual distance ${d}/64)`);
@@ -224,13 +228,15 @@ export function checkInvoiceMatchesBudget(
   const unread: LoadedEvidence[] = [];
   let total = 0n;
   const parts: string[] = [];
+  let modelExtracted = false;
   for (const inv of invoices) {
     const t = inv.meta.invoiceTotal ?? llmTotals[inv.evidence.id];
+    if (!inv.meta.invoiceTotal && llmTotals[inv.evidence.id]) modelExtracted = true;
     if (!t) {
       unread.push(inv);
       continue;
     }
-    total += toCents(t);
+    try { total += toCents(t); } catch { unread.push(inv); continue; }
     parts.push(`${name(inv)} ${fmtMoney(t)}`);
   }
   if (unread.length) {
@@ -238,16 +244,18 @@ export function checkInvoiceMatchesBudget(
       unread.map((l) => l.evidence.id));
   }
   const draw = toCents(ctx.milestone.amount);
+  if (draw <= 0n) return outcome(c, "fail", "Draw must be positive before reconciling invoices.");
   const ratio = pct(total, draw);
-  const { invoiceUnderTolerancePct: under, invoiceOverTolerancePct: over } = policy.thresholds;
+  const { invoiceUnderTolerancePct: under, invoiceOverTolerancePct: over, invoiceWarnTolerancePct: warn } = policy.thresholds;
   const ids = invoices.map((l) => l.evidence.id);
-  const head = `Invoices total ${fmtMoney(centsToString(total))} vs draw ${fmtMoney(ctx.milestone.amount)} (${ratio}%)`;
-  if (ratio < 100 - under) {
+  const head = `Invoices total ${fmtMoney(centsToString(total))} vs draw ${fmtMoney(ctx.milestone.amount)} (${ratio}%)${modelExtracted ? " [includes LLM-extracted totals]" : ""}`;
+  const difference = total >= draw ? total - draw : draw - total;
+  if (difference * 100n > draw * BigInt(warn)) {
     return outcome(c, "fail",
-      `${head}: invoices support only ${ratio}% of the requested draw (tolerance −${under}%). Shortfall ${fmtMoney(draw - total)}. [${parts.join("; ")}]`, ids);
+      `${head}: absolute mismatch exceeds ${warn}%; ${total < draw ? "shortfall" : "overrun"} ${fmtMoney(difference)}. [${parts.join("; ")}]`, ids);
   }
-  if (ratio > 100 + over) {
-    return outcome(c, "warn", `${head}: costs exceed the budget line by more than ${over}% — overrun to flag.`, ids, 0.8);
+  if ((total < draw && difference * 100n > draw * BigInt(under)) || (total > draw && difference * 100n > draw * BigInt(over))) {
+    return outcome(c, "warn", `${head}: outside the pass band (−${under}% / +${over}%) but within ${warn}%; reconcile before release.`, ids, 0.8);
   }
   return outcome(c, "pass", `${head}: within tolerance (−${under}% / +${over}%).`, ids);
 }

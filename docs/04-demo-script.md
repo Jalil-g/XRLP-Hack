@@ -26,10 +26,10 @@ All from the repo root, devnet only, wallets reused from `WALLETS_FILE` (run `pn
 
 | When | Command | Time | Result |
 |---|---|---|---|
-| ≤ 30 min before the slot | `pnpm --filter @xrlp/xrpl prestage` | ~11 min | `.data/prestage.json` for CORE-07: **A** ready (3 escrows open), **B** stalled (M1 released, M2 `CancelAfter` already past, 12 × 30-day loan → refund `LoanPay` on time), **C** repaid + past `RedemptionDate` (withdrawable). Preimages → `.data/prestage-preimages.json` only. |
+| ≤ 30 min before the slot | `pnpm --filter @xrlp/xrpl prestage` | ~13 min | `.data/prestage.json` for CORE-07: **A** ready (3 escrows open), **B** stalled (M1 released, M2 `CancelAfter` already past, 12 × 30-day loan → refund `LoanPay` on time), **C** repaid + past `RedemptionDate` (withdrawable). Preimages → `.data/prestage-preimages.json` only. |
 | After a rehearsal | `pnpm --filter @xrlp/xrpl prestage --only A,B` | ~3–5 min | Fresh A and B; C kept from the existing file. |
 | Live demo fails | `pnpm --filter @xrlp/xrpl demo` | ~5 min (~7 on a fresh wallet file) | Beats 1–6 on one fresh project with narration and an explorer link per tx; the M3 stall waits ~2.5 min (`DEMO_M3_CANCEL_S`). |
 
 Knobs (seconds): `DEMO_SUBSCRIPTION_S` 60, `DEMO_M3_CANCEL_S` 150, `DEMO_PAYMENT_INTERVAL_S` 300, `DEMO_PAYMENT_TOTAL` 4,
-`DEMO_WITHDRAW=1` (adds ~18 min: waits for `RedemptionDate`); `PRESTAGE_SUBSCRIPTION_S` 60, `PRESTAGE_B_STALL_CANCEL_S` 75,
-`PRESTAGE_C_INTERVAL_S` 300, `PRESTAGE_C_CLOSE_WINDOW_S` 240. Devnet tx tables: `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`.
+`DEMO_WITHDRAW=1` (adds ~18 min: waits for `RedemptionDate`); `PRESTAGE_SUBSCRIPTION_S` 60, `PRESTAGE_B_STALL_CANCEL_S` 90,
+`PRESTAGE_C_INTERVAL_S` 240, `PRESTAGE_C_CLOSE_WINDOW_S` 180. Devnet tx tables: `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`.

@@ -15,7 +15,7 @@ import { ledgerTime, signAndSubmit, XrplTxError, type TxResult } from "../src/cl
 import { attest, createDomain, grantCredential, payVerificationFee, submitSignedBlob, VERIFICATION_FEE_RLUSD } from "../src/compliance.ts";
 import { conditionFromPreimage, fulfillmentFromPreimage } from "../src/condition.ts";
 import { config, REPO_ROOT } from "../src/config.ts";
-import { credentialStatus, credentialTypeHex } from "../src/credentials.ts";
+import { revokeCredential } from "../src/credentials.ts";
 import { toChainEvent } from "../src/events.ts";
 import { COVER_RATE_LIQUIDATION, COVER_RATE_MINIMUM, defaultCoverDeposit, expectedInterest, MANAGEMENT_FEE_RATE, minimumCover, originationFeeFor } from "../src/lending-math.ts";
 import { createLoanBroker, depositBrokerCover } from "../src/loan.ts";
@@ -151,18 +151,10 @@ export async function ensureParticipants(log: TxLog): Promise<Participants> {
     r.txs.forEach((t) => log.rec(`Credential${t === r.createTx ? "Create" : "Accept"} KYC_INVESTOR ${inv}`, t));
     if (!r.txs.length) log.info(`${inv}: KYC_INVESTOR ${r.status}`);
   }
-  // investor3 must NOT be a domain member. Older wallet files (v1 demo) KYC'd investor3: delete that credential.
-  if ((await credentialStatus(w.investor3.classicAddress, w.platform.classicAddress, "KYC_INVESTOR")) !== "none") {
-    log.rec(
-      "CredentialDelete KYC_INVESTOR investor3 (old wallet file)",
-      await signAndSubmit(w.platform, {
-        TransactionType: "CredentialDelete",
-        Account: w.platform.classicAddress,
-        Subject: w.investor3.classicAddress,
-        CredentialType: credentialTypeHex("KYC_INVESTOR"),
-      }),
-    );
-  } else log.info("investor3: no KYC_INVESTOR (as intended)");
+  // investor3 must NOT be a domain member (bootstrap strips it too; this covers wallet files bootstrapped before XRPL-03 hardening).
+  const revoked = await revokeCredential(w.platform, w.investor3.classicAddress, "KYC_INVESTOR");
+  if (revoked) log.rec("CredentialDelete KYC_INVESTOR investor3 (old wallet file)", revoked);
+  else log.info("investor3: no KYC_INVESTOR (as intended)");
   for (const insp of ["inspector1", "inspector2", "inspector3"] as const) {
     const r = await retry(`VERIFIED_INSPECTOR ${insp}`, () => grantCredential({ subject: insp, type: "VERIFIED_INSPECTOR" }));
     r.txs.forEach((t) => log.rec(`Credential${t === r.createTx ? "Create" : "Accept"} VERIFIED_INSPECTOR ${insp}`, t));
@@ -374,8 +366,8 @@ export class ReleaseServiceStandIn {
 // ------------------------------------------------------------------ close (LoanSet + escrows)
 
 /**
- * LoanSet + one EscrowCreate per milestone. `conditions` / `cancelAfters` (ISO) by milestone index.
- * after XRPL-06 merge: closeLoanAndCreateEscrows(project, { conditions, cancelAfters, builderAddress, ... }) directly.
+ * LoanSet + one EscrowCreate per milestone (XRPL-06 closeLoanAndCreateEscrows). `conditions` / `cancelAfters` (ISO) by
+ * milestone index; every CancelAfter must be before loan maturity (planLoanClose rejects it otherwise, nothing submitted).
  */
 export async function closeProject(
   log: TxLog,
@@ -385,9 +377,9 @@ export async function closeProject(
   const w = loadWallets();
   const originationFee = originationFeeFor(project.terms.principal);
   await ensureRlusd(log, "builder", Math.ceil(Number(originationFee)) + Number(VERIFICATION_FEE_RLUSD) + 1_000);
-  project.milestones.forEach((m, i) => (m.cancelAfter = o.cancelAfters[i]));
   const close = await closeLoanAndCreateEscrows(project, {
-    conditions: project.milestones.map((m, i) => ({ milestoneId: m.id, condition: o.conditions[i]! })),
+    conditions: o.conditions,
+    cancelAfters: o.cancelAfters,
     paymentTotal: o.paymentTotal,
     paymentIntervalS: o.paymentIntervalS,
     waitForInvestmentPhase: true,
@@ -403,6 +395,7 @@ export async function closeProject(
     log.rows.push({ beat: log.beat, step: `EscrowCreate m${i + 1} ${e.amount} (CancelAfter ${e.cancelAfter.slice(0, 19)})`, type: "EscrowCreate", result: "tesSUCCESS", url: ev.explorerUrl, hash: e.createTx });
     log.info(`✓ EscrowCreate m${i + 1} ${e.amount.padEnd(6)} seq=${e.offerSequence} ${ev.explorerUrl}`);
   });
+  close.escrows.forEach((e, i) => (project.milestones[i]!.cancelAfter = e.cancelAfter));
   project.chain.loanId = close.loanId;
   return close;
 }

@@ -31,7 +31,6 @@ import {
   attestVerdict,
   closeProject,
   dataPath,
-  DAY_S,
   deposit,
   ensureParticipants,
   envNum,
@@ -139,7 +138,8 @@ async function runDemo() {
     const now = await ledgerTime();
     const close = await closeProject(log, project, {
       conditions,
-      cancelAfters: [iso(now + 30 * DAY_S), iso(now + 60 * DAY_S), iso(now + M3_CANCEL_S)],
+      // CancelAfter must be before loan maturity (XRPL-06): M1/M2 one interval before it, M3 stalls after M3_CANCEL_S.
+      cancelAfters: [iso(now + (PAYMENT_TOTAL - 1) * PAYMENT_INTERVAL_S), iso(now + (PAYMENT_TOTAL - 1) * PAYMENT_INTERVAL_S), iso(now + M3_CANCEL_S)],
       paymentTotal: PAYMENT_TOTAL,
       paymentIntervalS: PAYMENT_INTERVAL_S,
     });
