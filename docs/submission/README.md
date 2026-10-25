@@ -107,14 +107,22 @@ cp .env.example .env                    # devnet + mock defaults; .env is gitign
 pnpm -r typecheck && pnpm -r test
 ```
 
-**Fake mode**: no keys, no network. Both apps label mock mode on screen. Fake-mode tx hashes are not real, even where they're printed as
-explorer links.
+**Fake mode, full stack**: no keys, no network; core runs on its fake ledger and both apps talk to it. Fake-mode tx hashes are not
+real, even where they're printed as explorer links.
 
 ```bash
-pnpm --filter @xrlp/web dev             # :3000 marketplace, project page, /demo
-pnpm --filter @xrlp/inspector dev       # :3001 inspector queue + audit form, signs in the browser
+pnpm --filter @xrlp/core serve                                                              # :4000 core API
+NEXT_PUBLIC_API_MODE=http CORE_URL=http://localhost:4000 pnpm --filter @xrlp/web dev        # :3000 marketplace, project page, /demo
+NEXT_PUBLIC_API_MODE=http CORE_URL=http://localhost:4000 pnpm --filter @xrlp/inspector dev  # :3001 inspector queue + audit form, signs in the browser
+curl -X POST localhost:4000/api/admin/demo/reset -H 'content-type: application/json' -d '{"seed":"maple-st"}'   # load / reset the Maple St demo
+```
+
+Without core, either app also runs alone on built-in fixtures (`NEXT_PUBLIC_API_MODE=mock`, the default); mock mode is labelled on screen.
+
+```bash
 pnpm --filter @xrlp/core simulate       # the whole story on FakeLedger + FakeVerifier, prints the timeline
 pnpm --filter @xrlp/verifier demo       # the test suite over the Maple St fixtures (VERIFIER_MODE=live calls Claude)
+pnpm --filter @xrlp/inspector test:e2e  # inspector app -> running core (-> devnet with INSPECTOR_SEED); resets core's demo data
 ```
 
 **Devnet**: real transactions, each logged with its explorer link. The scripts refuse mainnet. Wallets go to `.data/` (gitignored).
