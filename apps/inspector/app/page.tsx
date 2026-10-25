@@ -57,7 +57,7 @@ export default function Home() {
               <VerifiedInspectorBadge inspector={inspector} />
             </div>
             <p className="text-[13px] text-muted">
-              {inspector.licenseNumber} · {inspector.firm} · {inspector.region} · {inspector.trades.join(", ")}
+              {inspector.licenseNumber} · {inspector.trades.join(", ")}
             </p>
           </div>
           <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="ml-auto font-mono text-xs text-muted hover:text-brand">

@@ -46,7 +46,7 @@ describe("fixtures match docs/05-api.md", () => {
     for (const id of ["maple-st-duplex", "rhinebeck-farmhouse"]) {
       const { project } = await api.getProject(id);
       for (const m of project.milestones) {
-        const sum = project.sov.filter((l) => m.sovCodes.includes(l.code)).reduce((s, l) => s + Number(l.amount), 0);
+        const sum = (project.sov ?? []).filter((l) => m.sovCodes?.includes(l.code)).reduce((s, l) => s + Number(l.amount), 0);
         assert.equal(sum, Number(m.amount), m.id);
       }
     }

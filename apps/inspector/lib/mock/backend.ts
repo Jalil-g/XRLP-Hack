@@ -80,14 +80,14 @@ export async function inspectorQueue(address: string): Promise<InspectorTask[]> 
     if (!(state.assignments[p.id] ?? []).includes(address)) continue;
     const base = { projectId: p.id, projectName: p.name, siteGeo: p.siteGeo };
     if (p.status === "verifying") {
-      tasks.push({ ...base, sov: p.sov, evidence: [], needs: "pre_visit", priorAudits: [] });
+      tasks.push({ ...base, sov: p.sov ?? [], evidence: [], needs: "pre_visit", priorAudits: [] });
       continue;
     }
     for (const m of p.milestones) {
       tasks.push({
         ...base,
         milestone: m,
-        sov: p.sov.filter((l) => m.sovCodes.includes(l.code)),
+        sov: (p.sov ?? []).filter((l) => m.sovCodes?.includes(l.code)),
         evidence: state.evidence[m.id] ?? [],
         needs: needsFor(m, address),
         priorAudits: state.audits[m.id] ?? [],
@@ -138,7 +138,7 @@ export async function submitAudit({ projectId, milestoneId, report, photos, sign
   if (!(state.assignments[projectId] ?? []).includes(report.inspector)) {
     throw new MockError("validation", `${report.inspector} is not the assigned inspector for ${project.name}`, 403);
   }
-  const unknown = report.checklist.filter((c) => !milestone.sovCodes.includes(c.sovCode)).map((c) => c.sovCode);
+  const unknown = report.checklist.filter((c) => !milestone.sovCodes?.includes(c.sovCode)).map((c) => c.sovCode);
   if (unknown.length) throw new MockError("validation", `Checklist has SoV lines outside this milestone: ${unknown.join(", ")}`, 400);
   if (needsFor(milestone, report.inspector) === "none") {
     throw new MockError("invalid_state", `Milestone is ${milestone.status}; no audit is due from this inspector`, 409);

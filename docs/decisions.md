@@ -55,13 +55,13 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 ## Inspector lane (Roro's agent, challenge freely)
 
-- [10-24] `apps/inspector` defines **provisional v2 zod schemas** in `lib/types.ts` (transcribed from 05-api) until CORE-01 lands them in
-  `@xrlp/shared`; shapes 05-api leaves open (`Inspector`, `Milestone.sovCodes`, `Project.sov`, `SovLine.evidence`) are proposed on #53.
+- [10-24] `apps/inspector` uses the `@xrlp/shared` v2 schemas; only the read models shared defines as TS interfaces (`ProjectDetail`,
+  `InspectorTask`, snapshots) get local zod schemas in `lib/types.ts`, typed against those interfaces so drift fails typecheck.
 - [10-24] Inspector app data access is **client-side** (polling, in-browser signing later); in http mode the browser calls same-origin
   `/api/*` and `next.config.ts` rewrites to `CORE_URL`. Responses are checked against the schemas and drift is logged, not thrown.
 - [10-24] Mock-mode parties use **real classic addresses** derived from public entropy `sha256("drawproof/mock/<label>")[0..16]`
   (never funded, not devnet wallets) so INS-04 can sign as a mock inspector without committing any seed.
-- [10-24] Route 10 multipart fields: `report` (JSON), `photos` (repeated, same order as `report.photos`), `signedTxBlob`. Proposed on #53.
+- [10-24] Route 10 multipart fields `report` / `photos` (repeated) / `signedTxBlob` — same as core's CORE-04 handler.
 
 ## Open
 
