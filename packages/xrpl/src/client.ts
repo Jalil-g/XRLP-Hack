@@ -153,6 +153,8 @@ export const realLedgerIo: PipelineIo = {
   },
   async txWithSequence(account, sequence, range) {
     const client = await getClient();
+    const max = Math.min(range.max, await client.getLedgerIndex()); // account_tx refuses ledgers past the validated one
+    if (max < range.min) return undefined;
     let marker: unknown;
     for (let page = 0; page < 20; page++) {
       let res;
@@ -161,7 +163,7 @@ export const realLedgerIo: PipelineIo = {
           command: "account_tx",
           account,
           ledger_index_min: range.min,
-          ledger_index_max: range.max,
+          ledger_index_max: max,
           forward: true,
           limit: 200,
           ...(marker !== undefined ? { marker } : {}),

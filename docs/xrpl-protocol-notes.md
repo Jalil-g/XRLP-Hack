@@ -50,17 +50,22 @@ Measured 2026-10-25 with `pnpm --filter @xrlp/xrpl stress --pipeline` (fresh fau
   `tesSUCCESS` at submit and validate in the same ledger (up to 5 of ours per ledger). XRPL-12's ~1 tx per ledger per
   account came from our lock, which waits for validation, not from the ledger.
 - **Timings.** Devnet closes a ledger every ~3.2–3.3 s. Locked: 20 Payments took 20 ledgers spread over 28–33 (~1.6
-  ledgers per tx), 93.9–108.1 s. Pipelined: the same 20 took 6 consecutive ledgers, **21.8 s, 5.0×**
+  ledgers per tx), 93.9–108.1 s. Pipelined: the same 20 took 6–7 consecutive ledgers, **21.8–27.3 s (3.8–5.0× over 4 runs)**
   ([first](https://devnet.xrpl.org/transactions/505E5C878A7A8F90D2163CC106D5ADB947F23160DFC7ED8CC3AE21D8CB597B69) ·
   [last](https://devnet.xrpl.org/transactions/35609C7199A951971CCEDF8376D80100D2EA477504A18D95B12CAE9A2CA52647)).
   20 multisig (2-of-3) Payments pipelined: 23.0 s.
-- **A Sequence is consumed only by a validated tx** (tes or tec). `tem` / `tef` / `tel` at submit consume nothing. A tx
-  that never validates leaves a gap, and every later tx from the account waits behind it (`terPRE_SEQ`, held by the
-  server until its own LastLedgerSequence). That's why the pipeline re-signs only once the stuck txs are provably dead.
-  (rippled semantics, not hit in these runs: [transaction results](https://xrpl.org/docs/references/protocol/transactions/transaction-results),
-  [ter codes](https://xrpl.org/docs/references/protocol/transactions/transaction-results/ter-codes),
-  [reliable submission](https://xrpl.org/docs/concepts/transactions/reliable-transaction-submission); offline-tested in
-  `packages/xrpl/test/pipeline.test.ts`.)
+- **A Sequence is consumed only by a validated tx** (tes or tec). `tem` / `tef` / `tel` at submit consume nothing, but
+  `tel*` is provisional: rippled may cache the tx and apply it later
+  ([tel codes](https://xrpl.org/docs/references/protocol/transactions/transaction-results/tel-codes)). A tx that never
+  validates leaves a gap, and every later tx from the account waits behind it (`terPRE_SEQ`, held by the server until
+  its own LastLedgerSequence).
+- **`tx` never proves a seen blob dead.** A `terPRE_SEQ` blob, 3 ledgers past its LastLedgerSequence: `tx` with or without
+  `min_ledger`/`max_ledger` → success, `validated: false`, no `ledger_index`, no `searched_all` (complete_ledgers covered
+  the range). rippled answers from its transaction cache for any tx it has seen, and every lookup keeps the entry alive.
+  `account_info` at the LastLedgerSequence ledger proves it instead: Sequence 6396745 ≤ the blob's 6396746. The
+  pipelined engine uses that state proof (`stress --held`: held blob proven dead, re-signed, `tesSUCCESS`
+  [tx](https://devnet.xrpl.org/transactions/66E83AFF9AC1DBDCF8E69E845CDF3DC8C849CFE9D8E19A823A5D1772A3BD58F5)). XRPL-12's
+  `searched_all` proof (locked mode) only works for a server that never saw the blob.
 - **Another writer on the same account** (`--foreign`): a raw Payment took the pipeline's next Sequence 6395951
   ([tx](https://devnet.xrpl.org/transactions/9B7AFC1C84824A4D0939ED5E7E61C918D6DA51BFBEB94C607583B9B8340162AE)). Our
   next submit got `tefPAST_SEQ` (nothing applied), so the account drained, resynced to 6395952 and re-signed 5 txs
