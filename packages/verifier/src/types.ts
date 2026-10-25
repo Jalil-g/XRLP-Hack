@@ -1,5 +1,5 @@
 // Verifier-local types. Cross-package contract types (Verdict, Evidence, ...) live in @xrlp/shared.
-import type { Builder, CheckResult, Evidence, Milestone, MilestoneTemplate, Project, RiskTier } from "@xrlp/shared";
+import type { Builder, CheckResult, Evidence, InspectorAudit, Milestone, MilestoneTemplate, Project, ReleasePolicy, RiskTier, SovLine } from "@xrlp/shared";
 
 export const MILESTONE_CHECKS = [
   "required_evidence_present",
@@ -7,6 +7,8 @@ export const MILESTONE_CHECKS = [
   "photo_fresh",
   "no_duplicate_photo",
   "invoice_matches_budget",
+  "inspector_audit_present",
+  "audit_checklist_complete",
   "lien_waiver_matches_invoices",
   "stage_visually_consistent",
   "document_consistency",
@@ -26,6 +28,8 @@ export const DETERMINISTIC_CHECKS: readonly MilestoneCheckName[] = [
   "photo_fresh",
   "no_duplicate_photo",
   "invoice_matches_budget",
+  "inspector_audit_present",
+  "audit_checklist_complete",
   "lien_waiver_matches_invoices",
 ];
 export const LAZY_FRAUD_ONLY_CHECKS: readonly MilestoneCheckName[] = ["gps_within_site", "photo_fresh"];
@@ -59,6 +63,11 @@ export interface VerifyMilestoneInput {
   template?: MilestoneTemplate;
   /** The evidence bundle submitted for this milestone. `meta` is filled in if missing. */
   evidence: Evidence[];
+  audits?: InspectorAudit[];
+  /** Trusted lock-terms context from core, never derived from the supplied audits. */
+  assignedInspectors?: readonly string[];
+  sov?: SovLine[];
+  policy?: ReleasePolicy;
   /**
    * All other evidence on the platform (ideally ALL projects, not just this builder's).
    * Prefer PriorEvidence (lets us ignore same-milestone resubmits and name the source project);
