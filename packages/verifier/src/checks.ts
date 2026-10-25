@@ -228,8 +228,10 @@ export function checkInvoiceMatchesBudget(
   const unread: LoadedEvidence[] = [];
   let total = 0n;
   const parts: string[] = [];
+  let modelExtracted = false;
   for (const inv of invoices) {
     const t = inv.meta.invoiceTotal ?? llmTotals[inv.evidence.id];
+    if (!inv.meta.invoiceTotal && llmTotals[inv.evidence.id]) modelExtracted = true;
     if (!t) {
       unread.push(inv);
       continue;
@@ -245,7 +247,7 @@ export function checkInvoiceMatchesBudget(
   const ratio = pct(total, draw);
   const { invoiceUnderTolerancePct: under, invoiceOverTolerancePct: over } = policy.thresholds;
   const ids = invoices.map((l) => l.evidence.id);
-  const head = `Invoices total ${fmtMoney(centsToString(total))} vs draw ${fmtMoney(ctx.milestone.amount)} (${ratio}%)`;
+  const head = `Invoices total ${fmtMoney(centsToString(total))} vs draw ${fmtMoney(ctx.milestone.amount)} (${ratio}%)${modelExtracted ? " [includes LLM-extracted totals]" : ""}`;
   if (ratio < 100 - under) {
     return outcome(c, "fail",
       `${head}: invoices support only ${ratio}% of the requested draw (tolerance −${under}%). Shortfall ${fmtMoney(draw - total)}. [${parts.join("; ")}]`, ids);

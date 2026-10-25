@@ -182,7 +182,7 @@ export function releasePolicyFor(project: Project, milestone: Milestone, riskTie
   const minConfidence = Math.min(0.95, Math.round((({ low: 0.7, medium: 0.8, high: 0.9 }[tier]) + (highValue ? 0.05 : 0)) * 100) / 100);
   return ReleasePolicy.parse({
     riskTier: tier,
-    requiredChecks: REQUIRED_SUITE.filter((check) => !optional.has(check)),
+    requiredChecks: [...REQUIRED_SUITE.filter((check) => !optional.has(check)), "evidence_readable"],
     optionalChecks: [...optional], minConfidence,
     requiredAudits: highValue || tier === "high" ? 2 : 1,
   });
