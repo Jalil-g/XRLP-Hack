@@ -89,7 +89,7 @@ in seconds after the suite passes instead of 5–14 business days, and no person
 
 **8. "Default after money is released?"**
 That money is at risk, because that's lending. Mitigants: small milestones, a deed of trust held by the SPV (off-chain, production),
-first-loss cover applied by the ledger on `LoanManage` default (XLS-66; our devnet proof is XRPL-15, #127, in progress). Unreleased money
+first-loss cover applied by the ledger on `LoanManage` default (XLS-66; proven on devnet in XRPL-15: the cover returned exactly 10% of the outstanding debt). Unreleased money
 can only go to the builder on release or back toward the vault.
 
 **9. "Interest accrues on undrawn principal?"**
