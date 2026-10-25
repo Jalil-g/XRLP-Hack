@@ -12,6 +12,7 @@ pnpm --filter @xrlp/xrpl spike:broker   # XRPL-04 devnet proof: rates, mandatory
 pnpm --filter @xrlp/xrpl compliance     # XRPL-08 devnet proof: credentials x3, domain, private vault, fee, attestations
 pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
 pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one account, all tesSUCCESS
+pnpm --filter @xrlp/xrpl spike:release  # XRPL-07 devnet proof: finish, wrong fulfillment, repay, cancel+refund, withdraw (~7 min)
 pnpm --filter @xrlp/xrpl typecheck
 ```
 
@@ -110,10 +111,12 @@ tops up XRP below 30, skips existing issuer flags / trust lines, and mints only 
 | `depositToVault({projectId, vaultId, investor, amount})` | `VaultDeposit` | `{tx, event: vault_deposit}` |
 | `closeLoanAndCreateEscrows(project, {conditions, builderAddress?, paymentTotal?, paymentIntervalS?, defaultCancelAfter?, waitForInvestmentPhase=true, spvSigners?, spvSingleKey?, allowOverpayment=true, originationFee?, originationFeePayer="builder"})` | (if needed) payer → SPV RLUSD `Payment` for the origination-fee shortfall, `LoanSet` with `LoanOriginationFee` (platform signs, SPV multisig countersigns), then one `EscrowCreate` per milestone, back to back | `{loanId, loanSetTx, originationFee, originationFeeTopUpTx?, escrows: [{milestoneId, owner, offerSequence, condition, createTx, cancelAfter, amount, escrow}], events}` |
 | `attestApproval({projectId, spv, milestoneId, role, signer, decision, notes?, verdictHash?, condition?})` | 1-drop `Payment` approver → SPV with a JSON memo (`xrlp/attestation/v1`) | `{tx, event: approval_attested, attestation}` |
-| `releaseMilestone({projectId, milestoneId, escrow:{owner, offerSequence, condition}, fulfillment, amount?, submitter?})` | `EscrowFinish` | `{tx, event: escrow_finished}` |
-| `cancelExpiredMilestone({projectId, milestoneId, escrow, cancelAfter?, wait?, amount?})` | `EscrowCancel` | `{tx, event: escrow_cancelled}` |
-| `repayLoan({projectId, spv, loanId, amount?, mode?, signers?})` | `LoanPay` (SPV multisig, default platform + builder + trustee) | `{tx, event: loan_payment, amount, mode}` |
-| `withdrawFromVault({projectId, vaultId, investor, amount})` | `VaultWithdraw` (Redemption phase only) | `{tx, event: vault_withdraw}` |
+| `releaseMilestone({projectId, milestoneId, escrow:{owner, offerSequence, condition}, fulfillment, amount?, submitter="releaseService", destination?, lastLedgerMargin=60, marginS=120})` | preflight (no tx) → `EscrowFinish` | `{tx, event: escrow_finished}` (amount from the escrow) |
+| `tryFinishWithWrongFulfillment({owner, offerSequence, condition, projectId?, milestoneId?, submitter="platform"})` | `EscrowFinish` with a random wrong fulfillment → **`tecCRYPTOCONDITION_ERROR`** (resolves, does not throw) | `{tx, event: release_refused + result}` |
+| `cancelExpiredMilestone({projectId, milestoneId, escrow, cancelAfter?, wait?, amount?, submitter="releaseService"})` | `EscrowCancel` (`TooSoonError` before CancelAfter, nothing submitted) | `{tx, event: escrow_cancelled}` (amount from the escrow) |
+| `builderPayToSpv({projectId, spv, amount, builder="builder"})` | RLUSD `Payment` builder → SPV | `{tx, amount, from, to}` (no event kind yet, TODO(#53)) |
+| `repayLoan({projectId, spv, loanId, amount?, mode?, source?: "builder"\|"escrow_refund", signers?, skipAmountCheck?})` | `LoanPay` (SPV multisig, default platform + builder + trustee, per-account locked) | `{tx, event: loan_payment, amount, mode, plan}` |
+| `withdrawFromVault({projectId, vaultId, investor, amount})` | `VaultWithdraw` (`TooSoonError` in the Investment phase, nothing submitted) | `{tx, event: vault_withdraw}` |
 | `issueCredential({subject, type, uri?, accept=true, projectId?})` | `CredentialCreate` (platform) + `CredentialAccept` (subject). **Not idempotent**; prefer `grantCredential` | `{createTx, acceptTx, event: credential_issued}` |
 | `getVaultStatus(vaultId)` / `getShareBalance(holder, mptId)` / `getLoan(loanId)` / `getSpvInfo(addr)` | reads | |
 
@@ -148,7 +151,8 @@ Pure helpers in `src/lending-math.ts` (exported from the package root, unit-test
   into the SPV just before `LoanSet` ("points paid at closing"), and fails fast with a clear error if the payer lacks
   the RLUSD. Pass `originationFee: "0"` to skip the fee.
 
-Defaults: `repayLoan` pays `PeriodicPayment + LoanServiceFee` and picks `late` if past due.
+Defaults: `repayLoan` pays one periodic payment (`PeriodicPayment + LoanServiceFee`, rounded up) and picks the mode
+from ledger time and `source` (see "Finish, cancel, repay, withdraw" below).
 `closeLoanAndCreateEscrows` uses `milestone.cancelAfter` when set, otherwise `defaultCancelAfter`
 (default: now + termDays). SPV quorum for `LoanSet`/`EscrowCreate`/`LoanPay` defaults to **platform + builder + trustee**
 (`defaultSpvSignerWallets()`). Those three are the same for every project whichever inspector was assigned. Pass
@@ -242,10 +246,26 @@ is a follow-up ticket. It maps 1:1:
 - `closeLoanAndCreateEscrows({project, builder, conditions})` → pass `conditions` (array accepted) +
   `builderAddress: builder.address`. `escrows[i]` already has `{milestoneId, owner, offerSequence, condition, createTx}`.
 - `attestApproval({project, milestone, role, signer, ...})` → `signer` may be the address.
-- `releaseMilestone({project, milestone, fulfillment})` → `escrow: milestone.escrow`.
+- `releaseMilestone({project, milestone, fulfillment})` → `escrow: milestone.escrow`, `destination: builder.address`.
+- `finishEscrow` / `tryFinishWithWrongFulfillment` / `cancelEscrow` (shared port) → `releaseMilestone` / `tryFinishWithWrongFulfillment` / `cancelExpiredMilestone`, return `.tx`.
 - `cancelExpiredMilestone({project, milestone})` → `escrow: milestone.escrow`.
-- `repayLoan({project, amount, source})` → `repayLoan({spv, loanId, amount, mode: amount > periodic ? "overpayment" : undefined})`.
+- `repayLoan({project, amount, source})` → `source: "builder"`: `builderPayToSpv({spv, amount})` then `repayLoan({spv, loanId, amount, source})`;
+  `source: "escrow_refund"`: `repayLoan({spv, loanId, amount, source})` (mode picked automatically).
+- `withdraw({project, investor, amount})` → `withdrawFromVault({vaultId, investor, amount})` (throws shared `TooSoonError`).
 - `issueCredential` returns `projectId = "_platform"` (`PLATFORM_SCOPE`) by default.
+
+### Finish, cancel, repay, withdraw (XRPL-07)
+
+| What | Behaviour |
+|---|---|
+| `finishEscrow` (`escrow.ts`) | `fulfillmentMatches` → `preflightFinish` (`lastLedgerOffset` 60 → margin to CancelAfter = max(120 s, 60 × 5 s) = 300 s) → `EscrowFinish` with preflight's Fee (sized for the fulfillment) + LastLedgerSequence. If the submit throws `retriable: true` (nothing applied), it **re-runs preflight and rebuilds once**. Short-lived spike escrows: pass `lastLedgerMargin: 20, marginS: 60`. |
+| `cancelEscrow` | Reads escrow + close time from one validated ledger (`getEscrowAtLedger`). `now ≤ CancelAfter` → shared **`TooSoonError`**, nothing submitted. Escrow gone → `XrplTxError tecNO_TARGET` (local, no hash → `not_found`). An on-ledger `tecNO_PERMISSION` is mapped to `TooSoonError` with `txHash`. |
+| `finishWithWrongFulfillment` / `tryFinishWithWrongFulfillment` | Random 32-byte preimage (never matches), condition check skipped, but refuses (`UnsafeReleaseError`, nothing submitted) when the escrow is missing, past/within 30 s of CancelAfter, before FinishAfter, frozen/unauthorized, or the submitter is unfunded (`wrongFinishBlockers`). Resolves with the validated tec `TxResult`; throws if the tx never reached the ledger. |
+| `loanPayMultisig({..., mode?, overpayment?})` (`loan.ts`) | `submitWithSigner` on the SPV: per-account lock through validation, re-sign on transient failures, local quorum check first (`tefBAD_QUORUM`/`tefBAD_SIGNATURE`, nothing submitted). |
+| `planLoanPayment({loan, nowRipple, amount?, source?, mode?})` (pure) | `minimum` = min(one periodic payment + service fee, everything outstanding), rounded **up** to 6 dp. Mode unless given: past `NextPaymentDueDate` → `late`; `source: "escrow_refund"` with amount > minimum on an `lsfLoanOverpayment` loan → `overpayment`; else `regular` (builder repayments stay regular). Throws **`LoanPayAmountError`** (`code: "validation"`, nothing submitted) when amount < minimum (ledger: `tecINSUFFICIENT_PAYMENT`), amount > outstanding (non-`full`), or overpayment on a loan without the flag. |
+| `withdrawFromVault` | `withdrawPhaseCheck(vault, ledgerTime)` first: Investment phase → shared **`TooSoonError`** (message has the RedemptionDate), nothing submitted. Subscription / Redemption / open vault → `VaultWithdraw`; an on-ledger `tecTOO_SOON` is mapped to `TooSoonError`. |
+
+Devnet proof: `docs/xrpl-protocol-notes.md` §1b.
 
 ## Read models (`src/reads.ts`, XRPL-09)
 
@@ -289,7 +309,7 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `lending-math.ts` | pure: broker-rate validation, cover sizing, origination/management fee, vault date math |
 | `spv.ts` | `createSpv`, v2 `SignerListSet`, disable master, `submitMultisigned` (+ local quorum check), `getSpvInfo` |
 | `condition.ts` | PREIMAGE-SHA-256 DER encoding (pure) |
-| `escrow.ts` | IOU `EscrowCreate` (SPV multisig), `EscrowFinish` (preflighted), `EscrowCancel` |
+| `escrow.ts` | IOU `EscrowCreate` (SPV multisig), `EscrowFinish` (preflighted, rebuilt once if retriable), `EscrowCancel` (TooSoon-gated), wrong-fulfillment demo finish |
 | `preflight.ts` | pre-reveal safety: `preflightFinish`, pure `evaluatePreflight`, `unsafe_release` mapping |
 | `attest.ts` | memo attestations encode/decode |
 | `credentials.ts` | `CredentialCreate` / `CredentialAccept` / status |
