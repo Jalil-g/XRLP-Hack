@@ -1071,9 +1071,16 @@ export class CoreService implements CoreApi {
     } catch (e) {
       const txHash = e instanceof DomainError ? e.txHash : undefined;
       const txResult = e instanceof DomainError ? e.txResult : undefined;
-      // tec / tem: the LoanPay definitely did not apply. Drop the marker, or a later LoanPay on this loan (builder repay,
+      // tec / tem: this LoanPay definitely did not apply. Drop its marker, or a later LoanPay on this loan (builder repay,
       // another milestone's refund) shrinks TotalValueOutstanding and the retry would "reconcile" a refund never paid.
-      if (txResult && /^te[cm][A-Z_]+$/.test(txResult)) await this.store.write((db) => void delete this.meta(db, id).refundAttempts?.[mid]);
+      // If an earlier attempt's outcome is still unknown, put its marker back: that attempt may land late (and may be why
+      // this one failed), and only its tvoBefore can show it.
+      if (txResult && /^te[cm][A-Z_]+$/.test(txResult))
+        await this.store.write((db) => {
+          const meta = this.meta(db, id);
+          if (prior) meta.refundAttempts = { ...meta.refundAttempts, [mid]: prior };
+          else delete meta.refundAttempts?.[mid];
+        });
       else if (txHash) await this.store.write((db) => void (this.meta(db, id).refundAttempts![mid]!.txHash = txHash));
       throw e;
     }

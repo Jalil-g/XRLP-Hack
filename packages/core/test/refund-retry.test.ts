@@ -99,6 +99,28 @@ describe("refund LoanPay retry safety", () => {
     assert.ok(!refund.result, "a real LoanPay, not a reconciled one");
   });
 
+  it("outcome unknown, then the in-flight LoanPay lands and the retry fails tec: the next tick reconciles, no second refund", async () => {
+    const t = await m1Expired();
+    let call = 0;
+    t.ledger.repayLoan = async (a) => {
+      call++;
+      if (call === 1) throw new LedgerError("ledger_error", "socket closed", { txResult: "connection_lost" }); // still in flight
+      if (call === 2) {
+        await t.real(a); // attempt 1 validates now...
+        t.count();
+        throw new LedgerError("ledger_error", "tecUNFUNDED", { txResult: "tecUNFUNDED" }); // ...so attempt 2 has no funds
+      }
+      t.count();
+      return t.real(a);
+    };
+    await t.svc.cancelExpired(t.project.id, t.m1.id).catch(() => undefined);
+    await t.svc.keeperTick();
+    assert.equal(await status(t.svc, t.project.id, t.m1.id), "expired");
+    await t.svc.keeperTick();
+    assert.equal(t.applied(), 1, "attempt 1 landed; nothing else was paid");
+    assert.equal(await status(t.svc, t.project.id, t.m1.id), "refunded");
+  });
+
   it("refund outcome unknown: builder repay is refused until it is resolved", async () => {
     const t = await m1Expired();
     let lose = true;
