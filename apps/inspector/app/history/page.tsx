@@ -5,7 +5,8 @@ import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import { useIdentity } from "@/components/identity";
 import { AuditHistoryCard } from "@/components/audit/history-card";
-import { Card, CardContent } from "@/components/ui/card";
+import { buttonClass } from "@/components/ui/button";
+import { Empty, PageHeader } from "@/components/ui/layout";
 import { LoadingState } from "@/components/ui/loading-state";
 import { api } from "@/lib/api";
 import { auditHistory } from "@/lib/history";
@@ -25,30 +26,28 @@ function History({ address }: { address: string }) {
   const history = usePoll(load, 5_000);
   const entries = history.data ? auditHistory(history.data, address) : null;
 
+  const ago = history.updatedAt ? formatDateTime(new Date(history.updatedAt).toISOString()) : null;
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-title">Audit history</h1>
-        </div>
-        <button type="button" onClick={history.refresh} className="flex min-h-11 items-center gap-2 rounded-control border border-line bg-surface px-4 text-small text-muted hover:text-ink">
-          <RefreshCw className="size-4" /> Refresh history
-        </button>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-line py-4">
-        <h2 className="flex items-center gap-2 text-small font-semibold">Submitted reports{entries && <span className="tabular text-muted">{entries.length}</span>}</h2>
-        {history.updatedAt && <p className="text-caption text-muted">Updated {formatDateTime(new Date(history.updatedAt).toISOString())}</p>}
-      </div>
-      {history.error && <p role="alert" className="rounded-lg border border-warn-line bg-warn-bg p-3 text-small text-warn">
-        {entries ? "History may be stale. " : "Could not load history. "}{history.error}
-      </p>}
+    <div className="space-y-12">
+      <PageHeader
+        title={<>History{entries && entries.length > 0 && <span className="ml-3 text-ink-3 tabular">{entries.length}</span>}</>}
+        action={
+          <div className="flex items-center gap-1 text-caption text-ink-3">
+            {ago && <span className="tabular">Updated {ago}</span>}
+            <button type="button" onClick={history.refresh} className="flex size-11 items-center justify-center rounded-full text-ink-2 hover:bg-band hover:text-ink" aria-label="Refresh history">
+              <RefreshCw className="size-4" />
+            </button>
+          </div>
+        }
+      />
+      {history.error && (
+        <p role="alert" className="rounded-control bg-review-bg px-4 py-3 text-small text-review">
+          {entries ? "History may be stale. " : "Could not load history. "}{history.error}
+        </p>
+      )}
       {!entries && !history.error && <LoadingState label="Loading signed reports and receipts…" />}
       {entries?.length === 0 && (
-        <Card><CardContent className="space-y-3 py-10 text-center">
-          <p className="font-medium">No submitted audits yet</p>
-          <Link href="/" className="inline-block text-small text-brand hover:underline">View assigned audits</Link>
-        </CardContent></Card>
+        <Empty title="No submitted audits yet" action={<Link href="/" className={buttonClass("secondary")}>Open queue</Link>} />
       )}
       {entries?.map((entry, index) => <AuditHistoryCard key={`${entry.milestone.id}:${entry.audit.txHash ?? entry.audit.at}:${index}`} entry={entry} />)}
     </div>

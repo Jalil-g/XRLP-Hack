@@ -5,13 +5,13 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, PenLine } from "lucide-react";
+import { CheckCircle2, ExternalLink } from "lucide-react";
 import { ReAuditContext } from "@/components/audit/re-audit-context";
 import { latestOwnAudit } from "@/lib/re-audit";
 import { Checklist } from "@/components/audit/checklist";
 import { EvidenceGallery } from "@/components/audit/evidence-gallery";
 import { PhotoPicker } from "@/components/audit/photo-picker";
-import { SigningPanel } from "@/components/audit/signing-panel";
+import { SigningKey, SigningPanel } from "@/components/audit/signing-panel";
 import { SiteMap, type MapPin } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
 import { NEEDS } from "@/components/task-row";
@@ -19,14 +19,19 @@ import { Badge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, Facts, PageHeader, Properties, Section } from "@/components/ui/layout";
+import { Proof } from "@/components/ui/proof";
+import { StatusIcon } from "@/components/ui/status-icon";
 import { ApiError, api, API_MODE } from "@/lib/api";
 import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, withBrowserExif, type AuditDraft } from "@/lib/audit";
 import { evidenceStatus } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
 import type { ChecksStatus, Inspector, InspectorTask, SubmitAuditResult } from "@/lib/types";
-import { cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
+import { cn, formatAmount, formatDate, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
 import { isAuditSubmitShortcut } from "@/lib/shortcuts";
+
+const BACK = { href: "/", label: "Queue" };
 
 type AuditTask = InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> };
 
@@ -85,29 +90,25 @@ function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspect
     };
   }, [inspector, projectId, milestoneId, reloads]);
 
-  const back = (
-    <Link href="/" className="inline-flex items-center gap-1 text-small text-muted hover:text-ink">
-      <ArrowLeft className="size-4" /> Queue
-    </Link>
-  );
+  const back = <PageHeader back={BACK} title="Audit" />;
 
-  if (loadError) return <Shell back={back}><p role="alert" className="text-small text-bad">Could not load the review: {loadError}</p><Button onClick={() => setReloads((n) => n + 1)}>Retry review</Button></Shell>;
+  if (loadError) return <Shell back={back}><p role="alert" className="text-small text-fail">Could not load the review: {loadError}</p><Button onClick={() => setReloads((n) => n + 1)}>Retry review</Button></Shell>;
   if (!inspector || task === undefined) return <Shell back={back}><LoadingState label="Loading milestone evidence and audit context…" /></Shell>;
   if (task === null) {
     return (
       <Shell back={back}>
-        <p className="text-small text-muted">Not in {inspector.name}&apos;s queue.</p>
+        <Empty title={`Not in ${inspector.name}'s queue`} action={<Link href="/" className={buttonClass("secondary")}>Back to queue</Link>} />
       </Shell>
     );
   }
-  if (task.needs !== "audit" && task.needs !== "re_audit") return <Shell back={back}><p className="text-small text-muted">No audit due.</p></Shell>;
+  if (task.needs !== "audit" && task.needs !== "re_audit") return <Shell back={back}><Empty title="No audit due" action={<Link href="/" className={buttonClass("secondary")}>Back to queue</Link>} /></Shell>;
   // Keyed so a reload (after the builder changed evidence) starts a clean draft bound to the new bundle.
-  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} checks={checks} browserExif={browserExif} inspector={inspector.address} inspectorName={inspector.name} back={back} onReload={() => setReloads((n) => n + 1)} />;
+  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} checks={checks} browserExif={browserExif} inspector={inspector.address} inspectorName={inspector.name} onReload={() => setReloads((n) => n + 1)} />;
 }
 
 function Shell({ back, children }: { back: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
       {back}
       {children}
     </div>
@@ -120,7 +121,6 @@ function AuditForm({
   browserExif,
   inspector,
   inspectorName,
-  back,
   onReload,
 }: {
   task: AuditTask;
@@ -128,7 +128,6 @@ function AuditForm({
   browserExif: ReadonlySet<string>;
   inspector: string;
   inspectorName: string;
-  back: React.ReactNode;
   onReload(): void;
 }) {
   const m = task.milestone;
@@ -228,144 +227,144 @@ function AuditForm({
     }
   }
 
-  if (result) return <Filed result={result.res} signed={result.signed} task={task} back={back} />;
+  if (result) return <Filed result={result.res} signed={result.signed} task={task} />;
   const busy = phase !== "idle";
   const canSign = Boolean(key && spv);
+  const answered = task.sov.filter((l) => draft.checklist[l.code]?.status).length;
 
   return (
-    <div className="space-y-6">
-      <div className="audit-context space-y-4">
-        {back}
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-title">
-              <span className="mr-3 text-muted">M{m.index + 1}</span>
-              {m.title}
-            </h1>
-            <p className="mt-2 flex flex-wrap gap-x-4 text-small text-muted"><span>{task.projectName}</span><span>{inspectorName}</span></p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 text-small">
-            <div><p className="text-caption text-muted">Milestone amount</p><p className="mt-1 tabular text-heading font-semibold">{formatRlusd(m.amount)}</p></div>
-            {m.cancelAfter && (
-              <span className="flex items-center gap-1 text-caption text-muted">
-                <CalendarClock className="size-3.5" /> Expires {formatDateTime(m.cancelAfter)}
-              </span>
-            )}
-            {isReAudit && (
-              <Badge tone={NEEDS.re_audit.tone} dot>
-                {NEEDS.re_audit.label}
-              </Badge>
-            )}
-          </div>
-        </div>
-      </div>
+    <div className="space-y-10">
+      <PageHeader
+        back={BACK}
+        title={<>{task.projectName} <span className="text-ink-3">{m.title}</span></>}
+        meta={isReAudit && <Badge tone={NEEDS.re_audit.tone}>{NEEDS.re_audit.label}</Badge>}
+        action={
+          <Facts
+            items={[
+              { label: "Milestone", value: <>{formatAmount(m.amount)} <span className="text-caption font-medium text-ink-2">RLUSD</span></> },
+              ...(m.cancelAfter ? [{ label: "Escrow expires", value: formatDate(m.cancelAfter) }] : []),
+              { label: "Inspector", value: inspectorName },
+            ]}
+          />
+        }
+      />
 
-      <ol aria-label="Audit workflow" className="workflow-rail">
-        <li aria-current="step">Report</li>
-        <li>Review</li>
-        <li>Sign</li>
-      </ol>
-
-      <ReviewDialog open={reviewing} title="Review and submit audit" busy={busy}
+      <ReviewDialog open={reviewing} title="Review audit" note="Your audit records observations. It does not release funds." busy={busy}
         confirmLabel={phase === "signing" ? "Signing…" : phase === "filing" ? "Submitting…" : canSign ? "Sign and submit audit" : "Submit audit (core signs)"}
         onBack={() => setReviewing(false)} onConfirm={() => void submit(canSign)}>
-        <p className="font-medium">{task.projectName} <span className="ml-2 text-faint">M{m.index + 1}</span> {m.title}</p>
-        <p className="flex flex-wrap gap-x-4"><span className="tabular">{formatRlusd(m.amount)}</span><span>{inspectorName}</span><span className="font-mono">{shortAddress(inspector, 8, 6)}</span></p>
-        <ul className="divide-y divide-line border-y border-line">
-          {task.sov.map((line) => <li key={line.code} className="py-3">
-            <div className="flex flex-wrap justify-between gap-2"><span>{line.title}</span><span className="font-medium">{draft.checklist[line.code]?.status?.replaceAll("_", " ")}</span></div>
-            {draft.checklist[line.code]?.note && <p className="mt-1 text-muted">{draft.checklist[line.code]?.note}</p>}
-          </li>)}
+        <Properties
+          items={[
+            { label: "Project", value: task.projectName },
+            { label: "Milestone", value: <><span className="mr-1.5 text-ink-3 tabular">{m.index + 1}</span>{m.title}</> },
+            { label: "Amount", value: <span className="tabular">{formatRlusd(m.amount)}</span> },
+            { label: "Inspector", value: inspectorName },
+          ]}
+        />
+        <ul aria-label="Checklist" className="divide-y divide-line border-y border-line">
+          {task.sov.map((line) => {
+            const entry = draft.checklist[line.code];
+            return (
+              <li key={line.code} className="py-2.5">
+                <div className="flex items-center gap-3">
+                  {entry?.status && <StatusIcon state={LINE_STATE[entry.status]} className="size-4" />}
+                  <span className="min-w-0 flex-1">{line.title}</span>
+                  <span className="font-medium">{entry?.status && LINE_LABEL[entry.status]}</span>
+                </div>
+                {entry?.note && <p className="mt-1 pl-7 text-ink-2">{entry.note}</p>}
+              </li>
+            );
+          })}
         </ul>
-        <p className="flex flex-wrap gap-x-4"><span>{draft.photos.length} site photo{draft.photos.length === 1 ? "" : "s"}</span><span>{task.evidence.length} builder files</span></p>
+        <p className="flex flex-wrap gap-x-5 text-ink-2 tabular">
+          <span>{draft.photos.length} site photo{draft.photos.length === 1 ? "" : "s"}</span>
+          <span>{task.evidence.length} builder files</span>
+        </p>
         {draft.notes && <p className="whitespace-pre-wrap">{draft.notes}</p>}
-        <p className="flex flex-wrap gap-x-4 text-caption text-muted"><span>Evidence version <span className="font-mono">{bundle ? shortHash(bundle) : "…"}</span></span><span>Signed by: {canSign ? "Your key" : "Core"}</span></p>
+        <Proof
+          items={[
+            { label: "Evidence version", value: <span className="font-mono">{bundle ? shortHash(bundle) : "…"}</span> },
+            { label: "Signed by", value: canSign ? "Your key" : "Core" },
+            { label: "Signing account", value: <span className="font-mono">{shortAddress(inspector, 8, 6)}</span> },
+          ]}
+        />
       </ReviewDialog>
 
-      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+      {isReAudit && <ReAuditContext task={task} checks={checks} inspector={inspector} bundle={bundle} onReload={onReload} busy={busy} />}
+
+      <div className="grid items-start gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {/* Left: what the builder claims. */}
-        <div className="min-w-0 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Builder evidence</CardTitle>
-              <span className="tabular text-caption text-muted">{ev.uploaded} file{ev.uploaded === 1 ? "" : "s"}</span>
-            </CardHeader>
-            <CardContent>
-              <EvidenceGallery evidence={task.evidence} site={task.siteGeo} browserExif={browserExif} />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader>
-              <CardTitle>Site vs photo locations</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <SiteMap site={task.siteGeo} pins={pins} />
-            </CardContent>
-          </Card>
+        <div className="min-w-0 space-y-10">
+          <Section title="Builder evidence" aside={<span className="tabular">{ev.uploaded} file{ev.uploaded === 1 ? "" : "s"}</span>}>
+            <EvidenceGallery evidence={task.evidence} site={task.siteGeo} browserExif={browserExif} />
+          </Section>
+          <Section title="Photo locations">
+            <SiteMap site={task.siteGeo} pins={pins} />
+          </Section>
         </div>
 
         {/* Right: the inspector's audit. */}
-        <div className="min-w-0 space-y-6">
-          {isReAudit && <ReAuditContext task={task} checks={checks} inspector={inspector} bundle={bundle} onReload={onReload} busy={busy} />}
-
+        <div className="min-w-0 space-y-10">
           <Card id="checklist">
             <CardHeader>
               <CardTitle>Checklist</CardTitle>
+              <span className={cn("text-caption tabular", answered === task.sov.length ? "font-medium text-ink" : "text-ink-2")}>
+                {answered} of {task.sov.length}
+              </span>
             </CardHeader>
             <Checklist sov={task.sov} value={draft.checklist} onChange={setLine} showErrors={showErrors} />
           </Card>
 
-          <Card id="photos" className={cn(showErrors && draft.photos.length === 0 && "border-bad-line")}>
-            <CardHeader>
-              <CardTitle>Site photos</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <PhotoPicker photos={draft.photos} onChange={(photos) => setDraft((d) => ({ ...d, photos }))} site={task.siteGeo} />
-            </CardContent>
-          </Card>
+          <Section id="photos" title="Site photos" aside={draft.photos.length > 0 && <span className="tabular">{draft.photos.length}</span>}>
+            <PhotoPicker photos={draft.photos} onChange={(photos) => setDraft((d) => ({ ...d, photos }))} site={task.siteGeo} invalid={showErrors && draft.photos.length === 0} />
+          </Section>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Notes</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <textarea
-                aria-label="Audit notes"
-                value={draft.notes}
-                onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
-                rows={4}
-                placeholder="Optional"
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-small placeholder:text-faint focus:ring-2 focus:border-brand"
+          <Section title="Notes">
+            <textarea
+              aria-label="Audit notes"
+              value={draft.notes}
+              onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+              rows={3}
+              placeholder="Optional"
+              className="block w-full rounded-control border border-line-2 bg-surface px-3 py-2.5 text-small placeholder:text-ink-3"
+            />
+          </Section>
+
+          <div className="space-y-4 border-t border-line pt-6">
+            {showErrors && problems.length > 0 && (
+              <ul className="space-y-1 text-small text-fail">
+                {problems.map((p) => (
+                  <li key={p.field + p.message}>{p.message}</li>
+                ))}
+              </ul>
+            )}
+            {submitError && (
+              <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-control bg-fail-bg px-4 py-3 text-small text-fail">
+                <span>{submitError.stale ? "The builder's evidence changed since you opened this audit. Reload it." : submitError.message}</span>
+                {submitError.stale && (
+                  <Button size="sm" variant="danger" className="bg-surface" onClick={onReload}>
+                    Reload evidence
+                  </Button>
+                )}
+              </div>
+            )}
+            {key === null && spv && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
+            <div className="flex flex-wrap-reverse items-start justify-between gap-x-6 gap-y-2">
+              <Proof
+                className="min-w-0 flex-1"
+                items={[
+                  {
+                    label: "Evidence version",
+                    value: (
+                      <span className="font-mono" title="Your audit is bound to these builder files. If they change, a re-audit is needed.">
+                        {bundle ? shortHash(bundle) : "…"}
+                      </span>
+                    ),
+                  },
+                  { label: "Signing key", value: key && spv ? <SigningKey address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} /> : "Core signs" },
+                  { label: "Escrow owner", value: spv && <span className="font-mono">{shortAddress(spv, 8, 6)}</span> },
+                ]}
               />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="space-y-3">
-              <p className="flex items-center gap-2 text-caption text-muted" title="Your audit is bound to these builder files. If they change, a re-audit is needed.">
-                <Fingerprint className="size-4 shrink-0 text-faint" />
-                <span>Evidence version</span>
-                <span className="font-mono text-ink-2">{bundle ? shortHash(bundle) : "…"}</span>
-              </p>
-              {showErrors && problems.length > 0 && (
-                <ul className="list-disc space-y-0.5 pl-5 text-caption text-bad">
-                  {problems.map((p) => (
-                    <li key={p.field + p.message}>{p.message}</li>
-                  ))}
-                </ul>
-              )}
-              {submitError && (
-                <div role="alert" className="rounded-md bg-bad-bg px-3 py-2 text-small text-bad">
-                  {submitError.stale ? "The builder's evidence changed since you opened this audit. Reload and review it again." : submitError.message}
-                  {submitError.stale && (
-                    <Button size="sm" variant="danger" className="ml-3" onClick={onReload}>
-                      Reload evidence
-                    </Button>
-                  )}
-                </div>
-              )}
-              {key !== undefined && spv && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
-              <Button ref={submitButton} variant="brand" size="lg" className="w-full" aria-keyshortcuts="Control+Enter Meta+Enter" onClick={() => {
+              <Button ref={submitButton} size="lg" className="max-sm:w-full" aria-keyshortcuts="Control+Enter Meta+Enter" onClick={() => {
                 setShowErrors(true);
                 if (problems.length) {
                   document.getElementById(problems[0]!.field)?.scrollIntoView({ block: "center" });
@@ -373,78 +372,68 @@ function AuditForm({
                 }
                 setReviewing(true);
               }} disabled={busy || !bundle || key === undefined}>
-                {canSign && <PenLine />}
                 {phase === "signing" ? "Signing attestation…" : phase === "filing" ? "Filing audit…" : "Review audit"}
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function Filed({ result, signed, task, back }: { result: SubmitAuditResult; signed?: SignedAttestation; task: AuditTask; back: React.ReactNode }) {
+const LINE_STATE = { done: "pass", partial: "warn", not_done: "fail" } as const;
+const LINE_LABEL = { done: "Done", partial: "Partial", not_done: "Not done" } as const;
+
+function Filed({ result, signed, task }: { result: SubmitAuditResult; signed?: SignedAttestation; task: AuditTask }) {
   const attested = result.events.find((e) => e.kind === "audit_attested") ?? result.events[0];
   const sameTx = signed && attested && signed.txHash.toUpperCase() === attested.txHash.toUpperCase();
+  const status = result.milestone.status.replaceAll("_", " ");
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, []);
   return (
-    <div className="mx-auto max-w-xl space-y-4">
-      {back}
-      <Card>
-        <CardContent className="space-y-4 py-8 text-center">
-          <CheckCircle2 className="mx-auto size-10 text-ok" />
-          <div>
-            <h1 className="text-xl font-semibold">{task.needs === "re_audit" || latestOwnAudit(task, result.audit.inspector) ? "Re-audit filed" : "Audit filed"}</h1>
-            <p className="mt-1 flex flex-wrap justify-center gap-x-4 text-small text-muted">
-              <span>{task.projectName}</span>
-              <span>M{task.milestone.index + 1} {task.milestone.title}</span>
-              <span className="font-medium text-ink">{result.milestone.status.replaceAll("_", " ")}</span>
-            </p>
-          </div>
-          {attested && API_MODE !== "mock" && (
-            <a href={attested.explorerUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-mono text-small text-brand hover:underline">
-              Attestation {shortHash(attested.txHash)} <ExternalLink className="size-3.5" />
-            </a>
-          )}
-          <dl className="mx-auto max-w-sm space-y-1 rounded-md bg-subtle px-4 py-3 text-left text-caption">
-            {signed ? (
-              <>
-                <Row label="Signed by">
-                  <span className="font-mono">{shortAddress(signed.signer, 8, 6)}</span>
-                </Row>
-                <Row label="Sent to">
-                  <span className="font-mono">{shortAddress(signed.spv, 8, 6)}</span>
-                </Row>
-                <Row label="Memo">
-                  <span className="font-mono">{shortHash(signed.memo.hash)}</span>
-                </Row>
-                <Row label={API_MODE === "mock" ? "Mock receipt" : "On ledger"}>
-                  {sameTx ? <span className="text-ok">{API_MODE === "mock" ? "Verified locally" : "Matches signature"}</span> : <span className="text-bad">Hash mismatch</span>}
-                </Row>
-              </>
-            ) : (
-              <Row label="Signed by">Core</Row>
-            )}
-          </dl>
-          <div className="flex flex-wrap justify-center gap-2">
-            <Link href="/history" className={buttonClass("primary")}>
-              View audit history
-            </Link>
-            <Link href="/" className={buttonClass("secondary")}>
-              Back to queue
-            </Link>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex gap-3">
-      <dt className="w-20 shrink-0 text-faint">{label}</dt>
-      <dd className="min-w-0 text-ink-2">{children}</dd>
+    <div className="mx-auto max-w-[520px] space-y-8 pt-2">
+      <div>
+        <CheckCircle2 className="size-10 text-pass" aria-hidden />
+        <h1 className="mt-4 text-title">{task.needs === "re_audit" || latestOwnAudit(task, result.audit.inspector) ? "Re-audit filed" : "Audit filed"}</h1>
+      </div>
+      <Properties
+        items={[
+          { label: "Project", value: task.projectName },
+          { label: "Milestone", value: <><span className="mr-1.5 text-ink-3 tabular">{task.milestone.index + 1}</span>{task.milestone.title}</> },
+          { label: "Status", value: <span className="font-medium">{status.charAt(0).toUpperCase() + status.slice(1)}</span> },
+          ...(signed
+            ? [
+                { label: "Signed by", value: <span className="font-mono">{shortAddress(signed.signer, 8, 6)}</span> },
+                { label: "Sent to", value: <span className="font-mono">{shortAddress(signed.spv, 8, 6)}</span> },
+                { label: "Memo", value: <span className="font-mono">{shortHash(signed.memo.hash)}</span> },
+                {
+                  label: API_MODE === "mock" ? "Mock receipt" : "On ledger",
+                  value: sameTx ? <span className="font-medium text-pass">{API_MODE === "mock" ? "Verified locally" : "Matches signature"}</span> : <span className="font-medium text-fail">Hash mismatch</span>,
+                },
+              ]
+            : [{ label: "Signed by", value: "Core" }]),
+          ...(attested && API_MODE !== "mock"
+            ? [{
+                label: "Attestation",
+                value: (
+                  <a href={attested.explorerUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono underline">
+                    {shortHash(attested.txHash)} <ExternalLink className="size-3.5" aria-hidden />
+                  </a>
+                ),
+              }]
+            : []),
+        ]}
+      />
+      <div className="flex flex-wrap gap-2">
+        <Link href="/history" className={buttonClass("primary", "lg")}>
+          View history
+        </Link>
+        <Link href="/" className={buttonClass("secondary", "lg")}>
+          Back to queue
+        </Link>
+      </div>
     </div>
   );
 }

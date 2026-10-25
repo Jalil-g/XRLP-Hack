@@ -4,16 +4,20 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, PenLine } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, CircleDashed, ExternalLink, X } from "lucide-react";
 import { NoteField } from "@/components/audit/note-field";
 import { PhotoPicker } from "@/components/audit/photo-picker";
-import { SigningPanel } from "@/components/audit/signing-panel";
+import { SigningKey, SigningPanel } from "@/components/audit/signing-panel";
 import { SiteMap } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, Facts, PageHeader, Properties, Section } from "@/components/ui/layout";
+import { Proof } from "@/components/ui/proof";
+import { Segmented, type Segment } from "@/components/ui/segmented";
+import { StatusIcon } from "@/components/ui/status-icon";
 import { api } from "@/lib/api";
 import { taskAmount } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, type InspectorKey } from "@/lib/signing";
@@ -30,13 +34,16 @@ import {
   type SiteVisitQuestion,
 } from "@/lib/site-visit";
 import type { InspectorTask } from "@/lib/types";
-import { cn, explorerTxUrl, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
+import { cn, explorerTxUrl, formatAmount, shortAddress, shortHash } from "@/lib/utils";
 
-const ANSWERS: { value: SiteVisitAnswer; label: string; on: string }[] = [
-  { value: "yes", label: "Yes", on: "bg-ok text-white ring-ok" },
-  { value: "no", label: "No", on: "bg-bad text-white ring-bad" },
-  { value: "unable_to_confirm", label: "Unable to confirm", on: "bg-warn text-white ring-warn" },
+const ANSWERS: Segment<SiteVisitAnswer>[] = [
+  { value: "yes", label: "Yes", Icon: Check, tone: "pass" },
+  { value: "no", label: "No", Icon: X, tone: "fail" },
+  { value: "unable_to_confirm", label: "Unable to confirm", Icon: CircleDashed, tone: "review" },
 ];
+const ANSWER_LABEL: Record<SiteVisitAnswer, string> = { yes: "Yes", no: "No", unable_to_confirm: "Unable to confirm" };
+const ANSWER_STATE: Record<SiteVisitAnswer, string> = { yes: "pass", no: "fail", unable_to_confirm: "warn" };
+const BACK = { href: "/", label: "Queue" };
 
 export default function SiteVisitPage() {
   const params = useParams();
@@ -59,21 +66,17 @@ export default function SiteVisitPage() {
     };
   }, [inspector, projectId]);
 
-  const back = (
-    <Link href="/" className="inline-flex items-center gap-1 text-small text-muted hover:text-ink">
-      <ArrowLeft className="size-4" /> Queue
-    </Link>
-  );
-  if (status === "error") return <div className="space-y-4">{back}<p role="alert" className="text-small text-bad">Could not load inspector credentials: {identityError}</p></div>;
-  if (error) return <div className="space-y-4">{back}<p role="alert" className="text-small text-bad">Could not load the queue: {error}</p></div>;
-  if (!inspector || task === undefined) return <div className="space-y-4">{back}<LoadingState label="Loading your site visit assignment…" /></div>;
+  const back = <PageHeader back={BACK} title="Site visit" />;
+  if (status === "error") return <div className="space-y-8">{back}<p role="alert" className="text-small text-fail">Could not load inspector credentials: {identityError}</p></div>;
+  if (error) return <div className="space-y-8">{back}<p role="alert" className="text-small text-fail">Could not load the queue: {error}</p></div>;
+  if (!inspector || task === undefined) return <div className="space-y-8">{back}<LoadingState label="Loading your site visit assignment…" /></div>;
   if (task === null) {
-    return <div className="space-y-4">{back}<p className="text-small text-muted">No site visit due.</p></div>;
+    return <div className="space-y-8">{back}<Empty title="No site visit due" action={<Link href="/" className={buttonClass("secondary")}>Back to queue</Link>} /></div>;
   }
-  return <SiteVisitForm key={inspector.address} task={task} inspector={inspector.address} inspectorName={inspector.name} back={back} />;
+  return <SiteVisitForm key={inspector.address} task={task} inspector={inspector.address} inspectorName={inspector.name} />;
 }
 
-function SiteVisitForm({ task, inspector, inspectorName, back }: { task: InspectorTask; inspector: string; inspectorName: string; back: React.ReactNode }) {
+function SiteVisitForm({ task, inspector, inspectorName }: { task: InspectorTask; inspector: string; inspectorName: string }) {
   const [draft, setDraft] = useState<SiteVisitDraft>(emptySiteVisitDraft);
   const [showErrors, setShowErrors] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -92,6 +95,10 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
       live = false;
     };
   }, [inspector, keyVersion]);
+
+  useEffect(() => {
+    if (filed) window.scrollTo({ top: 0 });
+  }, [filed]);
 
   const problems = useMemo(() => siteVisitProblems(draft), [draft]);
   const pins = draft.photos.flatMap((p) => (p.evidence.meta.gps ? [{ id: p.evidence.sha256, label: p.evidence.filename, gps: p.evidence.meta.gps, who: "inspector" as const }] : []));
@@ -133,90 +140,81 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
   if (filed) {
     const outcome = siteVisitOutcome(filed.visit);
     return (
-      <div className="mx-auto max-w-xl space-y-4">
-        {back}
-        <Card>
-          <CardContent className="space-y-4 py-8 text-center">
-            <CheckCircle2 className="mx-auto size-10 text-ok" />
-            <div>
-              <h1 className="text-xl font-semibold">Site visit filed</h1>
-              <p className="mt-1 flex flex-wrap justify-center gap-x-4 text-small text-muted">
-                <span>{task.projectName}</span>
-                <span className="font-medium text-ink">{outcome === "confirmed" ? "Site confirmed" : outcome === "concern" ? "Concern raised" : "Not fully confirmed"}</span>
-              </p>
-            </div>
-            {filed.visit.txHash && api.mode !== "mock" && (
-              <a href={explorerTxUrl(filed.visit.txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-mono text-small text-brand hover:underline">
-                Attestation {shortHash(filed.visit.txHash)} <ExternalLink className="size-3.5" />
-              </a>
-            )}
-            <p className="text-caption text-muted">Signed by: {filed.signed ? "Your key" : "Core"}</p>
-            <Link href="/" className={buttonClass("secondary")}>
-              Back to queue
-            </Link>
-          </CardContent>
-        </Card>
+      <div className="mx-auto max-w-[520px] space-y-8 pt-2">
+        <div>
+          <CheckCircle2 className="size-10 text-pass" aria-hidden />
+          <h1 className="mt-4 text-title">Site visit filed</h1>
+        </div>
+        <Properties
+          items={[
+            { label: "Project", value: task.projectName },
+            {
+              label: "Outcome",
+              value: (
+                <span className={cn("font-medium", outcome === "confirmed" ? "text-pass" : outcome === "concern" ? "text-fail" : "text-review")}>
+                  {outcome === "confirmed" ? "Site confirmed" : outcome === "concern" ? "Concern raised" : "Not fully confirmed"}
+                </span>
+              ),
+            },
+            { label: "Signed by", value: filed.signed ? "Your key" : "Core" },
+            ...(filed.visit.txHash && api.mode !== "mock"
+              ? [{
+                  label: "Attestation",
+                  value: (
+                    <a href={explorerTxUrl(filed.visit.txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono underline">
+                      {shortHash(filed.visit.txHash)} <ExternalLink className="size-3.5" aria-hidden />
+                    </a>
+                  ),
+                }]
+              : []),
+          ]}
+        />
+        <Link href="/" className={buttonClass("primary", "lg")}>
+          Back to queue
+        </Link>
       </div>
     );
   }
 
+  const answered = SITE_VISIT_QUESTIONS.filter((q) => draft.answers[q.key].answer).length;
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
-        {back}
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-title">Site visit</h1>
-            <p className="mt-2 text-small text-muted">{task.projectName}</p>
-          </div>
-          <div className="flex items-center gap-3 text-small">
-            <div className="text-right"><p className="text-caption text-muted">Project amount</p><span className="tabular font-medium">{formatRlusd(taskAmount(task))}</span></div>
-          </div>
-        </div>
-        {api.mode === "http" && (
-          <p role="note" className="flex max-w-3xl items-start gap-2 rounded-md bg-info-bg px-3 py-2 text-caption text-info">
-            Core cannot accept site-visit reports yet.
-          </p>
-        )}
-      </div>
+    <div className="space-y-10">
+      <PageHeader
+        back={BACK}
+        title={<>{task.projectName} <span className="text-ink-3">Site visit</span></>}
+        action={
+          <Facts
+            items={[
+              { label: "Project", value: <>{formatAmount(taskAmount(task))} <span className="text-caption font-medium text-ink-2">RLUSD</span></> },
+              { label: "Inspector", value: inspectorName },
+            ]}
+          />
+        }
+      />
+      {api.mode === "http" && (
+        <p role="note" className="rounded-control bg-info-bg px-4 py-3 text-small text-info">
+          Core cannot accept site-visit reports yet.
+        </p>
+      )}
 
-      <ol aria-label="Site visit workflow" className="workflow-rail">
-        <li aria-current="step">Answers</li><li>Photos</li><li>Review</li>
-      </ol>
-
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-        <div className="space-y-6">
-          <Card>
+      <div className="grid items-start gap-x-12 gap-y-12 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-10">
+          <Card id="answers">
             <CardHeader>
               <CardTitle>On site</CardTitle>
+              <span className={cn("text-caption tabular", answered === SITE_VISIT_QUESTIONS.length ? "font-medium text-ink" : "text-ink-2")}>
+                {answered} of {SITE_VISIT_QUESTIONS.length}
+              </span>
             </CardHeader>
             <ol className="divide-y divide-line">
               {SITE_VISIT_QUESTIONS.map((q) => {
                 const a = draft.answers[q.key];
                 const missing = showErrors && (!a.answer || (a.answer !== "yes" && !a.note.trim()));
                 return (
-                  <li key={q.key} id={`answers.${q.key}`} className={cn("space-y-3 px-5 py-5 sm:px-6", missing && "bg-bad-bg/60")}>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-small font-semibold">{q.label}</p>
-                      </div>
-                      <div role="group" aria-label={q.label} className="flex gap-1">
-                        {ANSWERS.map(({ value, label, on }) => (
-                          <button
-                            key={value}
-                            type="button"
-
-                            aria-pressed={a.answer === value}
-                            onClick={() => setAnswer(q.key, { answer: value })}
-                            className={cn(
-                              "min-h-11 rounded-control px-2.5 py-1.5 text-caption font-medium ring-1 ring-line transition-colors ring-inset",
-                              a.answer === value ? on : "bg-surface text-ink-2 hover:bg-subtle",
-                            )}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
+                  <li key={q.key} id={`answers.${q.key}`} className={cn("space-y-3 px-5 py-4", missing && "bg-fail-bg/60")}>
+                    <div className="grid items-center gap-x-4 gap-y-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <p className="min-w-0 text-body font-medium">{q.label}</p>
+                      <Segmented label={q.label} options={ANSWERS} value={a.answer} onChange={(answer) => setAnswer(q.key, { answer })} className="w-full sm:w-auto" />
                     </div>
                     {a.answer && (
                       <NoteField
@@ -234,73 +232,90 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
             </ol>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Notes</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <textarea
-                aria-label="Site visit notes"
-                value={draft.notes}
-                onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
-                rows={3}
-                placeholder="Optional"
-                className="w-full rounded-md border border-line bg-surface px-3 py-2 text-small placeholder:text-faint focus:ring-2 focus:border-brand"
-              />
-            </CardContent>
-          </Card>
+          <Section title="Notes">
+            <textarea
+              aria-label="Site visit notes"
+              value={draft.notes}
+              onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
+              rows={3}
+              placeholder="Optional"
+              className="block w-full rounded-control border border-line-2 bg-surface px-3 py-2.5 text-small placeholder:text-ink-3"
+            />
+          </Section>
         </div>
 
-        <div className="space-y-6">
-          <Card id="photos" className={cn(showErrors && draft.photos.length === 0 && "border-bad-line")}>
-            <CardHeader>
-              <CardTitle>Site photos</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <PhotoPicker photos={draft.photos} onChange={(photos) => setDraft((d) => ({ ...d, photos }))} site={task.siteGeo} />
+        <div className="min-w-0 space-y-10">
+          <Section id="photos" title="Site photos" aside={draft.photos.length > 0 && <span className="tabular">{draft.photos.length}</span>}>
+            <div className="space-y-6">
+              <PhotoPicker photos={draft.photos} onChange={(photos) => setDraft((d) => ({ ...d, photos }))} site={task.siteGeo} invalid={showErrors && draft.photos.length === 0} />
               <SiteMap site={task.siteGeo} pins={pins} />
-            </CardContent>
-          </Card>
+            </div>
+          </Section>
 
-          <Card>
-            <CardContent className="space-y-3">
-              {showErrors && problems.length > 0 && (
-                <ul className="list-disc space-y-0.5 pl-5 text-caption text-bad">
-                  {problems.map((p) => (
-                    <li key={p.field + p.message}>{p.message}</li>
-                  ))}
-                </ul>
-              )}
-              {submitError && (
-                <p role="alert" className="flex items-start gap-2 rounded-md bg-bad-bg px-3 py-2 text-small text-bad">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0" /> {submitError}
-                </p>
-              )}
-              {key !== undefined && target && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
-              <ReviewDialog open={reviewing} title="Review and submit site visit" busy={phase !== "idle"}
-                confirmLabel={phase !== "idle" ? "Submitting…" : canSign ? "Sign and submit site visit" : "Submit site visit (core signs)"}
-                onBack={() => setReviewing(false)} onConfirm={() => void submit()}>
-                <p className="font-medium">{task.projectName}</p>
-                <p className="flex flex-wrap gap-x-4"><span>{inspectorName}</span><span className="font-mono">{shortAddress(inspector)}</span><span>{draft.photos.length} site photos</span></p>
-                <ul className="divide-y divide-line border-y border-line">
-                  {SITE_VISIT_QUESTIONS.map((q) => <li key={q.key} className="py-3">
-                    <p>{q.label}: <strong>{draft.answers[q.key].answer?.replaceAll("_", " ")}</strong></p>
-                    {draft.answers[q.key].note && <p className="mt-1 text-muted">{draft.answers[q.key].note}</p>}
-                  </li>)}
-                </ul>
-                {draft.notes && <p className="whitespace-pre-wrap">{draft.notes}</p>}
-                <p className="text-caption text-muted">Signed by: {canSign ? "Your key" : "Core"}</p>
-              </ReviewDialog>
-              <Button variant="brand" size="lg" className="w-full" onClick={() => {
+          <div className="space-y-4 border-t border-line pt-6">
+            {showErrors && problems.length > 0 && (
+              <ul className="space-y-1 text-small text-fail">
+                {problems.map((p) => (
+                  <li key={p.field + p.message}>{p.message}</li>
+                ))}
+              </ul>
+            )}
+            {submitError && (
+              <p role="alert" className="flex items-start gap-2 rounded-control bg-fail-bg px-4 py-3 text-small text-fail">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden /> {submitError}
+              </p>
+            )}
+            {key === null && target && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
+            <ReviewDialog open={reviewing} title="Review site visit" busy={phase !== "idle"}
+              confirmLabel={phase !== "idle" ? "Submitting…" : canSign ? "Sign and submit site visit" : "Submit site visit (core signs)"}
+              onBack={() => setReviewing(false)} onConfirm={() => void submit()}>
+              <Properties
+                items={[
+                  { label: "Project", value: task.projectName },
+                  { label: "Inspector", value: inspectorName },
+                  { label: "Site photos", value: <span className="tabular">{draft.photos.length}</span> },
+                ]}
+              />
+              <ul aria-label="Answers" className="divide-y divide-line border-y border-line">
+                {SITE_VISIT_QUESTIONS.map((q) => {
+                  const a = draft.answers[q.key];
+                  return (
+                    <li key={q.key} className="py-2.5">
+                      <div className="flex items-center gap-3">
+                        {a.answer && <StatusIcon state={ANSWER_STATE[a.answer]} className="size-4" />}
+                        <span className="min-w-0 flex-1">{q.label}</span>
+                        <strong className="font-medium">{a.answer && ANSWER_LABEL[a.answer]}</strong>
+                      </div>
+                      {a.note && <p className="mt-1 pl-7 text-ink-2">{a.note}</p>}
+                    </li>
+                  );
+                })}
+              </ul>
+              {draft.notes && <p className="whitespace-pre-wrap">{draft.notes}</p>}
+              <Proof
+                items={[
+                  { label: "Signed by", value: canSign ? "Your key" : "Core" },
+                  { label: "Signing account", value: <span className="font-mono">{shortAddress(inspector, 8, 6)}</span> },
+                ]}
+              />
+            </ReviewDialog>
+            <div className="flex flex-wrap-reverse items-start justify-between gap-x-6 gap-y-2">
+              <Proof
+                className="min-w-0 flex-1"
+                items={[
+                  { label: "Signing key", value: key && target ? <SigningKey address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} /> : "Core signs" },
+                  { label: "Sent to", value: target && <span className="font-mono">{shortAddress(target, 8, 6)}</span> },
+                ]}
+              />
+              <Button size="lg" className="max-sm:w-full" onClick={() => {
                 setShowErrors(true);
                 if (problems.length) { document.getElementById(problems[0]!.field)?.scrollIntoView({ block: "center" }); return; }
                 setReviewing(true);
               }} disabled={phase !== "idle" || key === undefined}>
-                {canSign && <PenLine />}
                 {phase === "signing" ? "Signing attestation…" : phase === "filing" ? "Filing site visit…" : "Review site visit"}
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       </div>
     </div>

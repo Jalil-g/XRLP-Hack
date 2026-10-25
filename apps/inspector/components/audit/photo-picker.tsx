@@ -7,8 +7,9 @@ import { PhotoCaption } from "@/components/audit/evidence-gallery";
 import { Button } from "@/components/ui/button";
 import { photoEvidence, type DraftPhoto } from "@/lib/audit";
 import type { SiteGeo } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-export function PhotoPicker({ photos, onChange, site }: { photos: DraftPhoto[]; onChange(next: DraftPhoto[]): void; site: SiteGeo }) {
+export function PhotoPicker({ photos, onChange, site, invalid }: { photos: DraftPhoto[]; onChange(next: DraftPhoto[]): void; site: SiteGeo; invalid?: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [reading, setReading] = useState(false);
   const [error, setError] = useState<string>();
@@ -31,33 +32,42 @@ export function PhotoPicker({ photos, onChange, site }: { photos: DraftPhoto[]; 
     }
   }
 
+  const pick = () => input.current?.click();
   return (
-    <div className="space-y-3">
-      {photos.length > 0 && (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+    <div className="space-y-4">
+      {photos.length > 0 ? (
+        <ul className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
           {photos.map((p) => (
-            <li key={p.evidence.sha256} className="group relative overflow-hidden rounded-lg border border-line bg-surface">
-              <div className="aspect-[4/3] bg-subtle">
+            <li key={p.evidence.sha256} className="relative min-w-0">
+              <div className="aspect-[4/3] overflow-hidden rounded-control bg-band">
+                {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
                 {previews.get(p.file) && <img src={previews.get(p.file)} alt={p.evidence.filename} className="size-full object-contain" />}
               </div>
               <PhotoCaption evidence={p.evidence} site={site} />
               <button
                 type="button"
                 onClick={() => onChange(photos.filter((x) => x !== p))}
-                className="absolute top-1.5 right-1.5 flex size-11 items-center justify-center rounded-control bg-surface text-muted hover:text-bad"
+                className="absolute top-1.5 right-1.5 flex size-11 items-center justify-center rounded-full bg-surface/90 text-ink-2 hover:text-fail"
                 aria-label={`Remove ${p.evidence.filename}`}
               >
-                <Trash2 className="size-3.5" />
+                <Trash2 className="size-4" />
               </button>
             </li>
           ))}
         </ul>
+      ) : (
+        <button type="button" onClick={pick} disabled={reading}
+          className={cn("flex min-h-[88px] w-full items-center justify-center gap-2 rounded-control border border-dashed bg-band/40 text-small font-semibold text-ink transition-colors hover:bg-band disabled:opacity-60 [&_svg]:size-5", invalid ? "border-fail" : "border-line-2")}>
+          <ImagePlus className="text-ink-2" aria-hidden /> {reading ? "Reading EXIF…" : "Add site photos"}
+        </button>
       )}
-      {error && <p role="alert" className="text-small text-bad">{error}</p>}
+      {error && <p role="alert" className="text-small text-fail">{error}</p>}
       <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => void add(e.target.files)} />
-      <Button type="button" variant="secondary" onClick={() => input.current?.click()} disabled={reading}>
-        <ImagePlus /> {reading ? "Reading EXIF…" : photos.length ? "Add more photos" : "Add site photos"}
-      </Button>
+      {photos.length > 0 && (
+        <Button type="button" variant="secondary" onClick={pick} disabled={reading}>
+          <ImagePlus /> {reading ? "Reading EXIF…" : "Add more photos"}
+        </Button>
+      )}
     </div>
   );
 }

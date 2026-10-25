@@ -1,32 +1,31 @@
-// One route 18 task in the queue: project, milestone, SoV line(s), amount, builder evidence status, escrow expiry.
+// One route 18 task in the queue: project, milestone, amount, and the one thing to press. Evidence, expiry and prior audits
+// sit in one quiet line; they turn red only when something is short or the escrow is close to expiring.
 import Link from "next/link";
-import { CalendarClock, Camera, FileText, History, MapPin, Receipt } from "lucide-react";
 import { Badge, type Tone } from "@/components/ui/badge";
-import { SectionLabel } from "@/components/ui/card";
 import { buttonClass } from "@/components/ui/button";
 import { evidenceStatus, taskHref, taskAmount, type EvidenceKindStatus } from "@/lib/queue";
 import type { InspectorTask, TaskNeeds } from "@/lib/types";
-import { cn, formatDateTime, formatRlusd } from "@/lib/utils";
+import { cn, formatAmount, formatDate } from "@/lib/utils";
 
-export const NEEDS: Record<TaskNeeds, { label: string; tone: Tone }> = {
-  re_audit: { label: "Re-audit", tone: "warn" },
-  audit: { label: "Audit due", tone: "brand" },
-  pre_visit: { label: "Site visit", tone: "info" },
-  none: { label: "Nothing due", tone: "neutral" },
+export const NEEDS: Record<TaskNeeds, { label: string; action: string; tone: Tone }> = {
+  re_audit: { label: "Re-audit", action: "Re-audit", tone: "warn" },
+  audit: { label: "Audit due", action: "Audit", tone: "neutral" },
+  pre_visit: { label: "Site visit", action: "Visit site", tone: "info" },
+  none: { label: "Nothing due", action: "", tone: "neutral" },
 };
 
-const KIND: Record<EvidenceKindStatus["kind"], { label: string; Icon: typeof Camera }> = {
-  photo: { label: "photos", Icon: Camera },
-  invoice: { label: "invoices", Icon: Receipt },
-  document: { label: "docs", Icon: FileText },
+const KIND: Record<EvidenceKindStatus["kind"], [string, string]> = {
+  photo: ["photo", "photos"],
+  invoice: ["invoice", "invoices"],
+  document: ["doc", "docs"],
 };
 
 const DAY_MS = 86_400_000;
 
 function expiryLabel(iso: string, now: number) {
   const days = Math.ceil((Date.parse(iso) - now) / DAY_MS);
-  if (days < 0) return { text: `Escrow expired ${formatDateTime(iso)}`, urgent: true };
-  return { text: `Escrow expires in ${days} day${days === 1 ? "" : "s"}`, urgent: days <= 7 };
+  if (days < 0) return { text: `Expired ${formatDate(iso)}`, urgent: true };
+  return { text: `Expires in ${days} day${days === 1 ? "" : "s"}`, urgent: days <= 7 };
 }
 
 export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boolean; now: number }) {
@@ -35,83 +34,48 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const expiry = m?.cancelAfter ? expiryLabel(m.cancelAfter, now) : null;
   const mine = task.priorAudits.length;
   const href = taskHref(task);
-  const title = m ? (
-    <>
-      <span className="mr-2 text-faint">M{m.index + 1}</span>
-      {m.title}
-    </>
-  ) : (
-    "Site visit"
-  );
+  const short = ev.kinds.filter((k) => k.have < k.need);
 
   return (
-    <li className={cn("px-5 py-6 transition-colors duration-150 sm:px-6", fresh && "bg-brand-50")}>
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
-          <SectionLabel className="flex items-center gap-2 text-body font-semibold text-ink">
-            {task.projectName}
-            {fresh && <Badge tone="brand">New</Badge>}
-          </SectionLabel>
-          <p className="mt-1 text-small">
-            {href ? (
-              <Link href={href} className="hover:text-brand hover:underline">
-                {title}
-              </Link>
+    <li className={cn("grid items-center gap-x-8 gap-y-3 py-4 transition-[background-color,box-shadow] duration-500 sm:grid-cols-[minmax(0,1fr)_auto]", fresh && "bg-band shadow-[-12px_0_0_var(--color-band),12px_0_0_var(--color-band)]")}>
+      <div className="min-w-0">
+        <p className="flex flex-wrap items-center gap-x-2 text-body font-semibold">
+          {task.projectName}
+          {fresh && <Badge>New</Badge>}
+        </p>
+        <p className="mt-0.5 flex flex-wrap gap-x-5 gap-y-0.5 text-small text-ink-2">
+          <span className="text-ink">
+            {m ? (
+              <>
+                <span className="mr-1.5 tabular text-ink-3">{m.index + 1}</span>
+                {m.title}
+              </>
             ) : (
-              title
+              "Site visit"
             )}
-          </p>
-        </div>
-        <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
-          <div className="sm:text-right"><span className="block tabular text-body font-semibold">{formatRlusd(taskAmount(task))}</span><span className="text-caption text-muted">{m ? "Milestone" : "Project"}</span></div>
-          {href && (
-            <Link href={href} className={buttonClass("secondary", "sm")}>
-              {task.needs === "re_audit" ? "Re-audit" : task.needs === "pre_visit" ? "Visit site" : "Audit"}
-            </Link>
-          )}
-        </div>
+          </span>
+          {m &&
+            (short.length ? (
+              <span className="font-medium text-fail">
+                {short.map((k) => `${k.have}/${k.need} ${KIND[k.kind][1]}`).join(", ")}
+              </span>
+            ) : (
+              <span className="tabular">{ev.uploaded} file{ev.uploaded === 1 ? "" : "s"}</span>
+            ))}
+          {expiry && <span className={cn("tabular", expiry.urgent && "font-medium text-fail")}>{expiry.text}</span>}
+          {mine > 0 && <span>{mine} prior audit{mine === 1 ? "" : "s"}</span>}
+        </p>
       </div>
-
-      <ul aria-label="Schedule of Values lines" className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-small text-ink-2">
-        {task.sov.map((l) => (
-          <li key={l.code}>
-            {l.title} <span className="tabular text-muted">{formatRlusd(l.amount)}</span>
-          </li>
-        ))}
-      </ul>
-
-      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption text-muted">
-        {m && (
-          <span className="flex items-center gap-2">
-            <span className="text-faint">Builder evidence</span>
-            {ev.kinds.length === 0 ? (
-              <span>{ev.uploaded} files</span>
-            ) : (
-              ev.kinds.map(({ kind, have, need }) => {
-                const { label, Icon } = KIND[kind];
-                return (
-                  <span key={kind} className={cn("flex items-center gap-1 tabular", have >= need ? "text-ok" : "text-bad")}>
-                    <Icon className="size-3.5" />
-                    {have}/{need} {label}
-                  </span>
-                );
-              })
-            )}
-          </span>
+      <div className="flex items-center justify-between gap-6 sm:justify-end">
+        <p className="tabular sm:min-w-[120px] sm:text-right">
+          <span className="text-body font-semibold">{formatAmount(taskAmount(task))}</span>
+          <span className="ml-1 text-caption text-ink-2">RLUSD</span>
+        </p>
+        {href && (
+          <Link href={href} className={buttonClass("primary", "md", "min-w-[112px]")}>
+            {NEEDS[task.needs].action}
+          </Link>
         )}
-        {expiry && (
-          <span className={cn("flex items-center gap-1", expiry.urgent && "font-medium text-bad")}>
-            <CalendarClock className="size-3.5" /> {expiry.text}
-          </span>
-        )}
-        {mine > 0 && (
-          <span className="flex items-center gap-1">
-            <History className="size-3.5" /> {mine} prior audit{mine === 1 ? "" : "s"}
-          </span>
-        )}
-        <span className="flex items-center gap-1 text-faint">
-          <MapPin className="size-3.5" /> {task.siteGeo.lat.toFixed(4)}, {task.siteGeo.lng.toFixed(4)}
-        </span>
       </div>
     </li>
   );

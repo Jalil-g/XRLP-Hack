@@ -1,16 +1,14 @@
-import { Card, CardContent } from "@/components/ui/card";
-
 export function LoadingState({ label = "Loading inspector workspace…" }: { label?: string }) {
   return (
-    <Card role="status" aria-live="polite" aria-busy="true">
-      <CardContent className="space-y-6">
-        <p className="text-small font-medium">{label}</p>
-        <div aria-hidden="true" className="space-y-4">
-          <div className="h-5 w-2/3 rounded bg-subtle" />
-          <div className="h-4 w-1/2 rounded bg-subtle" />
-          <div className="h-24 rounded-control bg-subtle" />
-        </div>
-      </CardContent>
-    </Card>
+    <div role="status" aria-live="polite" aria-busy="true" className="space-y-6">
+      <p className="sr-only">{label}</p>
+      <div aria-hidden="true" className="space-y-4">
+        <div className="h-4 w-24 rounded-full bg-band" />
+        <div className="h-10 w-1/3 rounded-control bg-band" />
+        <div className="h-px bg-line" />
+        <div className="h-14 rounded-control bg-band/70" />
+        <div className="h-14 rounded-control bg-band/70" />
+      </div>
+    </div>
   );
 }

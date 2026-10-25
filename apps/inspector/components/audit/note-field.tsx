@@ -2,6 +2,7 @@
 // Progressive note: shown (and required) once the answer is not a clear yes. For a clear yes it hides behind "Add note",
 // and stays visible if a note was already typed so nothing the inspector wrote is hidden or dropped.
 import { useState } from "react";
+import { Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function NoteField({ label, value, onChange, required, invalid, placeholder }: {
@@ -15,8 +16,8 @@ export function NoteField({ label, value, onChange, required, invalid, placehold
   const [opened, setOpened] = useState(false);
   if (!required && !opened && !value) {
     return (
-      <button type="button" onClick={() => setOpened(true)} className="min-h-11 text-caption font-medium text-brand hover:underline">
-        Add note
+      <button type="button" onClick={() => setOpened(true)} className="-my-2 inline-flex min-h-11 items-center gap-1 text-caption font-medium text-ink-2 hover:text-ink">
+        <Plus className="size-3.5" aria-hidden /> Add note
       </button>
     );
   }
@@ -31,8 +32,8 @@ export function NoteField({ label, value, onChange, required, invalid, placehold
       required={required}
       autoFocus={opened && !required}
       className={cn(
-        "min-h-11 w-full rounded-control border bg-surface px-3 py-1.5 text-small placeholder:text-faint focus:ring-2 focus:border-brand",
-        invalid ? "border-bad" : "border-line",
+        "min-h-11 w-full rounded-control border bg-surface px-3 text-small placeholder:text-ink-3",
+        invalid ? "border-fail" : "border-line-2",
       )}
     />
   );

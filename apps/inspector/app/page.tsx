@@ -1,18 +1,17 @@
 "use client";
 // INS-02 queue: route 18 tasks for the selected inspector, grouped by `needs`, polled every 5s.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronRight, RefreshCw } from "lucide-react";
 import { useIdentity } from "@/components/identity";
-import { NEEDS, TaskRow } from "@/components/task-row";
-import { Badge } from "@/components/ui/badge";
+import { TaskRow } from "@/components/task-row";
+import { Empty, Facts } from "@/components/ui/layout";
 import { LoadingState } from "@/components/ui/loading-state";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
 import { api } from "@/lib/api";
 import { ACTIONABLE, arrivedKeys, groupTasks, taskKey } from "@/lib/queue";
 import type { InspectorTask } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
-import { cn, explorerAccountUrl, shortAddress } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const POLL_MS = 5_000;
 /** How long a task that arrived on a poll stays highlighted. */
@@ -31,90 +30,72 @@ export default function QueuePage() {
 
   const groups = queue.data ? groupTasks(queue.data) : null;
   const actionable = groups ? ACTIONABLE.reduce((n, k) => n + groups[k].length, 0) : 0;
+  const due = groups ? ACTIONABLE.flatMap((n) => groups[n]) : [];
 
   return (
-    <div className="space-y-10">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-title">
-            Assigned audits{groups && <span className="ml-3 align-baseline text-ink-2 tabular">{actionable}</span>}
-          </h1>
-        </div>
-        <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
-      </div>
-
-      <section aria-label="Your credentials" className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-panel border border-line bg-surface px-5 py-4 sm:px-6">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">{inspector.name}</span>
-            <VerifiedInspectorBadge inspector={inspector} />
-          </div>
-          <p className="flex flex-wrap gap-x-4 text-caption text-muted">
-            <span>{inspector.licenseNumber}</span>
-            <span>{inspector.trades.join(", ")}</span>
-          </p>
-        </div>
-        <p className="text-caption text-muted sm:ml-auto">
-          Signing account{" "}
-          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="font-mono text-ink-2 underline underline-offset-4 hover:text-brand">
-            {shortAddress(inspector.address, 8, 6)}
-          </a>
-        </p>
+    <div className="space-y-12">
+      <section aria-label="Your queue" className="flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
+        <h1 className="min-w-0">
+          <span className="block text-small font-medium text-ink-2">Due now</span>
+          <span className="hero-amount mt-2 block">{groups ? actionable : "–"}</span>
+        </h1>
+        <Facts
+          items={[
+            { key: "inspector", label: <VerifiedInspectorBadge inspector={inspector} />, value: inspector.name },
+            { label: "License", value: inspector.licenseNumber },
+            { label: "Trades", value: sentence(inspector.trades.join(", ")) },
+          ]}
+        />
       </section>
 
       {!groups ? (
         queue.error ? (
-          <Card role="alert"><CardContent className="space-y-3"><h2 className="text-heading">Assignments could not load</h2><p className="text-small text-bad">{queue.error}. Refresh to retry.</p></CardContent></Card>
+          <div role="alert" className="rounded-panel bg-fail-bg px-5 py-4 text-small text-fail">
+            Assignments could not load: {queue.error}.{" "}
+            <button type="button" onClick={queue.refresh} className="min-h-11 font-semibold underline">Retry</button>
+          </div>
         ) : (
           <LoadingState label="Loading assigned audits…" />
         )
       ) : (
         <>
-          {actionable === 0 && (
-            <Card>
-              <CardContent className="py-10 text-center text-small text-muted">
-                {groups.none.length ? "No audits due" : "No assignments"}
-              </CardContent>
-            </Card>
-          )}
-          {ACTIONABLE.filter((n) => groups[n].length).map((n) => (
-            <TaskGroup key={n} needs={n} tasks={groups[n]} fresh={fresh} now={now} />
-          ))}
-          {groups.none.length > 0 && <TaskGroup needs="none" tasks={groups.none} fresh={fresh} now={now} collapsible />}
+          <section aria-label="Due" className="min-w-0">
+            <div className="flex min-h-11 items-center justify-end border-b border-line pb-1">
+              <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
+            </div>
+            {due.length === 0 ? (
+              <Empty className="mt-6" title={groups.none.length ? "No audits due" : "No assignments"} />
+            ) : (
+              <ul className="divide-y divide-line">
+                {due.map((t) => (
+                  <TaskRow key={taskKey(t)} task={t} fresh={fresh.has(taskKey(t))} now={now} />
+                ))}
+              </ul>
+            )}
+          </section>
+          {groups.none.length > 0 && <Done tasks={groups.none} fresh={fresh} now={now} />}
         </>
       )}
     </div>
   );
 }
 
-function TaskGroup({
-  needs,
-  tasks,
-  fresh,
-  now,
-  collapsible,
-}: {
-  needs: InspectorTask["needs"];
-  tasks: InspectorTask[];
-  fresh: Set<string>;
-  now: number;
-  collapsible?: boolean;
-}) {
-  const [open, setOpen] = useState(!collapsible);
-  const { label, tone } = NEEDS[needs];
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+function Done({ tasks, fresh, now }: { tasks: InspectorTask[]; fresh: Set<string>; now: number }) {
+  const [open, setOpen] = useState(false);
   return (
-    <Card>
-      <CardHeader className={cn(!open && "border-b-0")}>
-        <CardTitle className="flex items-center gap-2">
-          {collapsible ? "Nothing due" : label}
-          <Badge tone={tone}>{tasks.length}</Badge>
-        </CardTitle>
-        {collapsible && (
-          <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-h-11 items-center gap-1 text-caption text-muted hover:text-ink" aria-expanded={open}>
-            {open ? "Hide" : "Show"} <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
-          </button>
-        )}
-      </CardHeader>
+    <section aria-label="Nothing due" className="min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex min-h-11 w-full items-center gap-2 border-b border-line text-small font-medium text-ink-2 hover:text-ink"
+      >
+        <ChevronRight className={cn("size-4 transition-transform duration-150", open && "rotate-90")} aria-hidden />
+        Nothing due
+        <span className="tabular text-ink-3">{tasks.length}</span>
+      </button>
       {open && (
         <ul className="divide-y divide-line">
           {tasks.map((t) => (
@@ -122,26 +103,24 @@ function TaskGroup({
           ))}
         </ul>
       )}
-    </Card>
+    </section>
   );
 }
 
 function PollStatus({ updatedAt, error, now, onRefresh }: { updatedAt?: number; error?: string; now: number; onRefresh(): void }) {
   const ago = updatedAt ? Math.max(0, Math.round((now - updatedAt) / 1000)) : null;
   return (
-    <div className="flex items-center gap-2 text-caption text-muted">
+    <div className="flex items-center gap-1 text-caption text-ink-3">
       {error ? (
-        <Badge tone="warn" title={error}>
+        <span className="font-medium text-review" title={error}>
           {updatedAt ? "Stale: unable to refresh" : "Unable to load queue"}
-        </Badge>
-      ) : (
-        <span className="flex items-center gap-1.5">
-          {!updatedAt && "Loading queue…"}
         </span>
+      ) : (
+        !updatedAt && <span>Loading queue…</span>
       )}
-      {ago !== null && <span className="tabular">updated {ago}s ago</span>}
-      <button type="button" onClick={onRefresh} className="flex size-11 items-center justify-center rounded-control hover:bg-subtle hover:text-ink" aria-label="Refresh queue">
-        <RefreshCw className="size-3.5" />
+      {ago !== null && !error && <span className="tabular">Updated {ago}s ago</span>}
+      <button type="button" onClick={onRefresh} className="flex size-11 items-center justify-center rounded-full text-ink-2 hover:bg-band hover:text-ink" aria-label="Refresh queue">
+        <RefreshCw className="size-4" />
       </button>
     </div>
   );

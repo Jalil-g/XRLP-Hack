@@ -2,29 +2,27 @@
 name: Drawproof Inspector
 description: A finance workspace for evidence-led inspection and signed judgment.
 colors:
-  page: "#F5F5EF"
+  page: "#FFFFFF"
   surface: "#FFFFFF"
-  band: "#EBEDE5"
-  ink: "#17251C"
-  ink-2: "#59645B"
-  line: "#DDE2D8"
-  line-2: "#8C978C"
-  capital: "#17251C"
-  capital-text: "#F7F8F2"
-  capital-muted: "#C2CCBE"
-  accent: "#D8F36A"
-  accent-hover: "#C9E65A"
-  action: "#17251C"
-  action-hover: "#2B4232"
-  link: "#285D3C"
-  pass: "#226442"
-  pass-bg: "#E7F2E9"
-  review: "#805716"
-  review-bg: "#FFF2D6"
-  fail: "#A72E35"
-  fail-bg: "#FBEAEC"
-  info: "#285E8C"
-  info-bg: "#EAF1F8"
+  band: "#F6F6F6"
+  band-2: "#E8E8E8"
+  ink: "#0A0A0A"
+  ink-2: "#5E5E5E"
+  ink-3: "#6B6B6B"
+  line: "#EBEBEB"
+  line-2: "#8F8F8F"
+  accent: "#D4F564"
+  action: "#0A0A0A"
+  action-hover: "#2B2B2B"
+  pass: "#1A7F45"
+  pass-bg: "#E9F6EE"
+  review: "#8A5A00"
+  review-bg: "#FFF5DC"
+  review-icon: "#C28A00"
+  fail: "#C0262D"
+  fail-bg: "#FDEEEE"
+  info: "#1F5F99"
+  info-bg: "#EDF3FA"
 typography:
   display:
     fontSize: "3.25rem"
@@ -76,7 +74,7 @@ components:
   button-primary-hover:
     backgroundColor: "{colors.action-hover}"
   button-secondary:
-    backgroundColor: "{colors.surface}"
+    backgroundColor: "{colors.band}"
     textColor: "{colors.ink}"
     rounded: "{rounded.control}"
     padding: "0 16px"
@@ -100,12 +98,7 @@ components:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
     rounded: "{rounded.panel}"
-    padding: "24px"
-  audit-context:
-    backgroundColor: "{colors.capital}"
-    textColor: "{colors.capital-text}"
-    rounded: "{rounded.context}"
-    padding: "24px"
+    padding: "20px"
 ---
 
 # Design System: Drawproof Inspector
@@ -114,11 +107,11 @@ components:
 
 **Creative North Star: "Capital in focus. Proof within reach."**
 
-A serious finance workspace organized around evidence, recorded judgment, review and a durable receipt. Warm canvas, white working panels, dark project context and selective chartreuse connect inspection with the investor and builder experience without turning the queue into an investment dashboard.
+A working tool organized around evidence, recorded judgment, review and a durable receipt. Same language as apps/web (see `docs/ideas/frontend-remediation-plan.md`, R1–R7): white canvas, true ink, neutral greys, hairline rows, black pill primary buttons, lime only where money reached the builder. No dark slabs, no explainer lines, no ` · ` strings, plumbing (hashes, signer, evidence version) behind a Proof disclosure. Shared primitives: `components/ui/{layout,segmented,proof,status-icon}.tsx`.
 
 This replaces the stale Apple/Notion white-and-blue direction. Approved authority: `../../docs/ideas/shared-frontend-style.md`. Runtime primitives: `../styles/drawproof.css`, with compatibility aliases in `app/globals.css`. Frontmatter records the inspected token snapshot, not a competing stylesheet. Shared tokens and routes are changing concurrently: approved targets below are not a claim of rendered acceptance. Shared CSS owns live values; refresh this snapshot after implementation settles.
 
-**Key Characteristics:**
+**Key Characteristics (updated 2026-10-25; the sections below predate the white-canvas pass where they disagree):**
 - Evidence-first working density, not dashboard theater.
 - Labeled financial context without decorative capital totals.
 - Explicit identity, evidence version and signing consequence.
@@ -151,8 +144,8 @@ The solid desktop header is (64px) at the standard root size. Header, main and f
 
 Use the frontmatter spacing rhythm: major separation (32–48px), panel padding (16–24px), label/control gap (8px). Task rows typically occupy (52–64px), growing for wrapped content. No nested card stacks.
 
-- **Queue, `/`:** “Assigned audits,” actionable count and compact inspector credentials (name, verification, license and trades). Group prioritized task rows by required work. Preserve refresh, poll freshness, stale/error and empty states. This is a task inbox, never a capital-total hero.
-- **Audit, `/audit/[projectId]/[milestoneId]`:** dark project/milestone context with labeled amount, then workflow rail and evidence/report working surfaces. Split evidence/report only at (1280px and above); below that use a linear sequence. Keep the report action predictable and full evidence inspectable. Builder photos sit two-up from 640px (each opens full size); checklist lines keep the Done/Partial/Not done group in a fixed right column so controls align line to line.
+- **Queue, `/`:** hero “Due now” count (the one big number), inspector facts beside it (verified mark, license, trades). One hairline list of due tasks in priority order (re-audit, audit, site visit); the row's black button says what to do (“Re-audit”, “Audit”, “Visit site”). “Nothing due” collapses below. Preserve refresh, poll freshness, stale/error and empty states.
+- **Audit, `/audit/[projectId]/[milestoneId]`:** “Queue” back link, two-tone title (project, milestone), facts (amount, escrow expiry, inspector); re-audit adds a “Checks to address” card; then evidence (left) and checklist card, site photos, notes, Proof and “Review audit” (right). Split evidence/report only at (1280px and above); below that use a linear sequence. Keep the report action predictable and full evidence inspectable. Builder photos sit two-up from 640px (each opens full size); checklist lines keep the Done/Partial/Not done group in a fixed right column so controls align line to line.
 - **Site visit, `/site-visit/[projectId]`:** project context and a linear question-and-photo workflow through review and submission. Keep each question associated with evidence; do not introduce dashboard metrics. The inspected code still has a large-screen two-column question/photo layout; linear composition remains the approved target to reconcile, without changing workflow guards.
 - **History, `/history`:** ordered report entries, receipt/status rows and disclosures, not repeated check-card grids. Existing report containers may remain; individual check results use rows. Preserve identity-scoped results, refresh, stale warnings, report details and release receipts.
 
