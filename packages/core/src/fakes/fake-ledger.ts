@@ -25,7 +25,7 @@ import {
 import { systemClock, type Clock } from "../clock.ts";
 import { fulfillmentMatches, isCondition } from "../conditions.ts";
 import { fakeAddress, fakeHash } from "../ids.ts";
-import { fromMicro, toMicro } from "../money.ts";
+import { fromMicro, toMicro, redemptionShares } from "../money.ts";
 
 export interface FakeLedgerOptions {
   /** Simulated tx latency in ms (default: FAKE_LEDGER_DELAY_MS env or 0). */
@@ -49,6 +49,7 @@ interface VaultState {
   redemptionDate: string;
   deposits: string; // micro
   withdrawn: string;
+  shareAccountingVersion?: 2;
   loaned: string;
   repaid: string;
   shares: Record<string, string>; // investor -> share units (1 RLUSD = 1e6)
@@ -69,6 +70,7 @@ interface LoanState {
   repaid: string;
   paymentTotal: number;
   paymentsMade: number;
+  totalOwed?: string; // micro; preserves remainder from periodic-payment division
   periodicPayment: string; // micro
   startDate: string;
   intervalMs: number;
@@ -204,7 +206,7 @@ export class FakeLedger implements LedgerPort {
     const vaultId = fakeHash(`vault:${project.id}:${this.salt}`);
     const loanBrokerId = fakeHash(`broker:${project.id}:${this.salt}`);
     const shareMptIssuanceId = fakeHash(`mpt:${project.id}:${this.salt}`).slice(0, 48);
-    this.s.vaults.push({ vaultId, projectId: project.id, spv, subscriptionDate, redemptionDate, deposits: "0", withdrawn: "0", loaned: "0", repaid: "0", shares: {} });
+    this.s.vaults.push({ vaultId, projectId: project.id, spv, subscriptionDate, redemptionDate, deposits: "0", withdrawn: "0", shareAccountingVersion: 2, loaned: "0", repaid: "0", shares: {} });
     const txs = [this.tx(undefined, `spv:${project.id}`), this.tx("vault_created", `vault:${project.id}`), this.tx("loan_broker_created", `broker:${project.id}`)];
     if (coverDeposit) {
       this.move(this.platformAddress, null, coverDeposit);
@@ -230,10 +232,17 @@ export class FakeLedger implements LedgerPort {
     await this.begin();
     const v = this.vaultFor(project.id);
     if (this.phase(v) !== "redemption") this.fail("tecTOO_SOON", `withdrawals open at RedemptionDate ${v.redemptionDate}`, "tooSoon");
+    const loan = this.s.loans.find((l) => l.vaultId === v.vaultId);
+    if (v.shareAccountingVersion !== 2 || (loan && loan.totalOwed === undefined))
+      throw new LedgerError("ledger_error", "Legacy fake vault needs a demo reset before redemption");
     const avail = toMicro(v.deposits) - toMicro(v.loaned) + toMicro(v.repaid) - toMicro(v.withdrawn);
     if (toMicro(amount) > avail) this.fail("tecINSUFFICIENT_FUNDS", "vault has insufficient available assets");
+    const snapshot = this.vaultSnapshot(v);
+    const burn = redemptionShares(toMicro(amount), toMicro(snapshot.assetsTotal), BigInt(snapshot.sharesOutstanding));
+    const held = BigInt(v.shares[investor] ?? "0");
+    if (burn > held) this.fail("tecINSUFFICIENT_FUNDS", "investor has insufficient shares");
     v.withdrawn = fromMicro(toMicro(v.withdrawn) + toMicro(amount));
-    v.shares[investor] = (BigInt(v.shares[investor] ?? "0") - toMicro(amount)).toString();
+    v.shares[investor] = (held - burn).toString();
     this.move(null, investor, amount);
     const t = this.tx("vault_withdraw", `wd:${project.id}:${investor}`);
     this.persist();
@@ -265,6 +274,7 @@ export class FakeLedger implements LedgerPort {
       repaid: "0",
       paymentTotal,
       paymentsMade: 0,
+      totalOwed: owed.toString(),
       periodicPayment: (owed / BigInt(paymentTotal)).toString(),
       startDate: this.now().toISOString(),
       intervalMs: project.terms.paymentIntervalDays * DAY_MS,
@@ -376,8 +386,12 @@ export class FakeLedger implements LedgerPort {
     this.reload();
     const v = this.s.vaults.find((x) => x.vaultId === vaultId);
     if (!v) throw new LedgerError("ledger_error", `no vault ${vaultId}`);
-    const loan = this.s.loans.find((l) => l.vaultId === vaultId);
-    const outstanding = loan ? BigInt(loan.periodicPayment) * BigInt(loan.paymentTotal) - BigInt(loan.repaid) : 0n;
+    return this.vaultSnapshot(v);
+  }
+
+  private vaultSnapshot(v: VaultState): VaultSnapshot {
+    const loan = this.s.loans.find((l) => l.vaultId === v.vaultId);
+    const outstanding = loan ? BigInt(loan.totalOwed ?? (BigInt(loan.periodicPayment) * BigInt(loan.paymentTotal)).toString()) - BigInt(loan.repaid) : 0n;
     const available = toMicro(v.deposits) - toMicro(v.loaned) + toMicro(v.repaid) - toMicro(v.withdrawn);
     const total = available + (outstanding > 0n ? outstanding : 0n);
     const shares = Object.values(v.shares).reduce((a, s) => a + BigInt(s), 0n);

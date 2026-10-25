@@ -7,6 +7,7 @@ export {
   ATTEST_MEMO_FORMAT,
   ATTEST_MEMO_TYPE,
   auditHash,
+  verifyAuditBlob,
   auditMemo,
   buildAttestationTx,
   canonicalAudit,

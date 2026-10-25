@@ -134,3 +134,15 @@ describe("FakeLedger gates", () => {
     assert.equal(await ledger.getEscrow(e.owner, e.offerSequence), null);
   });
 });
+
+
+describe("redemption share rounding", () => {
+  it("uses integer ceiling at prices above/below par and rejects empty vaults", async () => {
+    const { redemptionShares } = await import("../src/money.ts");
+    assert.equal(redemptionShares(11n, 110n, 100n), 10n);
+    assert.equal(redemptionShares(1n, 110n, 100n), 1n);
+    assert.equal(redemptionShares(3n, 90n, 100n), 4n);
+    assert.equal(redemptionShares(110n, 110n, 100n), 100n);
+    assert.throws(() => redemptionShares(1n, 0n, 0n), /Invalid redemption/);
+  });
+});

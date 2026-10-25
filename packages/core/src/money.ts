@@ -47,3 +47,10 @@ export function pct(part: bigint, whole: bigint): number {
   if (whole === 0n) return 0;
   return Number((part * 1000n) / whole) / 10;
 }
+
+/** Asset-denominated redemption burns whole share units, rounding up for the vault. */
+export function redemptionShares(amount: bigint, assetsTotal: bigint, sharesOutstanding: bigint): bigint {
+  if (amount <= 0n || assetsTotal <= 0n || sharesOutstanding <= 0n || amount > assetsTotal)
+    throw new DomainError("CONFLICT", "Invalid redemption amount or vault valuation");
+  return (amount * sharesOutstanding + assetsTotal - 1n) / assetsTotal;
+}

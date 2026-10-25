@@ -21,6 +21,7 @@
     "@xrlp/shared": "workspace:*",
     "@xrlp/verifier": "workspace:*",
     "@xrlp/xrpl": "workspace:*",
+    "@xrlp/attest-signer": "workspace:*",
     "hono": "^4.13.13",
     "zod": "^3.25.0"
   },

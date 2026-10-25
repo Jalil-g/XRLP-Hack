@@ -139,7 +139,7 @@ export function auditBody(project: Project, milestoneId: string, inspector: Xrpl
   return {
     report: {
       inspector,
-      evidenceBundleHash: sha256Hex(evidence.map((e) => e.sha256).sort().join(",")),
+      evidenceBundleHash: sha256Hex(evidence.map((e) => e.sha256).sort().join("\n")),
       checklist: (m.sovCodes ?? [m.templateKey]).map((sovCode) => ({ sovCode, status: "done" as const })),
       notes,
     },
