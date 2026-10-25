@@ -1,7 +1,7 @@
 // XLS-65 Single Asset Vault. On devnet LendingProtocolV1_1 is enabled, so a vault that backs a
 // LoanBroker MUST be closed-ended: Subscription (deposits) -> Investment (LoanSet, no withdrawals)
 // -> Redemption (withdrawals). Phase is derived from the parent ledger close time.
-import { convertStringToHex, type Wallet } from "xrpl";
+import { convertStringToHex, VaultCreateFlags, type Wallet } from "xrpl";
 import { createdNodeId, getClient, isNotFound, getLedgerEntry, signAndSubmit, type TxResult } from "./client.ts";
 import { rlusdAmount, rlusdAsset } from "./rlusd.ts";
 
@@ -35,6 +35,10 @@ export interface CreateVaultParams {
   assetsMaximum?: string;
   /** Short label stored in Vault.Data (<=256 bytes). */
   data?: string;
+  /** XRPL-08: private vault gated by this PermissionedDomain (sets tfVaultPrivate + DomainID). Only domain members (and the owner) can deposit. */
+  domainId?: string;
+  /** XRPL-08: tfVaultShareNonTransferable (no secondary market for shares). */
+  nonTransferableShares?: boolean;
 }
 
 export interface CreateVaultResult {
@@ -57,12 +61,19 @@ export async function createVault(p: CreateVaultParams): Promise<CreateVaultResu
     RedemptionDate: p.redemptionDate,
     ...(p.assetsMaximum ? { AssetsMaximum: p.assetsMaximum } : {}),
     ...(p.data ? { Data: convertStringToHex(p.data.slice(0, 200)) } : {}),
+    ...vaultPrivacyFields(p),
   });
   const vaultId = createdNodeId(tx, "Vault");
   if (!vaultId) throw new Error(`VaultCreate ${tx.hash}: no Vault node in metadata`);
   const vault = await getVault(vaultId);
   if (!vault) throw new Error(`Vault ${vaultId} not found after create`);
   return { tx, vaultId, shareMptIssuanceId: vault.ShareMPTID, pseudoAccount: vault.Account };
+}
+
+/** XRPL-08: Flags/DomainID for a private (domain-gated) and/or non-transferable-share vault. */
+export function vaultPrivacyFields(p: Pick<CreateVaultParams, "domainId" | "nonTransferableShares">): { Flags?: number; DomainID?: string } {
+  const flags = (p.domainId ? VaultCreateFlags.tfVaultPrivate : 0) | (p.nonTransferableShares ? VaultCreateFlags.tfVaultShareNonTransferable : 0);
+  return { ...(flags ? { Flags: flags } : {}), ...(p.domainId ? { DomainID: p.domainId } : {}) };
 }
 
 export async function getVault(vaultId: string): Promise<VaultLedgerEntry | undefined> {
