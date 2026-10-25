@@ -56,6 +56,20 @@ export { credentialStatus } from "./credentials.ts";
 export type { CredentialType } from "./credentials.ts";
 export { toChainEvent } from "./events.ts";
 
+// XRPL-14
+export {
+  preflightFinish,
+  evaluatePreflight,
+  fetchPreflightSnapshot,
+  assertPreflightOk,
+  unsafeReleaseError,
+  escrowFinishFee,
+  UnsafeReleaseError,
+  UNSAFE_RELEASE,
+  DEFAULT_MARGIN_S,
+  DEFAULT_LAST_LEDGER_OFFSET,
+} from "./preflight.ts";
+export type { PreflightRequest, PreflightResult, PreflightReason, PreflightSnapshot, PreflightDetails, LedgerNow } from "./preflight.ts";
 // XRPL-08: fee, credentials x3, permissioned domain, private vault, attestations (xrlp/attest/v1)
 export { payVerificationFee, grantCredential, createDomain, attest, submitSignedBlob, ATTEST_EVENT_KIND, VERIFICATION_FEE_RLUSD } from "./compliance.ts";
 export {

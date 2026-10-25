@@ -181,6 +181,26 @@ AI + inspector + platform approvals go on-chain as memo attestations (an audit t
 **not** release keys. Trust assumption: whoever holds the fulfillment can release to the builder (and
 only to the builder). Signers can't redirect escrowed funds.
 
+### Pre-reveal safety: `preflightFinish` (XRPL-14)
+
+A failed `EscrowFinish` carrying the right fulfillment (`tecNO_LINE`, past `CancelAfter`, ...) **publishes the preimage
+while the escrow stays open**. So `finishEscrow` / `releaseMilestone` call `preflightFinish` first and throw
+`UnsafeReleaseError` (`code: "unsafe_release"`, docs/05-api.md) without submitting anything. Pass `skipPreflight: true` only in negative spikes.
+
+```ts
+const r = await preflightFinish({ owner, offerSequence, destination: builder, condition, fulfillment, submitter }); // never submits
+if (!r.ok) return unsafeReleaseError(r); // { error: { code: "unsafe_release", message, reason } }
+// r.details.recommendedFee / r.details.lastLedgerSequence -> use in the EscrowFinish
+```
+
+All reads are pinned to one **validated** ledger, and time is that ledger's `close_time`. `reason` is one of `escrow_not_found`,
+`destination_mismatch`, `condition_mismatch` (checked against the **on-ledger** Condition), `finish_too_early`,
+`expired_or_too_close` (`CancelAfter − now < max(marginS=120, lastLedgerOffset=20 × 5s)`), `unsupported_amount` (MPT),
+`destination_not_found`, `deposit_auth`, `no_trustline`, `trustline_limit` (limit − balance < amount, exact decimals),
+`not_authorized`, `frozen`, `submitter_not_found`, `submitter_unfunded`. Fee = `base × (33 + ⌈fulfillment bytes/16⌉)`
+(36 drops on devnet). The pure core `evaluatePreflight(snapshot, now)` is unit-tested offline. Devnet proof:
+`pnpm --filter @xrlp/xrpl spike:preflight` (a builder with no trust line is refused and nothing is submitted, then it finishes once the line exists; a short-`CancelAfter` escrow is refused inside the margin).
+
 ### Mapping to core's `LedgerPort` (origin/scaffold/core `packages/core/src/ports.ts`)
 
 This package is the building block. The `LedgerPort` adapter (`packages/core/src/adapters/xrpl-ledger.ts`)
@@ -236,9 +256,10 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `loan.ts` | `LoanBrokerSet`, `LoanBrokerCoverDeposit`, dual-signed `LoanSet`, multisig `LoanPay` |
 | `spv.ts` | `createSpv`, v2 `SignerListSet`, disable master, `submitMultisigned` (+ local quorum check), `getSpvInfo` |
 | `condition.ts` | PREIMAGE-SHA-256 DER encoding (pure) |
-| `escrow.ts` | IOU `EscrowCreate` (SPV multisig), `EscrowFinish`, `EscrowCancel` |
-| `attest.ts` | `xrlp/attest/v1` memo encode/decode/validate, unsigned tx builder, signed-blob verify (+ v1 decoder) |
-| `credentials.ts` | `CredentialCreate` / `CredentialAccept` / status / idempotent `ensureCredential`, `PermissionedDomainSet` (`ensureDomain`) |
+| `escrow.ts` | IOU `EscrowCreate` (SPV multisig), `EscrowFinish` (preflighted), `EscrowCancel` |
+| `preflight.ts` | pre-reveal safety: `preflightFinish`, pure `evaluatePreflight`, `unsafe_release` mapping |
+| `attest.ts` | memo attestations encode/decode |
+| `credentials.ts` | `CredentialCreate` / `CredentialAccept` / status |
 | `compliance.ts` | XRPL-08 high-level: fee, `grantCredential`, `createDomain`, `attest`, `submitSignedBlob` |
 | `events.ts` | `TxResult` → shared `ChainEvent` |
 | `reads.ts` | read models: vault/loan snapshots, escrows, balances, trust lines (pure parsers + thin fetches) |
