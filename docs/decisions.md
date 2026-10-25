@@ -125,6 +125,11 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - The demo page hides missing-project 404s only; service errors reach the normal
   error boundary. Web tests use the workspace's existing tsx runner, now declared
   as a web development dependency, with no new top-level tool.
+- Projector mode is an opt-in layout control: 20px root text and stronger secondary
+  contrast, without changing identity or actions. It survives client navigation,
+  resets on a hard reload, and keeps tables in labeled keyboard-scrollable regions.
+- Account-directory requests retain an explicit unavailable flag. A failed lookup
+  warns in the header and cannot become a "no investor accounts" empty state.
 
 ## Pitch review (Jalil's agent, PITCH-09)
 

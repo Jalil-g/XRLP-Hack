@@ -30,7 +30,7 @@ export function RoleSwitcher({
   const [pending, start] = useTransition();
 
   return (
-    <div className={cn("flex items-center gap-2 transition-opacity", pending && "opacity-60")}>
+    <div className={cn("flex max-w-full flex-wrap items-center gap-2 transition-opacity", pending && "opacity-60")}>
       <div className="flex rounded-full bg-band p-0.5" role="radiogroup" aria-label="Acting as">
         {ROLES.map((r) => (
           <button

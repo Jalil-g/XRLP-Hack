@@ -4,6 +4,7 @@ import type { Session } from "@/lib/session";
 import { BRAND } from "@/lib/utils";
 import { NavLinks } from "./nav-links";
 import { RoleSwitcher } from "./role-switcher";
+import { ProjectorToggle } from "./projector-toggle";
 
 export function SiteHeader({ session }: { session: Session }) {
   const identities =
@@ -15,12 +16,12 @@ export function SiteHeader({ session }: { session: Session }) {
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-page">
-      <div className="mx-auto flex h-14 max-w-[1184px] items-center gap-8 px-8">
+      <div className="mx-auto flex min-h-14 max-w-[1184px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2 sm:px-8">
         <Link href="/" className="text-body font-semibold tracking-[-0.01em] text-ink">
           {BRAND.name}
         </Link>
         <NavLinks role={session.role} />
-        <div className="ml-auto flex items-center gap-4">
+        <div className="ml-auto flex max-w-full flex-wrap items-center gap-3">
           {API_MODE === "mock" ? (
             <span
               className="rounded-tag bg-review-bg px-2 py-0.5 text-caption font-medium text-review"
@@ -34,8 +35,14 @@ export function SiteHeader({ session }: { session: Session }) {
             </span>
           )}
           <RoleSwitcher role={session.role} identities={identities} />
+          <ProjectorToggle />
         </div>
       </div>
+      {session.directoryUnavailable && (
+        <p role="alert" className="border-t border-line bg-review-bg px-4 py-2 text-center text-small text-review">
+          Account details are unavailable. Names and account actions may be missing; refresh before transacting.
+        </p>
+      )}
     </header>
   );
 }
