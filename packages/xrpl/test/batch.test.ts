@@ -19,7 +19,7 @@ import {
   TF_INNER_BATCH_TXN,
   toInnerTx,
 } from "../src/batch.ts";
-import { generateMilestoneCondition } from "../src/condition.ts";
+import { testConditionPair } from "./support/conditions.ts";
 
 const seed = (n: number) => Wallet.fromEntropy(Uint8Array.from({ length: 16 }, (_, i) => (i * 7 + n) & 0xff));
 const platform = seed(1);
@@ -37,7 +37,7 @@ const escrow = (amount: string) => ({
   Account: SPV,
   Destination: builder.classicAddress,
   Amount: usd(amount),
-  Condition: generateMilestoneCondition().condition,
+  Condition: testConditionPair().condition,
   CancelAfter: 900_000_000,
 });
 

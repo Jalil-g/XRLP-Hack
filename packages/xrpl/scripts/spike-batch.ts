@@ -12,7 +12,7 @@ import { AccountSetAsfFlags } from "xrpl";
 import { explorerTxUrl } from "@xrlp/shared";
 import { closeLoanAtomic, submitBatch, type AtomicMilestone, type BatchResult } from "../src/batch.ts";
 import { disconnect, ledgerTime, signAndSubmit, waitForLedgerTimeAfter, XrplTxError } from "../src/client.ts";
-import { generateMilestoneCondition } from "../src/condition.ts";
+import { testConditionPair } from "../test/support/conditions.ts";
 import { listEscrows } from "../src/escrow.ts";
 import { createLoanBroker, depositBrokerCover, getLoan } from "../src/loan.ts";
 import { configureIssuer, ensureTrustline, issueRlusd, rlusdAmount, rlusdBalance } from "../src/rlusd.ts";
@@ -109,7 +109,7 @@ try {
 
   const cancelAfter = (await ledgerTime()) + 3600;
   const milestones = (n: number, amount: string): AtomicMilestone[] =>
-    Array.from({ length: n }, (_, i) => ({ milestoneId: `m${i + 1}`, amount, condition: generateMilestoneCondition().condition, cancelAfter }));
+    Array.from({ length: n }, (_, i) => ({ milestoneId: `m${i + 1}`, amount, condition: testConditionPair().condition, cancelAfter }));
   const loan = {
     brokerOwner: w.platform,
     loanBrokerId: broker.loanBrokerId,
@@ -138,8 +138,8 @@ try {
 
   // F2: borrower-initiated LoanSet inside a Batch from the SPV (platform = counterparty, single-sig BatchSigner).
   if (f1 instanceof XrplTxError) {
-    const c1 = generateMilestoneCondition().condition;
-    const c2 = generateMilestoneCondition().condition;
+    const c1 = testConditionPair().condition;
+    const c2 = testConditionPair().condition;
     await attempt("F2 Batch outer=SPV (multisig): LoanSet Account=SPV/Counterparty=platform + 2 × EscrowCreate, BatchSigners platform", () =>
       submitBatch({
         account: spv,
