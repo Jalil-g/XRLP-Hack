@@ -413,6 +413,17 @@ for (const c of NO_GO) {
   });
 }
 
+test("B: a consumed stall escrow is not counted twice in the refund (its money is already in the SPV)", () => {
+  const cancelled = run((f) => {
+    led(f, "B").escrows[1] = null;
+    led(f, "B").spvRlusd = "12000";
+  });
+  assert.match(checkOf(cancelled, "B.refund")!.message, /^refund 12000 ≥/);
+  const finished = run((f) => (led(f, "B").escrows[1] = null));
+  assert.equal(checkOf(finished, "B.refund"), undefined, "nothing to refund: only B.stall speaks");
+  assert.equal(checkOf(finished, "B.stall")?.status, "NO-GO");
+});
+
 test("NO-GO beats leave the unaffected beats GO (B consumed: only D6)", () => {
   const r = run((f) => (led(f, "B").escrows[1] = null));
   assert.deepEqual(

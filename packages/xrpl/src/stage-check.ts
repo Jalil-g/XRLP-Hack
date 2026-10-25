@@ -822,9 +822,14 @@ export function evaluateStage(snap: StageSnapshot, now: StageNow, opts: StageOpt
       } else add("B.stall", "NO-GO", `${label}: ${cr.message}`, ["D6"], { fix: stage("B") });
 
       const loan = lb.loan;
+      // What the refund LoanPay would carry: the escrow (if still open) + what the SPV already holds. A consumed escrow's
+      // money is already in the SPV (cancelled) or with the builder (finished), so it is not counted twice.
+      const refundMicro = (node ? micro(escrowValue(node)) : 0n) + (lb.spvRlusd ? micro(lb.spvRlusd) : 0n);
       if (!loan) add("B.refund", "NO-GO", `B loan ${short(B.chain.loanId)} is not on the ledger`, ["D6"], { fix: stage("B") });
-      else {
-        const refund = fromMicro(micro(node ? escrowValue(node) : e.amount) + (lb.spvRlusd ? micro(lb.spvRlusd) : 0n));
+      else if (!node && refundMicro === 0n) {
+        // B.stall already says the escrow is gone; there is nothing to refund.
+      } else {
+        const refund = fromMicro(refundMicro);
         const plan = (at: number): LoanPayPlan | Error => {
           try {
             return planLoanPayment({ loan, nowRipple: at, amount: refund, source: "escrow_refund" });

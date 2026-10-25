@@ -33,3 +33,12 @@ All from the repo root, devnet only, wallets reused from `WALLETS_FILE` (run `pn
 Knobs (seconds): `DEMO_SUBSCRIPTION_S` 60, `DEMO_M3_CANCEL_S` 150, `DEMO_PAYMENT_INTERVAL_S` 300, `DEMO_PAYMENT_TOTAL` 4,
 `DEMO_WITHDRAW=1` (adds ~18 min: waits for `RedemptionDate`); `PRESTAGE_SUBSCRIPTION_S` 60, `PRESTAGE_B_STALL_CANCEL_S` 90,
 `PRESTAGE_C_INTERVAL_S` 240, `PRESTAGE_C_CLOSE_WINDOW_S` 180. Devnet tx tables: `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`.
+
+**Stage check (XRPL-16).** Run `pnpm --filter @xrlp/xrpl stage:check` (same `WALLETS_FILE`) after the prestage and again
+~10 min before the slot. It takes ~3 s, is read-only and submits nothing. It prints GO / WARN / NO-GO for D1–D6 and the C
+withdrawal, each with the exact fix: a rehearsal that cancelled B's stall escrow → D6 NO-GO,
+`pnpm --filter @xrlp/xrpl prestage --only B`; a consumed A escrow → `prestage --only A`; low funds, a missing KYC /
+inspector credential, or investor3 holding KYC → `bootstrap` (`--pre-verify-builder` for `VERIFIED_BUILDER`). Every time
+gate (A's `CancelAfter`s vs the 300 s release margin, B's cancel and on-time refund, C's `RedemptionDate`) must hold for
+the next hour (`--window-min`). Exit 0 = no NO-GO (warnings allowed). Fix, re-run, and go on stage only on exit 0.
+`--json` is for core and the `/demo` control room. Details: `packages/xrpl/API.md` "Stage check".
