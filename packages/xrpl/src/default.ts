@@ -8,9 +8,10 @@
 //    vaults use TotalValueOutstanding − ManagementFeeOutstanding, as in XLS-66 §3.10.5.
 // Split: pure guards, cover math and metadata parsers (offline, test/default.test.ts) + thin wrappers that run the guard on
 // one validated ledger under the platform's account lock (XRPL-12) and never submit a LoanManage expected to fail.
-import { explorerTxUrl, LedgerError, TooSoonError, type ChainEvent, type Rlusd } from "@xrlp/shared";
+import { LedgerError, TooSoonError, type ChainEvent, type Rlusd } from "@xrlp/shared";
 import { LedgerEntry, LoanManageFlags, rippleTimeToISOTime, type Wallet } from "xrpl";
 import { signAndSubmit, withAccountLock, type TxResult } from "./client.ts";
+import { fetchValidatedTx } from "./escrow.ts";
 import { toChainEvent } from "./events.ts";
 import { TENTH_BPS_ONE } from "./lending-math.ts";
 import type { LoanBrokerEntry, LoanEntry } from "./loan.ts";
@@ -587,25 +588,13 @@ export interface DefaultLoanResult {
   alreadyDefaulted: boolean;
 }
 
-/** A validated tx by hash, or undefined if unknown / not validated. */
-async function validatedTx(hash: string): Promise<TxResult | undefined> {
-  const r = await rawRequest({ command: "tx", transaction: hash });
-  if (r.error || r.validated !== true) return undefined;
-  const meta = (r.meta ?? {}) as Record<string, unknown>;
-  return {
-    hash,
-    explorerUrl: explorerTxUrl(hash),
-    result: String(meta.TransactionResult ?? "unknown"),
-    ...(typeof r.ledger_index === "number" ? { ledgerIndex: r.ledger_index } : {}),
-    tx: (r.tx_json ?? r) as Record<string, unknown>,
-    meta,
-  };
-}
-
 /** The tx that defaulted `loan`: its PreviousTxnID, since nothing can modify a defaulted loan afterwards. */
 async function priorDefaultTx(loan: LoanManageEntry, loanId: string): Promise<TxResult | undefined> {
   if (!loan.PreviousTxnID) return undefined;
-  const tx = await validatedTx(loan.PreviousTxnID);
+  const tx = await fetchValidatedTx(loan.PreviousTxnID).catch((e: unknown) => {
+    if ((e as { data?: { error?: string } }).data?.error === "txnNotFound") return undefined; // history pruned on this node
+    throw e;
+  });
   const ok =
     tx?.result === "tesSUCCESS" &&
     tx.tx.TransactionType === "LoanManage" &&
