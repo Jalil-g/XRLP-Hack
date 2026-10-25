@@ -1,6 +1,6 @@
 // Policy engine: what we check, how strictly, and how failures map to a decision —
 // varied by project type, builder risk tier and milestone amount.
-import { TWO_INSPECTOR_THRESHOLD } from "@xrlp/shared";
+import { MILESTONE_CHECKS as REQUIRED_SUITE, MILESTONE_TEMPLATES, ReleasePolicy, RiskTier as RiskTierSchema, TWO_INSPECTOR_THRESHOLD } from "@xrlp/shared";
 import type { Builder, Milestone, Project, ProjectType, RiskTier } from "@xrlp/shared";
 import { MILESTONE_CHECKS, type MilestoneCheckName } from "./types.ts";
 import { toCents } from "./util.ts";
@@ -31,6 +31,8 @@ export interface PolicyThresholds {
   invoiceUnderTolerancePct: number;
   /** Invoices above (100 + x)% of the draw => budget overrun warning. */
   invoiceOverTolerancePct: number;
+  /** Beyond this absolute percentage mismatch: hard fail. Between pass/warn bands: review. */
+  invoiceWarnTolerancePct: number;
   /** LLM judgments below this confidence are routed to a human, whatever they say. */
   minLlmConfidence: number;
 }
@@ -60,8 +62,9 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     phashFailDistance: 10,
     phashWarnDistance: 14,
     invoiceUnderTolerancePct: 10,
-    invoiceOverTolerancePct: 30,
-    minLlmConfidence: 0.6,
+    invoiceOverTolerancePct: 10,
+    invoiceWarnTolerancePct: 25,
+    minLlmConfidence: 0.7,
   },
   medium: {
     gpsSlackM: 50,
@@ -70,9 +73,10 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     futureSkewMinutes: 10,
     phashFailDistance: 10,
     phashWarnDistance: 14,
-    invoiceUnderTolerancePct: 5,
-    invoiceOverTolerancePct: 25,
-    minLlmConfidence: 0.7,
+    invoiceUnderTolerancePct: 10,
+    invoiceOverTolerancePct: 10,
+    invoiceWarnTolerancePct: 25,
+    minLlmConfidence: 0.8,
   },
   high: {
     gpsSlackM: 30,
@@ -81,9 +85,10 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     futureSkewMinutes: 5,
     phashFailDistance: 12,
     phashWarnDistance: 16,
-    invoiceUnderTolerancePct: 2,
-    invoiceOverTolerancePct: 15,
-    minLlmConfidence: 0.8,
+    invoiceUnderTolerancePct: 5,
+    invoiceOverTolerancePct: 5,
+    invoiceWarnTolerancePct: 25,
+    minLlmConfidence: 0.9,
   },
 };
 
@@ -135,6 +140,7 @@ export function policyFor(project: Project, builder: Builder, milestone: Milesto
 
   if (highValue) {
     t.invoiceUnderTolerancePct = Math.min(t.invoiceUnderTolerancePct, 3);
+    t.invoiceOverTolerancePct = Math.min(t.invoiceOverTolerancePct, 3);
     t.minLlmConfidence = Math.round(Math.min(0.95, t.minLlmConfidence + 0.05) * 100) / 100;
     checks.invoice_matches_budget.onWarn = "needs_human";
     checks.document_consistency.onWarn = "needs_human";
@@ -161,4 +167,29 @@ export function policyFor(project: Project, builder: Builder, milestone: Milesto
     thresholds: t,
     notes,
   };
+}
+
+/** Shared release contract. Missing verified risk context defaults to the strictest tier. */
+export function releasePolicyFor(project: Project, milestone: Milestone, riskTier: RiskTier = "high"): ReleasePolicy {
+  const tier = RiskTierSchema.parse(riskTier);
+  const highValue = toCents(milestone.amount) >= BigInt(TWO_INSPECTOR_THRESHOLD) * 100n;
+  const codes = milestone.sovCodes ?? [];
+  const lines = (project.sov ?? []).filter((line) => codes.includes(line.code));
+  const known = codes.length > 0 && lines.length === new Set(codes).size;
+  const declaredKinds = known
+    ? lines.flatMap((line) => line.evidence.map((requirement) => requirement.kind))
+    : undefined;
+  const kinds = declaredKinds?.length ? declaredKinds
+    : MILESTONE_TEMPLATES[project.type].find((template) => template.key === milestone.templateKey)?.requiredEvidence.map((requirement) => requirement.kind);
+  // Unknown SoV/template context keeps every gate required rather than weakening the suite.
+  const optional = new Set<string>(["lien_waiver_matches_invoices"]);
+  if (kinds && !kinds.includes("invoice")) optional.add("invoice_matches_budget");
+  if (kinds && !kinds.some((kind) => kind === "invoice" || kind === "document")) optional.add("document_consistency");
+  const minConfidence = Math.min(0.95, Math.round((({ low: 0.7, medium: 0.8, high: 0.9 }[tier]) + (highValue ? 0.05 : 0)) * 100) / 100);
+  return ReleasePolicy.parse({
+    riskTier: tier,
+    requiredChecks: [...REQUIRED_SUITE.filter((check) => !optional.has(check)), "evidence_readable"],
+    optionalChecks: [...optional], minConfidence,
+    requiredAudits: highValue || tier === "high" ? 2 : 1,
+  });
 }
