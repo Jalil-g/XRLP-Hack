@@ -19,6 +19,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.5",
     "@xrlp/shared": "workspace:*",
+    "@xrlp/attest-signer": "workspace:*",
     "@xrlp/verifier": "workspace:*",
     "@xrlp/xrpl": "workspace:*",
     "hono": "^4.13.13",
