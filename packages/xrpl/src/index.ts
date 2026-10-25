@@ -47,6 +47,26 @@ export type { MilestoneCondition } from "./condition.ts";
 // XRPL-06: close validation (pure) + typed close errors
 export { planLoanClose, CloseValidationError, CloseLoanPartialError, MIN_ESCROW_LIFETIME_S, MIN_PAYMENT_INTERVAL_S, MAX_INTEREST_RATE } from "./loan-close.ts";
 export type { ClosePlan, ClosePlanInput, PlannedEscrow, CloseConditions, CreatedEscrowRef } from "./loan-close.ts";
+// XRPL-13b: atomic escrows in the close path (escrowMode) + recovering a partial close (resumeEscrowCreation)
+export { resumeEscrowCreation } from "./api.ts";
+export type { CloseTxEvent, ResumeEscrowInput, ResumeEscrowOptions, ResumeEscrowResult, ResumeDeps } from "./api.ts";
+export {
+  defaultEscrowMode,
+  resolveEscrowMode,
+  validateEscrowSpecs,
+  planEscrowResume,
+  ledgerEscrowsFromNodes,
+  escrowCreatesFromHistory,
+  loanSetFromHistory,
+  mergeLedgerEscrows,
+  historyTxs,
+  loanMaturity,
+  BATCH_ESCROWS_MIN,
+  BATCH_ESCROWS_MAX,
+} from "./loan-close.ts";
+export type { EscrowMode, EscrowSpec, EscrowSpecChecks, ClosePartialContext, LedgerEscrow, HistoryTx, ResumeMilestone, ResumePlanInput, ResumePlan, ResumeEscrowRef } from "./loan-close.ts";
+export { BatchNotAppliedError, classifyInnerLookup, batchOutcome, innerTxResult, createdEscrowFromMeta, escrowsFromBatch, isUncertainSubmitFailure, closePartialError } from "./batch.ts";
+export type { BatchOutcome, InnerLookup, CreateEscrowsAtomicParams, CreateEscrowsAtomicDeps } from "./batch.ts";
 
 // Low-level building blocks
 export { getClient, disconnect, ledgerTime, waitForLedgerTimeAfter, signAndSubmit, submitBlob, XrplTxError } from "./client.ts";
@@ -209,3 +229,50 @@ export type { FinishEscrowParams, CancelReadiness, EscrowTiming } from "./escrow
 export { loanPayMultisig, loanPayFlags, planLoanPayment, ceilMicro, LoanPayAmountError, LSF_LOAN_OVERPAYMENT } from "./loan.ts";
 export type { LoanPayMode, LoanPayPlan } from "./loan.ts";
 export { withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
+// XRPL-15: loan default + first-loss cover (LoanManage impair / unimpair / default by the broker owner). Guards mirror
+// rippled 3.4.1 with fixCleanup3_4_0 (exclusive due / due+grace boundaries); exposure follows the vault's accounting
+// (cash basis on devnet: principal only). See docs/xrpl-protocol-notes.md §3c.
+export {
+  defaultLoan,
+  impairLoan,
+  unimpairLoan,
+  fetchLoanManageState,
+  checkLoanManage,
+  canDefaultAt,
+  canImpairAt,
+  defaultableAfter,
+  impairableAfter,
+  expectedDefaultCovered,
+  loanExposure,
+  vaultAccounting,
+  parseDefaultOutcome,
+  parseImpairOutcome,
+  LoanManageTooSoonError,
+  LoanManageRefusedError,
+  LOAN_MANAGE_FLAG,
+  VAULT_VERSION_CASH_BASIS,
+} from "./default.ts";
+export type {
+  DefaultLoanResult,
+  DefaultOutcome,
+  DefaultCoverInput,
+  ImpairResult,
+  ImpairOutcome,
+  VaultFigures,
+  VaultAccounting,
+  LoanManageAction,
+  LoanManageCheck,
+  LoanManageCheckInput,
+  LoanManageRefusal,
+  LoanManageRefused,
+  LoanManageParams,
+  LoanManageState,
+  LoanManageLoan,
+  LoanManageEntry,
+  LoanBrokerManageEntry,
+  VaultManageEntry,
+} from "./default.ts";
+// XRPL-10: shared LedgerPort adapter (core: LEDGER_MODE=devnet) + its pure mapping helpers
+export { XrplLedgerAdapter } from "./adapter.ts";
+export type { XrplLedgerAdapterOptions } from "./adapter.ts";
+export { XrplLedgerError, toAdapterError, apiCodeOf, toPortTx, pickQuorumSigners } from "./adapter-map.ts";
