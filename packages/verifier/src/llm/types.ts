@@ -1,5 +1,6 @@
 // What the LLM layer (mock or live Claude) contributes to a milestone verdict.
 import { z } from "zod/v4"; // the SDK's zod helpers use zod v4 (shipped inside zod@3.25 as "zod/v4")
+import type { InspectorAudit } from "@xrlp/shared";
 import type { CheckOutcome, LoadedEvidence, MilestoneContext, MilestoneTimeline } from "../types.ts";
 
 export interface MilestoneJudgeInput {
@@ -7,6 +8,8 @@ export interface MilestoneJudgeInput {
   photos: LoadedEvidence[];
   documents: LoadedEvidence[]; // invoices + documents
   timeline: MilestoneTimeline;
+  audits?: InspectorAudit[];
+  inspectorPhotos?: LoadedEvidence[];
 }
 
 export interface MilestoneJudgement {
@@ -15,6 +18,7 @@ export interface MilestoneJudgement {
   /** Invoice totals the model read (by evidence id) — used when deterministic parsing can't (PDFs, photos of invoices). */
   invoiceTotals: Record<string, string | undefined>;
   model: string;
+  audit?: CheckOutcome;
 }
 
 export interface MilestoneJudge {
@@ -65,6 +69,7 @@ export function unavailableJudgement(reason: string, model: string, input: Miles
   return {
     stage: mk("stage_visually_consistent", input.photos),
     documents: mk("document_consistency", input.documents),
+    audit: { check: "audit_matches_evidence", result: "warn", reason: `AI review unavailable: ${reason}`, evidenceIds: [], confidence: 0, source: "llm" },
     invoiceTotals: {},
     model,
   };

@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { LoanPayFlags } from "xrpl";
-import { fulfillmentMatches, generateMilestoneCondition } from "../src/condition.ts";
+import { fulfillmentMatches } from "../src/condition.ts";
+import { testConditionPair } from "./support/conditions.ts";
 import { cancelReadiness, escrowAmountFromMeta, wrongFinishBlockers, wrongFulfillmentFor } from "../src/escrow.ts";
 import { ceilMicro, LoanPayAmountError, loanPayFlags, LSF_LOAN_OVERPAYMENT, planLoanPayment } from "../src/loan.ts";
 import { evaluatePreflight, type PreflightSnapshot } from "../src/preflight.ts";
@@ -148,7 +149,7 @@ test("escrowAmountFromMeta reads the DeletedNode Escrow amount", () => {
 });
 
 test("wrongFulfillmentFor never satisfies the condition", () => {
-  const { condition, fulfillment } = generateMilestoneCondition();
+  const { condition, fulfillment } = testConditionPair();
   for (let i = 0; i < 20; i++) {
     const wrong = wrongFulfillmentFor(condition);
     assert.equal(wrong.length, fulfillment.length);
@@ -156,7 +157,7 @@ test("wrongFulfillmentFor never satisfies the condition", () => {
   }
 });
 
-const { condition } = generateMilestoneCondition();
+const { condition } = testConditionPair();
 function wrongSnap(o: Partial<PreflightSnapshot> = {}): PreflightSnapshot {
   return {
     request: { owner: "rSpv", offerSequence: 7, submitter: "rPlatform" },

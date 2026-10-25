@@ -1,4 +1,4 @@
-import { CheckResult, MILESTONE_TEMPLATES, Verdict } from "@xrlp/shared";
+import { CheckResult, MILESTONE_TEMPLATES, ReleasePolicy, Verdict } from "@xrlp/shared";
 import {
   checkGpsWithinSite,
   checkInvoiceMatchesBudget,
@@ -8,10 +8,11 @@ import {
   checkRequiredEvidence,
 } from "./checks.ts";
 import { resolveMode, resolveModel } from "./config.ts";
+import { checkInspectorAudits } from "./auditChecks.ts";
 import { MockJudge } from "./llm/mock.ts";
 import type { MilestoneJudge } from "./llm/types.ts";
 import { loadEvidence } from "./meta.ts";
-import { policyFor, type Escalation, type VerificationPolicy } from "./policy.ts";
+import { policyFor, releasePolicyFor, type Escalation, type VerificationPolicy } from "./policy.ts";
 import type { CheckOutcome, LoadedEvidence, MilestoneCheckName, MilestoneContext, PriorEvidence, VerifyMilestoneInput } from "./types.ts";
 import { round2 } from "./util.ts";
 
@@ -46,12 +47,22 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   const { project, builder, milestone } = input;
   const timeline = { ...(input.escrowCreatedAt ? { escrowCreatedAt: input.escrowCreatedAt } : {}), ...input.timeline };
   const template = input.template ?? MILESTONE_TEMPLATES[project.type].find((t) => t.key === milestone.templateKey);
-  const currentIds = new Set(input.evidence.map((e) => e.id));
   const prior: PriorEvidence[] = (input.priorEvidence ?? [])
-    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }))
-    .filter((p) => !currentIds.has(p.evidence.id)); // same evidence object re-sent: not a duplicate
+    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }));
   const ctx: MilestoneContext = { project, builder, milestone, template, riskTier: builder.riskTier };
   const policy = policyFor(project, builder, milestone);
+  const standard = releasePolicyFor(project, milestone, builder.riskTier);
+  const requested = input.policy ? ReleasePolicy.parse(input.policy) : standard;
+  // A caller policy may tighten the baseline but cannot remove required gates or lower thresholds.
+  const release: ReleasePolicy = {
+    riskTier: standard.riskTier,
+    requiredChecks: [...new Set([...standard.requiredChecks, ...requested.requiredChecks])],
+    optionalChecks: [...new Set([...standard.optionalChecks, ...requested.optionalChecks])].filter((check) => !standard.requiredChecks.includes(check) && !requested.requiredChecks.includes(check)),
+    minConfidence: Math.max(standard.minConfidence, requested.minConfidence),
+    requiredAudits: Math.max(standard.requiredAudits, requested.requiredAudits) as 1 | 2,
+  };
+  policy.requiredInspectors = release.requiredAudits;
+  policy.thresholds.minLlmConfidence = policy.minConfidence = Math.max(policy.minConfidence, release.minConfidence);
 
   const loaded = await Promise.all(input.evidence.map((ev) => loadEvidence(ev, { files: input.files, dataDir: input.dataDir })));
   const photos = loaded.filter((l) => l.evidence.kind === "photo" && l.bytes);
@@ -59,7 +70,7 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
 
   const mode = resolveMode(input.mode);
   const judge = opts.judge ?? (mode === "live" ? await createLiveJudge(resolveModel(input.model)) : new MockJudge());
-  const judgement = await judge.judgeMilestone({ ctx, photos, documents, timeline });
+  const judgement = await judge.judgeMilestone({ ctx, photos, documents, timeline, audits: input.audits });
 
   const outcomes: CheckOutcome[] = [
     checkRequiredEvidence(template, loaded, milestone.templateKey),
@@ -68,11 +79,13 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     checkNoDuplicatePhoto(ctx, loaded, prior, policy),
     checkInvoiceMatchesBudget(ctx, loaded, policy, judgement.invoiceTotals),
     checkLienWaivers(loaded),
+    ...checkInspectorAudits(input, loaded, policy.requiredInspectors),
     judgement.stage,
     judgement.documents,
+    judgement.audit ?? { check: "audit_matches_evidence", result: "warn", confidence: 0, source: "llm", evidenceIds: [], reason: "Audit/evidence judgement unavailable; operator review required." },
   ];
 
-  const decided = decide(outcomes, policy);
+  const decided = decide(outcomes, policy, release);
   const verdict = Verdict.parse({
     milestoneId: milestone.id,
     decision: decided.decision,
@@ -81,7 +94,7 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     checks: outcomes.map((o) => CheckResult.parse({ check: o.check, result: o.result, reason: o.reason, evidenceIds: o.evidenceIds })),
     policy: { projectType: project.type, riskTier: builder.riskTier, requiredInspectors: policy.requiredInspectors },
     model: judgement.model,
-    createdAt: new Date().toISOString(),
+    createdAt: timeline.now ?? new Date().toISOString(),
   });
   return { verdict, policy, checks: decided.checks, evidence: loaded };
 }
@@ -94,11 +107,19 @@ interface Decided {
 }
 
 /** Map check outcomes through the policy: deterministic fails decide; low LLM confidence -> human. */
-export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy): Decided {
-  const checks = outcomes.map((o) => {
+export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, release?: ReleasePolicy): Decided {
+  const complete = [...outcomes];
+  for (const required of release?.requiredChecks ?? []) {
+    if (!complete.some((outcome) => outcome.check === required)) complete.push({ check: required, result: "warn", reason: "Required check result missing; operator review required.", evidenceIds: [], confidence: 0, source: "deterministic" });
+  }
+  const checks = complete.map((o) => {
     const rule = policy.checks[o.check as MilestoneCheckName];
     let escalation: Escalation | "none" = "none";
-    if (!rule || !rule.enabled || o.result === "skipped" || o.result === "pass") {
+    if (release?.requiredChecks.includes(o.check)) {
+      escalation = o.result === "fail" ? "fail" : o.result !== "pass" || !Number.isFinite(o.confidence) || o.confidence < release.minConfidence ? "needs_human" : "none";
+    } else if (release?.optionalChecks.includes(o.check)) {
+      escalation = "none";
+    } else if (!rule || !rule.enabled || o.result === "skipped" || o.result === "pass") {
       // An LLM "pass" we don't trust is still a reason to ask a human.
       if (o.result === "pass" && o.source !== "deterministic" && o.confidence < policy.thresholds.minLlmConfidence) {
         escalation = "needs_human";
@@ -113,7 +134,7 @@ export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy): De
 
   const failing = checks.filter((c) => c.escalation === "fail");
   const human = checks.filter((c) => c.escalation === "needs_human");
-  const counted = checks.filter((c) => c.result !== "skipped");
+  const counted = checks.filter((c) => c.result !== "skipped" && (!release || release.requiredChecks.includes(c.check)));
   let decision: Verdict["decision"];
   let confidence: number;
   if (failing.length) {
@@ -139,9 +160,9 @@ function summarize(d: Decided, policy: VerificationPolicy): string {
   if (d.decision === "needs_human") {
     const h = d.checks.filter((c) => c.escalation === "needs_human");
     const why = h.length ? h.map((c) => `${c.check}: ${strip(c.reason)}`).join(" | ") : "policy does not allow an automatic pass for this builder.";
-    return `NEEDS HUMAN — ${why} Routed to ${insp} for review.`;
+    return `NEEDS HUMAN — ${why} A platform operator must review and record a signed decision.`;
   }
   const n = d.checks.filter((c) => c.result === "pass").length;
   const total = d.checks.filter((c) => c.result !== "skipped").length;
-  return `PASS — ${n}/${total} checks passed; evidence is consistent (place, time, originality, documents, budget). Still requires ${insp} to confirm quality before release.`;
+  return `PASS — ${n}/${total} checks passed, including the required assigned inspector audits. Core must attest this verdict and run release safety checks before releasing funds.`;
 }

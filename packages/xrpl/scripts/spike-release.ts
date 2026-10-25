@@ -21,7 +21,6 @@ import {
   closeLoanAndCreateEscrows,
   depositToVault,
   disconnect,
-  generateMilestoneCondition,
   getClient,
   getLoan,
   getShareBalance,
@@ -37,6 +36,7 @@ import {
   waitForLedgerTimeAfter,
   withdrawFromVault,
 } from "../src/index.ts";
+import { testConditionPair } from "../test/support/conditions.ts";
 import { Spike } from "./spike-lib.ts";
 
 const env = (k: string, d: number) => Number(process.env[k] ?? d);
@@ -126,7 +126,7 @@ try {
   await vaultLine("after deposits", setup.vaultId);
 
   // ── close: LoanSet + 2 escrows (m2 expires soon, m1 before loan maturity) ──────────────────────────
-  const secrets = { [m1.id]: generateMilestoneCondition(), [m2.id]: generateMilestoneCondition() };
+  const secrets = { [m1.id]: testConditionPair(), [m2.id]: testConditionPair() };
   m1.cancelAfter = rippleTimeToISOTime(subEnd + PAYMENT_INTERVAL_S * PAYMENT_TOTAL - 5);
   m2.cancelAfter = rippleTimeToISOTime(subEnd + PAYMENT_INTERVAL_S + 30);
   await waitForLedgerTimeAfter(subEnd, tick("Investment phase"));

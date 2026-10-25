@@ -4,17 +4,16 @@ import {
   convertStringToHex,
   LoanPayFlags,
   LoanSetFlags,
-  multisign,
   signLoanSetByCounterparty,
   type LoanPay,
   type LoanSet,
   type Wallet,
 } from "xrpl";
-import { createdNodeId, getClient, getLedgerEntry, signAndSubmit, submitBlob, submitWithSigner, XrplTxError, type TxResult } from "./client.ts";
+import { createdNodeId, getClient, getLedgerEntry, signAndSubmit, submitBlob, withAccountLock, type TxResult } from "./client.ts";
 import { COVER_RATE_LIQUIDATION, COVER_RATE_MINIMUM, fromMicro, MANAGEMENT_FEE_RATE, toMicro, validateBrokerRates } from "./lending-math.ts";
 import { toPlainDecimal } from "./reads.ts";
 import { rlusdAmount } from "./rlusd.ts";
-import { checkSignerQuorum, getSpvInfo } from "./spv.ts";
+import { submitMultisigned } from "./spv.ts";
 
 export interface LoanBrokerEntry {
   index: string;
@@ -116,9 +115,13 @@ export interface LoanSetParams {
 /**
  * Broker-owner-initiated LoanSet: platform signs as Account with Counterparty = borrower,
  * then the borrower (SPV multisig quorum, or single key) fills CounterpartySignature.
+ * Drawproof terms: PaymentTotal ≥ 2, InterestRate > 0, no late fees (LatePaymentFee / LateInterestRate never set).
+ * autofill → sign → countersign → submit runs under the broker owner's account lock (XRPL-12), so no other tx from
+ * the platform can take this Sequence in between.
  */
 export async function loanSet(p: LoanSetParams): Promise<{ tx: TxResult; loanId: string }> {
-  const client = await getClient();
+  if (!Number.isInteger(p.paymentTotal) || p.paymentTotal < 2) throw new Error(`LoanSet: PaymentTotal must be an integer >= 2, got ${p.paymentTotal}`);
+  if (!Number.isInteger(p.interestRate) || p.interestRate <= 0) throw new Error(`LoanSet: InterestRate must be a positive integer (1/10 bps), got ${p.interestRate}`);
   const base: LoanSet = {
     TransactionType: "LoanSet",
     Account: p.brokerOwner.classicAddress,
@@ -135,16 +138,19 @@ export async function loanSet(p: LoanSetParams): Promise<{ tx: TxResult; loanId:
     ...(p.fee ? { Fee: p.fee } : {}),
     ...(p.data ? { Data: convertStringToHex(p.data.slice(0, 200)) } : {}),
   };
-  const prepared = await client.autofill(base);
-  const firstSigned = p.brokerOwner.sign(prepared);
-  let blob: string;
-  if ("multisig" in p.borrowerSig) {
-    const parts = p.borrowerSig.multisig.map((w) => signLoanSetByCounterparty(w, firstSigned.tx_blob, { multisign: true }).tx);
-    blob = combineLoanSetCounterpartySigners(parts).tx_blob;
-  } else {
-    blob = signLoanSetByCounterparty(p.borrowerSig.single, firstSigned.tx_blob).tx_blob;
-  }
-  const tx = await submitBlob(blob, "LoanSet");
+  const tx = await withAccountLock(p.brokerOwner.classicAddress, async () => {
+    const client = await getClient();
+    const prepared = await client.autofill(base);
+    const firstSigned = p.brokerOwner.sign(prepared);
+    let blob: string;
+    if ("multisig" in p.borrowerSig) {
+      const parts = p.borrowerSig.multisig.map((w) => signLoanSetByCounterparty(w, firstSigned.tx_blob, { multisign: true }).tx);
+      blob = combineLoanSetCounterpartySigners(parts).tx_blob;
+    } else {
+      blob = signLoanSetByCounterparty(p.borrowerSig.single, firstSigned.tx_blob).tx_blob;
+    }
+    return submitBlob(blob, "LoanSet");
+  });
   const loanId = createdNodeId(tx, "Loan");
   if (!loanId) throw new Error(`LoanSet ${tx.hash}: no Loan node in metadata`);
   return { tx, loanId };
@@ -170,9 +176,9 @@ export function loanPayFlags(mode: LoanPayMode = "regular"): number {
 }
 
 /**
- * LoanPay from a multisig SPV borrower (v2 signers, any 3 of 4). Holds the SPV's per-account lock across
- * autofill -> multisign -> submit -> validation (`submitWithSigner`, XRPL-12), so it never races another SPV tx, and
- * re-signs on transient failures. Checks the signers against the on-ledger SignerList first (a tef would never land).
+ * LoanPay from a multisig SPV borrower (v2 signers, any 3 of 4) via `submitMultisigned`: holds the SPV's per-account
+ * lock across autofill -> multisign -> submit -> validation (XRPL-12), so it never races another SPV tx, re-signs on
+ * transient failures, and checks the signers against the on-ledger SignerList first (a tef would never land).
  * `overpayment: true` = `mode: "overpayment"` (extra principal paydown; needs the loan's lsfLoanOverpayment).
  */
 export async function loanPayMultisig(p: {
@@ -186,30 +192,15 @@ export async function loanPayMultisig(p: {
   checkQuorum?: boolean;
 }): Promise<TxResult> {
   if (!p.signers.length) throw new Error("LoanPay: multisig needs at least one signer");
-  if (p.checkQuorum !== false) await assertSignerQuorum(p.borrower, p.signers, "LoanPay");
   const flags = loanPayFlags(p.overpayment ? "overpayment" : p.mode);
   const tx: LoanPay = {
     TransactionType: "LoanPay",
     Account: p.borrower,
     LoanID: p.loanId,
     Amount: rlusdAmount(p.issuer, p.amount),
-    SigningPubKey: "",
     ...(flags ? { Flags: flags } : {}),
   };
-  return submitWithSigner(p.borrower, tx, (prepared) => multisign(p.signers.map((w) => w.sign(prepared, true).tx_blob)), {
-    signersCount: p.signers.length,
-  });
-}
-
-/** Same local quorum check as spv.ts submitMultisigned: throw tefBAD_QUORUM / tefBAD_SIGNATURE instead of submitting. */
-async function assertSignerQuorum(account: string, signers: Wallet[], txType: string): Promise<void> {
-  const info = await getSpvInfo(account);
-  if (info.signerQuorum == null) throw new XrplTxError(txType, "tefNOT_MULTI_SIGNING");
-  const q = checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signers.map((w) => w.classicAddress));
-  if (q.ok) return;
-  const code = q.unknown.length || q.duplicates.length ? "tefBAD_SIGNATURE" : "tefBAD_QUORUM";
-  const why = q.unknown.length ? `not on signer list: ${q.unknown.join(", ")}` : q.duplicates.length ? `duplicate: ${q.duplicates.join(", ")}` : `weight ${q.weight} < quorum ${q.quorum}`;
-  throw new XrplTxError(txType, code, undefined, { detail: `local check, nothing submitted: ${why}` });
+  return submitMultisigned(tx, p.signers, { checkQuorum: p.checkQuorum !== false });
 }
 
 // ---------------------------------------------------------------- repayment planning (pure)
