@@ -95,7 +95,9 @@ export interface ReleaseServicePort {
   conditionsForClose(project: Project): Promise<string[]>;
   /** Caller has already decided evaluateRelease(...).outcome === "pass".
    *  preflightFinish (throws DomainError UNSAFE_RELEASE, nothing submitted) -> "release" attestation -> finishEscrow.
-   *  Returns [attestation tx, finish tx]. */
+   *  Returns [attestation tx, finish tx]. If an ambiguous submit consumed the escrow, the second result uses
+   *  `result: "reconciled_escrow_consumed"` with the submitted hash; this is an inference from ledger state,
+   *  not a validated engine result. */
   release(p: { project: Project; milestone: Milestone }): Promise<TxResult[]>;
   /** Route 23: platform-signed finish with RANDOM bytes. Never reads the preimage store. */
   tryStealDemo(p: { project: Project; milestone: Milestone }): Promise<TxResult>;
