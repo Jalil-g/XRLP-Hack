@@ -13,7 +13,7 @@ import { rippleTimeToISOTime } from "xrpl";
 import { VERIFICATION_FEE_RLUSD } from "./compliance.ts";
 import { conditionFromPreimage, normalizeCondition } from "./condition.ts";
 import type { CredentialStatus, CredentialType } from "./credentials.ts";
-import { cancelReadiness, FINISH_LLS_MARGIN, wrongFinishBlockers } from "./escrow.ts";
+import { cancelReadiness, FINISH_LLS_MARGIN, WRONG_FINISH_MIN_CANCEL_S, wrongFinishBlockers } from "./escrow.ts";
 import { defaultCoverDeposit, expectedInterest, fromMicro, toMicro } from "./lending-math.ts";
 import { LoanPayAmountError, planLoanPayment, type LoanEntry, type LoanPayPlan } from "./loan.ts";
 import {
@@ -764,7 +764,11 @@ export function evaluateStage(snap: StageSnapshot, now: StageNow, opts: StageOpt
           add("A.m2.wrong_finish", "NO-GO", `A m2: the random-fulfillment EscrowFinish would be refused before submitting (${b0[0]!.reason}: ${b0[0]!.message}), so no tecCRYPTOCONDITION_ERROR`, ["D5"], {
             fix: preflightFix(b0[0]!.reason, "A"),
           });
-        } else if (bw.length) add("A.m2.wrong_finish", "WARN", `A m2: the random-fulfillment try would be refused by the end of the window (${bw[0]!.message})`, ["D5"], { fix: stage("A") });
+        } else if (bw.length) {
+          const ca = n2?.CancelAfter;
+          const when = ca !== undefined ? `A m2 expires in ${fmtDuration(ca - t)}: run the random-fulfillment try before ${isoAt(ca - WRONG_FINISH_MIN_CANCEL_S)}` : `A m2: ${bw[0]!.message}`;
+          add("A.m2.wrong_finish", "WARN", `${when} (later it is refused before submitting, no tecCRYPTOCONDITION_ERROR)`, ["D5"], { fix: stage("A") });
+        }
         else add("A.m2.wrong_finish", "GO", "A m2: nothing blocks the platform's random-fulfillment EscrowFinish (expect tecCRYPTOCONDITION_ERROR)", ["D5"], { summary: "D5" });
       }
     }
