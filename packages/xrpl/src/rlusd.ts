@@ -72,11 +72,22 @@ export async function issueRlusd(issuer: Wallet, to: string, value: string): Pro
   });
 }
 
+/**
+ * Pure: RLUSD to mint so `balance` reaches `target`, rounded UP to 6 dp; undefined if already there.
+ * A ledger balance like "35999.99999987428" (after a VaultWithdraw) would otherwise give a float difference with
+ * more significant digits than an IOU amount allows ("Decimal precision out of range" at signing).
+ */
+export function topUpAmount(balance: string, target: number): string | undefined {
+  const missing = target - Number(balance);
+  if (!(missing > 0)) return undefined;
+  const micro = Math.ceil(Number((missing * 1e6).toPrecision(15)));
+  return (micro / 1e6).toFixed(6).replace(/\.?0+$/, "");
+}
+
 /** Top a holder up to at least `target` RLUSD. Returns undefined if already there. */
 export async function topUpRlusd(issuer: Wallet, to: string, target: number): Promise<TxResult | undefined> {
-  const bal = Number(await rlusdBalance(to, issuer.classicAddress));
-  if (bal >= target) return undefined;
-  return issueRlusd(issuer, to, String(target - bal));
+  const amount = topUpAmount(await rlusdBalance(to, issuer.classicAddress), target);
+  return amount === undefined ? undefined : issueRlusd(issuer, to, amount);
 }
 
 /** Plain RLUSD payment between two holders. */

@@ -1,0 +1,194 @@
+{
+ "capturedAt": "2026-10-25T01:24:02.551Z",
+ "network": "devnet",
+ "description": "Batch https://devnet.xrpl.org/transactions/AF14693582FDB295889241F74A4688EEA2BC8AFF85A5EAB061B756181299C989 (ledger 6392730) + ranged lookups of its 3 inner txs",
+ "outer": {
+  "close_time_iso": "2026-10-25T01:23:00Z",
+  "ctid": "C0618B9A00000002",
+  "hash": "AF14693582FDB295889241F74A4688EEA2BC8AFF85A5EAB061B756181299C989",
+  "ledger_hash": "F4A1E13A83A3F4FA792ABFC9B59EE251303EFA1661DCBB8355479C5E69B6C6E2",
+  "ledger_index": 6392730,
+  "meta": {
+   "AffectedNodes": [
+    {
+     "ModifiedNode": {
+      "FinalFields": {
+       "Account": "rwjDsiGgTTrpNUud1tn8HNDwjQiZb1JiYH",
+       "Balance": "99999989",
+       "Flags": 1048576,
+       "OwnerCount": 3,
+       "Sequence": 6392685
+      },
+      "LedgerEntryType": "AccountRoot",
+      "LedgerIndex": "BC2992034FA0AE01B7E140A05A3EC400522F0DD1D73D25A0B6837C1C396BC0F5",
+      "PreviousFields": {
+       "Balance": "99999997",
+       "Sequence": 6392684
+      },
+      "PreviousTxnID": "2E8AFFD64A405780C8C73F8F21111CF096C0BA6BE1A9C542F6DD786B5092ED69",
+      "PreviousTxnLgrSeq": 6392726
+     }
+    }
+   ],
+   "TransactionIndex": 0,
+   "TransactionResult": "tesSUCCESS"
+  },
+  "tx_json": {
+   "Account": "rwjDsiGgTTrpNUud1tn8HNDwjQiZb1JiYH",
+   "Fee": "8",
+   "Flags": 65536,
+   "LastLedgerSequence": 6392748,
+   "RawTransactions": [
+    {
+     "RawTransaction": {
+      "Account": "rwjDsiGgTTrpNUud1tn8HNDwjQiZb1JiYH",
+      "Amount": {
+       "currency": "524C555344000000000000000000000000000000",
+       "issuer": "rLnisxZ6B2G27zVhrtiKcRXYs2V1wFKyST",
+       "value": "1000"
+      },
+      "CancelAfter": 846207150,
+      "Condition": "A02580201D677FBB547DE47A4AFF0ABA51E194296F581C7F5CFB4DDF90C5E19DB3DCA8B7810120",
+      "Destination": "rMsDN8S2s1iJmMR3L9hTa7eA2TSuSWp1Ao",
+      "Fee": "0",
+      "Flags": 1073741824,
+      "Sequence": 6392685,
+      "SigningPubKey": "",
+      "TransactionType": "EscrowCreate"
+     }
+    },
+    {
+     "RawTransaction": {
+      "Account": "rwjDsiGgTTrpNUud1tn8HNDwjQiZb1JiYH",
+      "Amount": {
+       "currency": "524C555344000000000000000000000000000000",
+       "issuer": "rLnisxZ6B2G27zVhrtiKcRXYs2V1wFKyST",
+       "value": "1200"
+      },
+      "CancelAfter": 846207150,
+      "Condition": "A0258020F9B6EF60F70F87F698CE26DCC9825F34903ABBE7A5AE54B2B80946D137E48AF2810120",
+      "Destination": "rMsDN8S2s1iJmMR3L9hTa7eA2TSuSWp1Ao",
+      "Fee": "0",
+      "Flags": 1073741824,
+      "Sequence": 6392686,
+      "SigningPubKey": "",
+      "TransactionType": "EscrowCreate"
+     }
+    },
+    {
+     "RawTransaction": {
+      "Account": "rwjDsiGgTTrpNUud1tn8HNDwjQiZb1JiYH",
+      "Amount": {
+       "currency": "524C555344000000000000000000000000000000",
+       "issuer": "rLnisxZ6B2G27zVhrtiKcRXYs2V1wFKyST",
+       "value": "800"
+      },
+      "CancelAfter": 846207150,
+      "Condition": "A02580202B7EB232BF7A5D5193432F3F28FEA3DD8E6FF8233E52E5D8BE6819D1C50CADB1810120",
+      "Destination": "rMsDN8S2s1iJmMR3L9hTa7eA2TSuSWp1Ao",
+      "Fee": "0",
+      "Flags": 1073741824,
+      "Sequence": 6392687,
+      "SigningPubKey": "",
+      "TransactionType": "EscrowCreate"
+     }
+    }
+   ],
+   "Sequence": 6392684,
+   "Signers": [
+    {
+     "Signer": {
+      "Account": "rh4dmnW5xmVPgiApYVfqboU1ArziWUjUiN",
+      "SigningPubKey": "EDD96D6A147CC2C6169B1880C7B0A4DEFA5E11A8EE78A292D5CE9AD0B2107B25F9",
+      "TxnSignature": "91C1CDBD64E99FA437ACB1F4ABF3BA7383A16580D3420F9EB00C1F01F1AE675FFA04CDC77A0B1AD5BBAF21813B7623EA6D2C283DBC6956EF41B692F7B9941807"
+     }
+    },
+    {
+     "Signer": {
+      "Account": "r9HGdCqaTR88X1kQGFxVq5BELPa2JNqUdo",
+      "SigningPubKey": "ED2E8DB72B9A1F00B4CB3362B5B2A856854C429FFCB9D4D04ECA9A7BA6652A82BE",
+      "TxnSignature": "9939ADD59B9A88D76CAE949F5443F9341A4E3C07B94CC8E7B2C7D0197C07037516A35B677EFE49C6A96B4EBF4CFD6853E8B1B9E0807315BDF343CABBB318050D"
+     }
+    },
+    {
+     "Signer": {
+      "Account": "rMsDN8S2s1iJmMR3L9hTa7eA2TSuSWp1Ao",
+      "SigningPubKey": "EDBCA0BAE666918C421C4A3769CC038E8FDF0458679523FE377AE1EF4485C18AB6",
+      "TxnSignature": "4E1BC73D38457D00EE7EE95B07ECEB4D0A320E01CC124BE9613D01BCF17AEB68F9443545DB79F223E4FF2860D399ECFCE92285330696E16649FF4D9555818A04"
+     }
+    }
+   ],
+   "SigningPubKey": "",
+   "TransactionType": "Batch",
+   "ctid": "C0618B9A00000002",
+   "date": 846206580,
+   "ledger_index": 6392730
+  },
+  "validated": true
+ },
+ "inners": [
+  {
+   "hash": "217A70D929B7FAF805F7FF744BD232345BE095D8EEAA681C418A447C4B087F95",
+   "lookup": {
+    "api_version": 2,
+    "error": "txnNotFound",
+    "error_code": 29,
+    "error_message": "Transaction not found.",
+    "id": 2,
+    "request": {
+     "api_version": 2,
+     "command": "tx",
+     "id": 2,
+     "max_ledger": 6392730,
+     "min_ledger": 6392730,
+     "transaction": "217A70D929B7FAF805F7FF744BD232345BE095D8EEAA681C418A447C4B087F95"
+    },
+    "searched_all": true,
+    "status": "error",
+    "type": "response"
+   }
+  },
+  {
+   "hash": "A821D8B765F49F2705960DCF708E6746C0331B6440BA1027C84CACE9659B8722",
+   "lookup": {
+    "api_version": 2,
+    "error": "txnNotFound",
+    "error_code": 29,
+    "error_message": "Transaction not found.",
+    "id": 3,
+    "request": {
+     "api_version": 2,
+     "command": "tx",
+     "id": 3,
+     "max_ledger": 6392730,
+     "min_ledger": 6392730,
+     "transaction": "A821D8B765F49F2705960DCF708E6746C0331B6440BA1027C84CACE9659B8722"
+    },
+    "searched_all": true,
+    "status": "error",
+    "type": "response"
+   }
+  },
+  {
+   "hash": "FBB48E797A7AE333D288315D017896E3AC972D3A85D187F5C5B6F9E98D216AE9",
+   "lookup": {
+    "api_version": 2,
+    "error": "txnNotFound",
+    "error_code": 29,
+    "error_message": "Transaction not found.",
+    "id": 4,
+    "request": {
+     "api_version": 2,
+     "command": "tx",
+     "id": 4,
+     "max_ledger": 6392730,
+     "min_ledger": 6392730,
+     "transaction": "FBB48E797A7AE333D288315D017896E3AC972D3A85D187F5C5B6F9E98D216AE9"
+    },
+    "searched_all": true,
+    "status": "error",
+    "type": "response"
+   }
+  }
+ ]
+}
