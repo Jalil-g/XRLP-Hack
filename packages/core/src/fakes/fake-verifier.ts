@@ -141,7 +141,8 @@ export class FakeVerifier implements VerifierPort {
       ),
     );
 
-    // gps_within_site (EXIF: catches lazy fraud only)
+    // gps_within_site. EXIF GPS is spoofable, so this only catches lazy fraud; the shown reason states what was read, and
+    // packages/verifier strips the same caveat from its displayed reasons.
     const noGps = photos.filter((p) => !p.meta.gps);
     const far = photos.filter((p) => p.meta.gps && haversineM(p.meta.gps, project.siteGeo) > project.siteGeo.radiusM);
     checks.push(
@@ -152,7 +153,7 @@ export class FakeVerifier implements VerifierPort {
           ? `${far.map((p) => `${p.filename} ${Math.round(haversineM(p.meta.gps!, project.siteGeo))}m from site`).join("; ")}`
           : noGps.length
             ? `${noGps.length} photos without GPS`
-            : `All photos within ${project.siteGeo.radiusM}m of the site (EXIF; catches lazy fraud)`,
+            : `All ${photos.length} photos within ${project.siteGeo.radiusM} m of the site (GPS from the photo files)`,
         (far.length ? far : noGps).map((p) => p.id),
       ),
     );

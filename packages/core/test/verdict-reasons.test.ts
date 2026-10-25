@@ -65,6 +65,7 @@ describe("audit vs evidence (fake verifier)", () => {
     assert.match(row("audit_matches_evidence").reason, /Inspector marked 1 of 1 item not done/);
     assert.doesNotMatch(row("audit_matches_evidence").reason, /agrees/);
     assert.equal(release, undefined, "nothing released");
+    assert.equal(row("gps_within_site").reason, "All 2 photos within 150 m of the site (GPS from the photo files)");
   });
 });
 
