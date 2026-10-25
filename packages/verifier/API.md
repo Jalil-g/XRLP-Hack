@@ -169,6 +169,21 @@ passes `escrowCreatedAt = now`, scenario A will fail `photo_fresh`. Either pass 
 
 ## Inspector assignment (VER-13)
 
+## Project verification (VER-08)
+
+`verifyProject({ project, builder, sov, documents, history?, now?, mode?, registry? })`
+returns shared `ProjectVerification` with local `inspectorPreVisitRequired` and `registryIsMock`
+flags. Identity checks licence/insurance/entity consistency; feasibility checks exact micro-RLUSD
+SoV sums, unique positive lines, mocked regional cost proportions, permit/plan records, plausible
+coordinates and timeline; capability uses trusted completion, open-load and milestone history.
+Missing history is not invented: it requires review and conservative high risk. Mock registries,
+cost proportions and document records do not establish real-world licensing, permit authenticity,
+sanctions status, site existence or construction quality. Live mode adds bounded Claude judgement
+with no retries; unavailable/refused/low-confidence review requires a human. Hard contradictions
+are never overridden by model approval. `fixtures/project-manifest.json` defines three mock cases.
+
+## Inspector assignment (VER-13)
+
 `await assignInspector({ project, panel, count: 1 | 2, availability? })` returns the
 shared `InspectorAssignment` and satisfies `VerifierPort.assignInspector`. This is
 a deterministic ranking, not a model call; it works without any API key.
