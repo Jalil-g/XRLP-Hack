@@ -50,12 +50,12 @@ Blue means "you can act". Green / red / amber mean a verdict and always come wit
 
 - `Button`: primary (action blue fill), secondary (band fill, ink text), quiet (text only). 36px / 44px. One primary per screen.
 - `Tag`: Notion-style soft chip, 13px medium, tinted background + dark text, no border, no dot.
-- `ChecksPanel` (WEB-04): GitHub checks. Row = status icon · check name · reason · proof link. Outcome bar at the top.
+- `ChecksPanel` (`components/checks/`): GitHub checks. `OutcomeBanner` (Released / Failed / Needs review / Ready / Waiting / Expired) → `AuditRow` (inspector's signed audit, always first) → `CheckRow`s (failures first; flagged photos inline) → `VerdictRow` (decision, confidence, attestation). Review every state at `/dev/checks`.
 - `TxLink`: mono short hash + ↗ to devnet explorer; in mock mode plain text with "mock" title, never a link.
 
 ## Motion
 
-150–200ms ease-out on hover/press and on state changes. One authored moment: check rows resolving after "Run checks".
+150–200ms ease-out on hover/press and on state changes. One authored moment: after "Run checks" every row shows running, then rows resolve top to bottom 110ms apart (skipped under `prefers-reduced-motion`). The reveal starts only when real results arrive; it never stands in for progress.
 No page-load choreography, no pulsing dots.
 
 ## Don't
