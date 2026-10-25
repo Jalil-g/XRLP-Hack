@@ -50,6 +50,9 @@ export function devnetConfigFromEnv(env: Env): { walletsFile: string; identities
   return { walletsFile, identities: loadDevnetIdentities(walletsFile) };
 }
 
+/** First-loss cover on devnet, bps of principal (see createCore). */
+export const DEVNET_COVER_BPS = 1100;
+
 /** DEMO_CANCEL_AFTER_S="1500,1800,420": CancelAfter = close + N s for milestone i (short devnet runs). Unset -> default. */
 export function cancelAfterFromEnv(env: Env): CoreServiceOptions["cancelAfterFor"] {
   const raw = env.DEMO_CANCEL_AFTER_S?.trim();
@@ -114,6 +117,9 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
     aiAgentAddress: ids?.aiAgent ?? DEMO_ADDRESSES.aiAgent,
     releaseServiceAddress: ids?.releaseService ?? DEMO_ADDRESSES.releaseService,
     ...(cancelAfterFor ? { cancelAfterFor } : {}),
+    // The ledger's cover minimum is CoverRateMinimum (10%) of principal + interest, not of principal; 11% of principal is
+    // the headroom xrpl's defaultCoverDeposit uses (covers interest up to 10% of principal). Proper fix: service.ts cover on owed.
+    ...(devnet ? { coverBps: DEVNET_COVER_BPS } : {}),
     ...opts,
     store,
     ledger,

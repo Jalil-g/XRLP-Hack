@@ -15,7 +15,7 @@ import { CoreVerifierAdapter, evidencePath } from "../src/adapters/verifier.ts";
 import { FakeClock } from "../src/clock.ts";
 import { DEMO_ADDRESSES } from "../src/demo/scenario.ts";
 import { DomainError, ledgerErrorCode, toApiError } from "../src/errors.ts";
-import { cancelAfterFromEnv, createCore, devnetConfigFromEnv, type Core } from "../src/factory.ts";
+import { cancelAfterFromEnv, createCore, devnetConfigFromEnv, DEVNET_COVER_BPS, type Core } from "../src/factory.ts";
 import { FakeLedger } from "../src/fakes/fake-ledger.ts";
 import { FakeVerifier } from "../src/fakes/fake-verifier.ts";
 import { FileStore } from "../src/file-store.ts";
@@ -87,6 +87,9 @@ describe("factory: LEDGER_MODE / VERIFIER_MODE selection", () => {
     assert.equal(core.service.platformAddress, f.wallets.platform!.address);
     assert.equal(core.service.aiAgentAddress, f.wallets.aiAgent!.address);
     assert.equal(core.service.releaseServiceAddress, f.wallets.releaseService!.address);
+    const coverBps = (s: unknown) => (s as { opts: { coverBps?: number } }).opts.coverBps;
+    assert.equal(coverBps(core.service), DEVNET_COVER_BPS, "cover >= 10% of principal + interest on the real ledger");
+    assert.equal(coverBps(createCore({ inMemory: true, env: {} }).service), undefined, "fake mode keeps the 10% default");
   });
   it("devnet env validation: missing WALLETS_FILE, mainnet endpoint, non-devnet network, unknown mode", () => {
     assert.throws(() => devnetConfigFromEnv(devnetEnv({ WALLETS_FILE: join(dir, "nope.json") })), /WALLETS_FILE .*nope\.json not found\. Run: .*bootstrap/);
