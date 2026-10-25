@@ -39,8 +39,8 @@ export function AuditRow({
   return (
     <li className={cn(ROW_GRID, state === "fail" && "bg-fail-bg/50")}>
       <StatusIcon state={state} className="mt-0.5" />
-      <span className="text-small font-medium text-ink">Inspector audit signed</span>
-      <span className={cn("text-small", state === "fail" ? "font-medium text-fail" : "text-ink-2")}>
+      <span className="text-body font-medium text-ink">Inspector audit signed</span>
+      <span className={cn("text-body", state === "fail" ? "font-medium text-fail" : "text-ink-2")}>
         {detail}
         {audit && state !== "fail" && state !== "running" && (
           <span className="block text-caption text-ink-2">
