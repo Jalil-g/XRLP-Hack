@@ -13,6 +13,7 @@ import {
   parseExifDate,
   photoEvidence,
   readPhotoMeta,
+  withBrowserExif,
   type AuditDraft,
 } from "../lib/audit.ts";
 import { mockControl } from "../lib/mock/backend.ts";
@@ -153,5 +154,36 @@ describe("draft → InspectorAudit", () => {
     const draft = fill(task, { photos: [{ file, evidence: await photoEvidence(file, "2026-10-25T10:00:00Z") }] });
     const audit = { ...(await buildAudit(task, ADDR.dana, draft, "2026-10-25T10:00:00Z")), evidenceBundleHash: "0".repeat(64) };
     await assert.rejects(api.submitAudit({ projectId: task.projectId, milestoneId: task.milestone.id, report: audit, photos: [file] }), /evidenceBundleHash/);
+  });
+});
+
+describe("withBrowserExif (core stores builder photos without EXIF)", () => {
+  const ev = (id: string, kind: "photo" | "invoice", meta: Record<string, unknown> = {}) =>
+    ({ id, kind, filename: `${id}.jpg`, mimeType: "image/jpeg", uri: `/api/files/${id}`, sha256: "00", meta, uploadedAt: "2026-10-25T10:00:00Z" }) as never;
+
+  it("reads EXIF from the bytes for photos missing it; stored values win; others untouched", async () => {
+    const loaded: string[] = [];
+    const load = async (e: { id: string }) => {
+      loaded.push(e.id);
+      if (e.id === "broken") throw new Error("404");
+      return SITE_PHOTO.buffer.slice(SITE_PHOTO.byteOffset, SITE_PHOTO.byteOffset + SITE_PHOTO.byteLength) as ArrayBuffer;
+    };
+    const storedGps = { lat: 1, lng: 2 };
+    const input = [
+      ev("bare", "photo"),
+      ev("hasGps", "photo", { gps: storedGps }),
+      ev("full", "photo", { takenAt: "2026-01-01T00:00:00.000Z", gps: storedGps }),
+      ev("inv", "invoice"),
+      ev("broken", "photo"),
+    ];
+    const { evidence, browserRead } = await withBrowserExif(input, load);
+    assert.deepEqual(loaded.sort(), ["bare", "broken", "hasGps"]);
+    assert.deepEqual([...browserRead].sort(), ["bare", "hasGps"]);
+    const [bare, hasGps, full, inv, broken] = evidence as unknown as { meta: Record<string, unknown> }[];
+    assert.deepEqual(bare!.meta, { takenAt: "2026-10-21T15:25:00.000Z", gps: { lat: 40.67941111111111, lng: -73.96185833333334 } });
+    assert.deepEqual(hasGps!.meta, { gps: storedGps, takenAt: "2026-10-21T15:25:00.000Z" });
+    assert.equal(full, input[2]);
+    assert.equal(inv, input[3]);
+    assert.equal(broken, input[4]);
   });
 });

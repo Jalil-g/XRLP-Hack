@@ -2,22 +2,23 @@
 
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { API_MODE } from "@/lib/api";
+import Link from "next/link";
+import { errorFeedback } from "@/lib/error-feedback";
 
 export default function ErrorPage({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => console.error(error), [error]);
-  const unreachable = /unreachable|fetch failed|ECONNREFUSED/i.test(error.message);
+  const feedback = errorFeedback(error);
   return (
     <div className="mx-auto max-w-[560px] py-20 text-center">
-      <h1 className="text-title">{unreachable ? "Can't reach the Drawproof API" : "Something went wrong"}</h1>
+      <h1 className="text-title">{feedback.title}</h1>
       <p className="mt-3 text-body text-ink-2">
-        {unreachable
-          ? `The app is in ${API_MODE} mode and core did not answer. Start it with pnpm --filter @xrlp/core serve, or set NEXT_PUBLIC_API_MODE=mock.`
-          : error.message}
+        {feedback.description}
       </p>
       <Button className="mt-8" onClick={reset}>
-        Try again
+        Refresh page
       </Button>
+      <Link href="/" className="ml-4 text-small text-link hover:underline">Back to projects</Link>
+      {error.digest && <p className="mt-4 text-caption text-ink-2">Support reference: {error.digest}</p>}
     </div>
   );
 }

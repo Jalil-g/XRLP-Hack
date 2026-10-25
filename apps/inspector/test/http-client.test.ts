@@ -77,11 +77,85 @@ describe("http client", () => {
     assert.equal(req.form?.get("signedTxBlob"), "12000322");
   });
 
+  it("history reads unique route 2 projects discovered through route 18 and rejects incomplete refreshes", async () => {
+    const backend = await import("../lib/mock/backend.ts");
+    backend.mockControl.setLatency(0);
+    const queue = await backend.inspectorQueue(fx.ADDR.dana);
+    const details = await Promise.all([...new Set(queue.map((t) => t.projectId))].map((id) => backend.getProject(id)));
+    const start = seen.length;
+    reply = (req) => ({ status: 200, body: req.url?.endsWith("/queue") ? queue : details.find((d) => req.url === `/api/projects/${d.project.id}`) });
+    assert.deepEqual(await api.getAuditHistory(fx.ADDR.dana), JSON.parse(JSON.stringify(details)));
+    assert.deepEqual(seen.slice(start).map((s) => s.url).sort(), [
+      `/api/inspectors/${fx.ADDR.dana}/queue`, "/api/projects/maple-st-duplex", "/api/projects/oak-ave-rowhouse", "/api/projects/elm-ct-fourplex",
+    ].sort());
+    reply = (req) => req.url?.endsWith("/queue")
+      ? { status: 200, body: queue }
+      : { status: 503, body: { error: { code: "ledger_error", message: "Unavailable" } } };
+    await assert.rejects(api.getAuditHistory(fx.ADDR.dana), (e) => e instanceof ApiError && e.status === 503);
+  });
+
   it("maps the error envelope to ApiError", async () => {
     reply = () => ({ status: 409, body: { error: { code: "invalid_state", message: "already audited", txHash: "AB" } } });
     await assert.rejects(api.getProject("maple-st-duplex"), (e) => e instanceof ApiError && e.code === "invalid_state" && e.status === 409 && e.txHash === "AB");
     reply = () => ({ status: 502, body: "<html>" });
     await assert.rejects(api.getProject("maple-st-duplex"), (e) => e instanceof ApiError && e.code === "network");
+  });
+
+  it("loads re-audit checks through route 2 and surfaces failures rather than hiding the failed-check context", async () => {
+    const backend = await import("../lib/mock/backend.ts");
+    backend.mockControl.setLatency(0);
+    const tasks = await backend.inspectorQueue(fx.ADDR.marcus);
+    const detail = await backend.getProject("rhinebeck-farmhouse");
+    const start = seen.length;
+    reply = (req) => ({ status: 200, body: req.url?.endsWith("/queue") ? tasks : detail });
+    const result = await api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1");
+    assert.equal(result?.checks?.outcome, "fail");
+    assert.deepEqual(seen.slice(start).map((r) => r.url), [`/api/inspectors/${fx.ADDR.marcus}/queue`, "/api/projects/rhinebeck-farmhouse"]);
+    // Core may call the resubmitted round `audit`, but its own prior report still calls for comparison.
+    tasks[0]!.needs = "audit";
+    assert.equal((await api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1"))?.checks?.outcome, "fail");
+    reply = (req) => req.url?.endsWith("/queue") ? { status: 200, body: tasks } : { status: 503, body: { error: { code: "ledger_error", message: "Unavailable" } } };
+    await assert.rejects(api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1"), (e) => e instanceof ApiError && e.status === 503);
+  });
+
+  it("files: core's upload uri when it is an /api/files path (core's evidence id is a different key), else the evidence id", async () => {
+    const core = process.env.CORE_URL!.replace(/\/$/, "");
+    const uuid = "3d48fdf5-56ee-409d-96f2-66062a247391";
+    assert.equal(api.fileUrl({ id: "ev_43dc9c70ecf0", uri: `/api/files/${uuid}` }), `${core}/api/files/${uuid}`);
+    assert.equal(api.fileUrl({ id: "ev 1", uri: "data:image/svg+xml,<svg/>" }), `${core}/api/files/ev%201`);
+    assert.equal(api.fileUrl({ id: "ev_1", uri: "/api/files/../../etc/passwd" }), `${core}/api/files/ev_1`);
+
+    const start = seen.length;
+    reply = () => ({ status: 200, body: { bytes: true } });
+    const bytes = await api.fileBytes({ id: "ev_1", uri: `/api/files/${uuid}` });
+    assert.equal(new TextDecoder().decode(bytes), '{"bytes":true}');
+    assert.equal(seen[start]?.url, `/api/files/${uuid}`);
+    reply = () => ({ status: 404, body: { error: { code: "not_found", message: "gone" } } });
+    await assert.rejects(api.fileBytes({ id: "ev_1", uri: `/api/files/${uuid}` }), (e) => e instanceof ApiError && e.code === "not_found");
+  });
+
+  it("INS-06 site visit (TODO(#53) proposed route): multipart to /api/projects/:id/site-visit; core's 404 maps to not_found", async () => {
+    const report = {
+      projectId: "elm-ct-fourplex",
+      inspector: fx.ADDR.dana,
+      answers: { siteExists: { answer: "yes" as const }, siteAccessible: { answer: "yes" as const }, plansMatchSite: { answer: "yes" as const } },
+      photos: [{ ...fx.EVIDENCE["maple-st-duplex:m1"]![0]!, filename: "site.jpg" }],
+      notes: "ok",
+      at: "2026-10-25T09:00:00Z",
+    };
+    const start = seen.length;
+    reply = () => ({ status: 200, body: { visit: { ...report, txHash: "AB".repeat(32) } } });
+    const res = await api.submitSiteVisit({ projectId: "elm-ct-fourplex", report, photos: [new Blob(["jpg"])], signedTxBlob: "1200" });
+    assert.equal(res.visit.txHash, "AB".repeat(32));
+    const req = seen[start]!;
+    assert.equal(req.method, "POST");
+    assert.equal(req.url, "/api/projects/elm-ct-fourplex/site-visit");
+    assert.deepEqual(JSON.parse(String(req.form?.get("report"))), report);
+    assert.equal((req.form?.get("photos") as File).name, "site.jpg");
+    assert.equal(req.form?.get("signedTxBlob"), "1200");
+    assert.equal(api.siteVisitAttestationTarget(), null);
+    reply = () => ({ status: 404, body: { error: { code: "not_found", message: "Route not found" } } });
+    await assert.rejects(api.submitSiteVisit({ projectId: "elm-ct-fourplex", report, photos: [] }), (e) => e instanceof ApiError && e.code === "not_found");
   });
 
   it("warns (does not throw) when core drifts from the contract", async () => {

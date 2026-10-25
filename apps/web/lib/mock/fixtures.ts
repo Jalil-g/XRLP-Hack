@@ -1,6 +1,7 @@
 // Mock world for NEXT_PUBLIC_API_MODE=mock: the docs/04-demo-script.md pre-stage as canned data. DATA ONLY.
-// The mock never decides anything: verdicts, verifications, inspector assignments and the share price booked at LoanSet are
-// canned here (SCRIPT) and played back by ./server.ts. Real outcomes come from core (verifier + ledger) in http mode.
+// The mock never decides anything: verdicts, verifications and inspector assignments are canned here (SCRIPT) and played
+// back by ./server.ts. Vault snapshots follow devnet (cash basis, decisions.md 10-24): AssetsTotal stays at principal when the
+// loan closes and each repayment's interest raises the share price. Real outcomes come from core (verifier + ledger) in http mode.
 //   A maple-st  the demo: verified, funded, closed, 3 escrows; M1 evidence + audit (passes), M2 reused photo + audit (fails)
 //   B birch-rd  one escrow already past CancelAfter (keeper tick → cancel → LoanPay)
 //   C oak-ave   repaid, vault in Redemption (withdrawable); source of the photo M2 reuses
@@ -8,6 +9,7 @@
 //   E elm-st    open for funding
 import { explorerTxUrl } from "@xrlp/shared";
 import { evidenceArtUri } from "../evidence-art";
+import { OAK_AVE_ORIGINAL, fixtureUrl } from "../fixture-files";
 import type {
   Attestation,
   Builder,
@@ -167,8 +169,9 @@ const event = (e: Ev): ChainEvent => {
   return { ...e, txHash, explorerUrl: explorerTxUrl(txHash) };
 };
 
+/** `scene` is either an evidence-art scene name or a path under the verifier's fixture evidence (contains "/"). */
 function photo(id: string, scene: string, variant: number, filename: string, at: string, meta: Evidence["meta"]): Evidence {
-  return { id, kind: "photo", filename, mimeType: "image/jpeg", uri: evidenceArtUri(scene, variant), sha256: fakeHash(`file:${id}`).toLowerCase(), meta, uploadedAt: at };
+  return { id, kind: "photo", filename, mimeType: "image/jpeg", uri: scene.includes("/") ? fixtureUrl(scene) : evidenceArtUri(scene, variant), sha256: fakeHash(`file:${id}`).toLowerCase(), meta, uploadedAt: at };
 }
 function invoice(id: string, filename: string, total: Rlusd, at: string): Evidence {
   return { id, kind: "invoice", filename, mimeType: "application/pdf", uri: evidenceArtUri("invoice", 1), sha256: fakeHash(`file:${id}`).toLowerCase(), meta: { invoiceTotal: total }, uploadedAt: at };
@@ -261,12 +264,12 @@ function verification(riskTier: ProjectVerification["riskTier"], at: string, o: 
 /** Canned suite results for the demo milestones, keyed by milestone id. Played on run-checks when an audit exists. */
 function demoVerdicts(maple: Project, ev: Record<string, Evidence[]>): Record<string, (at: string) => ChecksStatus> {
   const [m1, m2, m3] = maple.milestones as [Milestone, Milestone, Milestone];
-  const reused = ev[m2.id]!.find((e) => e.filename === "IMG_7731.jpg")!;
+  const reused = ev[m2.id]!.find((e) => e.filename === "IMG_5121.jpg")!;
   return {
     [m1.id]: (at) =>
       suiteResult(m1, maple, "pass", 0.93, "All 10 required checks passed.", [
-        check("required_evidence_present", "pass", "All required items present: 4 photos, 2 invoices, footing inspection sign-off"),
-        check("gps_within_site", "pass", "4 of 4 photos within 18 m of 418 Maple St (geofence 60 m)"),
+        check("required_evidence_present", "pass", "All required items present: 3 photos, 2 invoices, footing inspection sign-off"),
+        check("gps_within_site", "pass", "3 of 3 photos within 18 m of 418 Maple St (geofence 60 m)"),
         check("photo_fresh", "pass", "Photos taken Oct 22, after this escrow was created on Oct 21"),
         check("no_duplicate_photo", "pass", "No match against any photo on the platform (closest distance 27/64)"),
         check("invoice_matches_budget", "pass", "Invoices total 35,120 RLUSD vs 36,000 on SoV lines 31-200 + 03-300 (−2.4%)"),
@@ -281,7 +284,7 @@ function demoVerdicts(maple: Project, ev: Record<string, Evidence[]>): Record<st
         check("required_evidence_present", "pass", "All required items present: 4 photos, 1 invoice"),
         check("gps_within_site", "pass", "4 of 4 photos within 22 m of 418 Maple St (geofence 60 m)"),
         check("photo_fresh", "pass", "EXIF dates Oct 23, after this escrow was created"),
-        check("no_duplicate_photo", "fail", "IMG_7731.jpg matches Oak Ave project photo, distance 3/64, taken 41 days before this escrow existed", [reused.id]),
+        check("no_duplicate_photo", "fail", "IMG_5121.jpg matches Oak Ave project photo, distance 3/64, taken 41 days before this escrow existed", [reused.id]),
         check("invoice_matches_budget", "pass", "Lumber invoice 41,300 RLUSD vs 42,000 on SoV lines 06-100 + 06-160 (−1.7%)"),
         check("inspector_audit_present", "pass", "Signed by Dana Okafor, PE (assigned inspector), attested on-chain"),
         check("audit_checklist_complete", "pass", "Framing done · sheathing partial · no line marked not done"),
@@ -324,6 +327,8 @@ export interface MockDb {
   checks: Record<string, ChecksStatus>;
   vaults: Record<string, VaultSnapshot>;
   loans: Record<string, LoanSnapshot>;
+  /** Milestones whose evidence was replaced after a failed run (the resubmission plays back a pass). */
+  resubmitted: Record<string, boolean>;
   /** RLUSD balances by account (builders, SPVs) for the money map. */
   balances: Record<XrplAddress, Rlusd>;
   seq: number;
@@ -338,9 +343,6 @@ export interface MockScript {
   genericVerification: (at: string) => ProjectVerification;
   assignments: Record<string, InspectorAssignment>;
   genericAssignment: InspectorAssignment;
-  /** Vault share price booked at LoanSet (contracted interest net of the management fee). */
-  bookedSharePrice: Record<string, string>;
-  genericBookedSharePrice: string;
 }
 
 export function seed(): { db: MockDb; script: MockScript } {
@@ -390,11 +392,11 @@ export function seed(): { db: MockDb; script: MockScript } {
     (attestations[m.id] ??= []).push({ milestoneId: m.id, role: "inspector", kind: "audit", hash: fakeHash(`audit:${m.id}`).toLowerCase(), signer: insp.address, decision: "approve", notes, txHash: ce.txHash, at });
   };
   /** Records a played-back pass + release (history for B and C). */
-  const released = (p: Project, m: Milestone, builderAddr: XrplAddress, at: string, result: ChecksStatus) => {
+  const released = (p: Project, m: Milestone, at: string, result: ChecksStatus) => {
     checks[m.id] = result;
     const v = push({ projectId: p.id, milestoneId: m.id, kind: "verdict_attested", actor: AI_AGENT.address, at });
     (attestations[m.id] ??= []).push({ milestoneId: m.id, role: "ai_agent", kind: "verdict", hash: fakeHash(`verdict:${m.id}`).toLowerCase(), signer: AI_AGENT.address, decision: "approve", notes: result.verdict?.summary ?? "", txHash: v.txHash, at });
-    const fin = push({ projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: builderAddr, amount: m.amount, at });
+    const fin = push({ projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: RELEASE_SERVICE.address, amount: m.amount, at });
     (attestations[m.id] ??= []).push({ milestoneId: m.id, role: "release_service", kind: "release", hash: fakeHash(`release:${m.id}`).toLowerCase(), signer: RELEASE_SERVICE.address, decision: "approve", notes: "Suite green; escrow finished", txHash: fakeHash(`att-release:${m.id}`), at });
     m.status = "released";
     m.escrow!.finishTx = fin.txHash;
@@ -404,7 +406,7 @@ export function seed(): { db: MockDb; script: MockScript } {
   const mapleSov = [
     sov("31-200", "Site prep & excavation", "8000.00", "Sitework", [{ kind: "photo", description: "Excavated footprint, wide shot", minCount: 1 }], ["excavation to footing depth"]),
     sov("03-300", "Footings & foundation walls", "28000.00", "Concrete", [
-      { kind: "photo", description: "Poured foundation, wide shot + close-up", minCount: 3 },
+      { kind: "photo", description: "Poured foundation, wide shot + close-up", minCount: 2 },
       { kind: "invoice", description: "Concrete + rebar invoices", minCount: 1 },
       { kind: "document", description: "Footing inspection sign-off", minCount: 1 },
     ], ["cured concrete slab or foundation walls", "anchor bolts visible", "no framing yet"]),
@@ -451,10 +453,9 @@ export function seed(): { db: MockDb; script: MockScript } {
   // M1: genuine evidence + Dana's audit
   const m1At = iso("2026-10-22T15:10:00Z");
   evidence[mm1.id] = [
-    photo("maple-st-m1-p1", "foundation", 1, "IMG_2041.jpg", m1At, { takenAt: iso("2026-10-22T13:02:00Z"), gps: { lat: 41.93128, lng: -74.00031 }, perceptualHash: "c3a1f0e29b7d4410" }),
-    photo("maple-st-m1-p2", "foundation", 2, "IMG_2044.jpg", m1At, { takenAt: iso("2026-10-22T13:05:00Z"), gps: { lat: 41.93109, lng: -74.00052 }, perceptualHash: "d1b2e0f39a6c5521" }),
-    photo("maple-st-m1-p3", "foundation", 3, "IMG_2047.jpg", m1At, { takenAt: iso("2026-10-22T13:09:00Z"), gps: { lat: 41.93135, lng: -74.00044 }, perceptualHash: "a4c3d1e28b5f6632" }),
-    photo("maple-st-m1-p4", "foundation", 4, "IMG_2052.jpg", m1At, { takenAt: iso("2026-10-22T13:14:00Z"), gps: { lat: 41.93116, lng: -74.00027 }, perceptualHash: "b5d4c2f17a4e7743" }),
+    photo("maple-st-m1-p1", "maple-st/foundation/foundation-01-wide.jpg", 0, "IMG_2041.jpg", m1At, { takenAt: iso("2026-10-22T13:02:00Z"), gps: { lat: 41.93128, lng: -74.00031 }, perceptualHash: "c3a1f0e29b7d4410" }),
+    photo("maple-st-m1-p2", "maple-st/foundation/foundation-02-bolts.jpg", 0, "IMG_2044.jpg", m1At, { takenAt: iso("2026-10-22T13:05:00Z"), gps: { lat: 41.93109, lng: -74.00052 }, perceptualHash: "d1b2e0f39a6c5521" }),
+    photo("maple-st-m1-p3", "maple-st/foundation/foundation-03-walls.jpg", 0, "IMG_2047.jpg", m1At, { takenAt: iso("2026-10-22T13:09:00Z"), gps: { lat: 41.93135, lng: -74.00044 }, perceptualHash: "a4c3d1e28b5f6632" }),
     invoice("maple-st-m1-i1", "kingston-ready-mix-4410.pdf", "27340.00", m1At),
     invoice("maple-st-m1-i2", "hudson-excavation-0981.pdf", "7780.00", m1At),
     doc("maple-st-m1-d1", "footing-inspection-signoff.pdf", m1At),
@@ -464,22 +465,22 @@ export function seed(): { db: MockDb; script: MockScript } {
     { sovCode: "31-200", status: "done" },
     { sovCode: "03-300", status: "done", note: "Walls cured; anchor bolts at 6 ft o.c." },
   ], [
-    photo("maple-st-m1-a1", "foundation", 5, "okafor-site-01.jpg", iso("2026-10-22T17:40:00Z"), { takenAt: iso("2026-10-22T16:20:00Z"), gps: { lat: 41.93121, lng: -74.00046 } }),
-    photo("maple-st-m1-a2", "foundation", 6, "okafor-site-02.jpg", iso("2026-10-22T17:40:00Z"), { takenAt: iso("2026-10-22T16:26:00Z"), gps: { lat: 41.93113, lng: -74.00039 } }),
+    photo("maple-st-m1-a1", "maple-st/audits/photos/audit-foundation-01-rebar.jpg", 0, "okafor-site-01.jpg", iso("2026-10-22T17:40:00Z"), { takenAt: iso("2026-10-22T16:20:00Z"), gps: { lat: 41.93121, lng: -74.00046 } }),
+    photo("maple-st-m1-a2", "maple-st/audits/photos/audit-foundation-02-site.jpg", 0, "okafor-site-02.jpg", iso("2026-10-22T17:40:00Z"), { takenAt: iso("2026-10-22T16:26:00Z"), gps: { lat: 41.93113, lng: -74.00039 } }),
   ], "Foundation complete per plans. Footing inspection signed by the town on Oct 20.");
   // M2: reused Oak Ave photo (fresh EXIF, neutral filename) + Dana's audit (sheathing partial)
   const m2At = iso("2026-10-23T14:30:00Z");
   evidence[mm2.id] = [
-    photo("maple-st-m2-p1", "framing", 1, "IMG_2210.jpg", m2At, { takenAt: iso("2026-10-23T12:40:00Z"), gps: { lat: 41.93119, lng: -74.00035 }, perceptualHash: "e6f5a3b19c2d8854" }),
-    photo("maple-st-m2-p2", "framing", 2, "IMG_2213.jpg", m2At, { takenAt: iso("2026-10-23T12:44:00Z"), gps: { lat: 41.93131, lng: -74.0005 }, perceptualHash: "f7a6b4c28d3e9965" }),
-    photo("maple-st-m2-p3", "framing", 3, "IMG_2219.jpg", m2At, { takenAt: iso("2026-10-23T12:51:00Z"), gps: { lat: 41.93107, lng: -74.00029 }, perceptualHash: "a8b7c5d39e4f0076" }),
-    photo("maple-st-m2-p4", "framing", 4, "IMG_7731.jpg", m2At, { takenAt: iso("2026-10-23T12:55:00Z"), gps: { lat: 41.93124, lng: -74.00041 }, perceptualHash: "9b8c7d6e5f4a3b2c" }),
+    photo("maple-st-m2-p1", "maple-st/framing/framing-01-wide.jpg", 0, "IMG_2210.jpg", m2At, { takenAt: iso("2026-10-23T12:40:00Z"), gps: { lat: 41.93119, lng: -74.00035 }, perceptualHash: "e6f5a3b19c2d8854" }),
+    photo("maple-st-m2-p2", "maple-st/framing/framing-02-corner.jpg", 0, "IMG_2213.jpg", m2At, { takenAt: iso("2026-10-23T12:44:00Z"), gps: { lat: 41.93131, lng: -74.0005 }, perceptualHash: "f7a6b4c28d3e9965" }),
+    photo("maple-st-m2-p3", "maple-st/framing/framing-03-wall.jpg", 0, "IMG_2219.jpg", m2At, { takenAt: iso("2026-10-23T12:51:00Z"), gps: { lat: 41.93107, lng: -74.00029 }, perceptualHash: "a8b7c5d39e4f0076" }),
+    photo("maple-st-m2-p4", "maple-st/framing/IMG_5121.jpg", 0, "IMG_5121.jpg", m2At, { takenAt: iso("2026-10-23T12:55:00Z"), gps: { lat: 41.93124, lng: -74.00041 }, perceptualHash: "9b8c7d6e5f4a3b2c" }),
     invoice("maple-st-m2-i1", "catskill-lumber-7720.pdf", "41300.00", m2At),
   ];
   audit(maple, mm2, DANA, iso("2026-10-23T18:05:00Z"), [
     { sovCode: "06-100", status: "done" },
     { sovCode: "06-160", status: "partial", note: "Roof deck sheathed; north wall sheathing ~70%" },
-  ], [photo("maple-st-m2-a1", "framing", 5, "okafor-site-03.jpg", iso("2026-10-23T18:05:00Z"), { takenAt: iso("2026-10-23T17:10:00Z"), gps: { lat: 41.93126, lng: -74.00048 } })],
+  ], [photo("maple-st-m2-a1", "maple-st/audits/photos/audit-framing-01-frame.jpg", 0, "okafor-site-03.jpg", iso("2026-10-23T18:05:00Z"), { takenAt: iso("2026-10-23T17:10:00Z"), gps: { lat: 41.93126, lng: -74.00048 } })],
   "Framing complete; sheathing in progress on the north elevation.");
 
   // M3 (off-script): evidence + audit present; the suite comes back below its confidence minimum → operator decision
@@ -540,7 +541,7 @@ export function seed(): { db: MockDb; script: MockScript } {
     { sovCode: "02-410", status: "done" },
     { sovCode: "22-050", status: "done" },
   ], [], "Rough-in passed town inspection Sep 9.");
-  released(birch, bm1, CATSKILL.address, iso("2026-09-10T14:20:00Z"), genericPassFor(birch, bm1, iso("2026-09-10T14:19:00Z")));
+  released(birch, bm1, iso("2026-09-10T14:20:00Z"), genericPassFor(birch, bm1, iso("2026-09-10T14:19:00Z")));
   checks[bm2.id] = pending();
 
   // ======================================================== C · Oak Ave Townhouse (repaid, redemption open)
@@ -575,16 +576,16 @@ export function seed(): { db: MockDb; script: MockScript } {
   oak.milestones.forEach((m, i) => {
     const at = iso(oakDates[i]!);
     evidence[m.id] = [
-      photo(`${m.id}-p1`, ["foundation", "framing", "dry_in"][i]!, i === 1 ? 4 : 1, i === 1 ? "OAK_0412.jpg" : `OAK_0${300 + i * 50}.jpg`, at, {
+      photo(`${m.id}-p1`, i === 1 ? OAK_AVE_ORIGINAL : ["foundation", "framing", "dry_in"][i]!, 1, i === 1 ? "OAK_0412.jpg" : `OAK_0${300 + i * 50}.jpg`, at, {
         takenAt: i === 1 ? iso("2026-09-10T14:22:00Z") : at,
         gps: { lat: 41.50482, lng: -73.96957 },
         perceptualHash: i === 1 ? "9b8c7d6e5f4a3b2d" : undefined,
       }),
     ];
     audit(oak, m, MARCUS, at, (oak.sov ?? []).filter((l) => (m.sovCodes ?? []).includes(l.code)).map((l) => ({ sovCode: l.code, status: "done" as const })), [], "Complete per plans.");
-    released(oak, m, RIDGELINE.address, at, genericPassFor(oak, m, at));
+    released(oak, m, at, genericPassFor(oak, m, at));
   });
-  push({ projectId: oak.id, kind: "loan_payment", actor: oak.chain.spv, amount: "96300.00", at: iso("2026-10-06T15:00:00Z") });
+  push({ projectId: oak.id, kind: "loan_payment", actor: oak.chain.spv, amount: "96480.00", at: iso("2026-10-06T15:00:00Z") });
 
   // ======================================================== D · Cedar Ln ADU (draft: onboarding)
   const cedar: Project = {
@@ -654,8 +655,8 @@ export function seed(): { db: MockDb; script: MockScript } {
   // ======================================================== snapshots, verifications, assignments
   const vault = (v: VaultSnapshot) => v;
   const vaults: Record<string, VaultSnapshot> = {
-    [maple.id]: vault({ assetsTotal: "131340.00", assetsAvailable: "0.00", sharesOutstanding: "120000.000000", sharePrice: "1.094500", subscriptionDate: maple.terms.fundingDeadline, redemptionDate: iso("2027-11-30T00:00:00Z"), phase: "investment" }),
-    [birch.id]: vault({ assetsTotal: "63660.00", assetsAvailable: "0.00", sharesOutstanding: "60000.000000", sharePrice: "1.061000", subscriptionDate: birch.terms.fundingDeadline, redemptionDate: iso("2027-07-31T00:00:00Z"), phase: "investment" }),
+    [maple.id]: vault({ assetsTotal: "120000.00", assetsAvailable: "0.00", sharesOutstanding: "120000.000000", sharePrice: "1.000000", subscriptionDate: maple.terms.fundingDeadline, redemptionDate: iso("2027-11-30T00:00:00Z"), phase: "investment" }),
+    [birch.id]: vault({ assetsTotal: "60000.00", assetsAvailable: "0.00", sharesOutstanding: "60000.000000", sharePrice: "1.000000", subscriptionDate: birch.terms.fundingDeadline, redemptionDate: iso("2027-07-31T00:00:00Z"), phase: "investment" }),
     [oak.id]: vault({ assetsTotal: "96480.00", assetsAvailable: "96480.00", sharesOutstanding: "90000.000000", sharePrice: "1.072000", subscriptionDate: oak.terms.fundingDeadline, redemptionDate: iso("2026-10-15T00:00:00Z"), phase: "redemption" }),
     [elm.id]: vault({ assetsTotal: "38500.00", assetsAvailable: "38500.00", sharesOutstanding: "38500.000000", sharePrice: "1.000000", subscriptionDate: elm.terms.fundingDeadline, redemptionDate: iso("2028-01-31T00:00:00Z"), phase: "subscription" }),
   };
@@ -755,6 +756,7 @@ export function seed(): { db: MockDb; script: MockScript } {
     checks,
     vaults,
     loans,
+    resubmitted: {},
     balances: {
       [HVB.address]: "4120.00",
       [CATSKILL.address]: "26310.00",
@@ -812,8 +814,6 @@ export function seed(): { db: MockDb; script: MockScript } {
       }),
     assignments: { [cedar.id]: assign(MARCUS, 0.91, ["14 km from site", "Trades match: carpentry, roofing", "1 open audit", "Robot/sensor auditors would use the same interface"], [[DANA, 0.84], [PRIYA, 0.38]]) },
     genericAssignment: assign(DANA, 0.85, ["Closest verified inspector with matching trades"], [[MARCUS, 0.8], [PRIYA, 0.4]]),
-    bookedSharePrice: { [cedar.id]: "1.081200", [elm.id]: "1.096800" },
-    genericBookedSharePrice: "1.080000",
   };
 
   return { db, script };
