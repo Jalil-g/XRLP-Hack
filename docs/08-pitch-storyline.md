@@ -95,7 +95,10 @@ uploaded; **Project B** with an already-expired escrow. Nothing live waits on a 
 **Cut order:** D5 → D6 to one sentence → drop the 12–15% line → compress Mechanism. **Never cut D3 or D4.**
 **Pre-flight:** prestage A/B(/C), warm verifier cache, builder trust line verified, explorer tabs, backup video, 1280×720.
 
-## 5. Q&A ownership (answers in `docs/07-pitch.md`)
+## 5. Q&A ownership
+
+The five mandatory questions and stage-length answers are in `docs/judge-faq.md`. The broader rehearsed set is in
+`docs/pitch-qa.md`; the original 16 are in `docs/07-pitch.md`.
 
 | Q | Who answers |
 |---|---|
