@@ -163,8 +163,13 @@ export function projectSummary(db: DbState, p: Project): ProjectSummary {
   };
 }
 
+/** Newest first; events with the same timestamp keep reverse submission order (stable). */
 export const projectEvents = (db: DbState, projectId: string): ChainEvent[] =>
-  db.chainEvents.filter((e) => e.projectId === projectId).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  db.chainEvents
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => e.projectId === projectId)
+    .sort((a, b) => (a.e.at < b.e.at ? 1 : a.e.at > b.e.at ? -1 : b.i - a.i))
+    .map(({ e }) => e);
 
 export function projectDetail(db: DbState, p: Project, now: Date): ProjectDetail {
   const builder = db.builders.find((b) => b.id === p.builderId);
