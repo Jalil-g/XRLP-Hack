@@ -893,14 +893,14 @@ export class CoreService implements CoreApi {
       if (!isLocked(m.status)) throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} is ${m.status}; its escrow is not open`);
       if (!m.cancelAfter || this.now() < new Date(m.cancelAfter))
         throw new DomainError("TOO_SOON", `Escrow for ${mid} can be cancelled after ${m.cancelAfter}`, undefined, { txResult: "tecNO_PERMISSION" });
-      const tx = await this.cancelOrConfirmGone(m);
-      const evs = tx ? this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.platformAddress, amount: m.amount }) : [];
+      const tx = await this.cancelWithReceipt(m);
+      const evs = this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.platformAddress, amount: m.amount });
       events.push(...evs);
       await this.store.write((db) => {
         const p = this.projectIn(db, id);
         const m = getMilestoneOrThrow(p, mid);
         m.status = "expired"; // forced: ledger reality (cancel succeeded) wins over workflow state
-        if (m.escrow && tx) m.escrow.cancelTx = tx.hash;
+        if (m.escrow) m.escrow.cancelTx = tx.hash;
         if (canProjectTransition(p.status, "stalled")) {
           p.status = "stalled";
           this.meta(db, id).stalledAt = this.nowIso();
@@ -908,6 +908,15 @@ export class CoreService implements CoreApi {
         db.chainEvents.push(...evs);
       });
     }
+    // A legacy/imported expired status alone is not proof that funds returned to the SPV.
+    const hasCancelReceipt = await this.read((db) => {
+      const escrow = getMilestoneOrThrow(this.projectIn(db, id), mid).escrow;
+      return !!escrow?.cancelTx && db.chainEvents.some((event) =>
+        event.projectId === id && event.milestoneId === mid && event.kind === "escrow_cancelled" &&
+        event.txHash === escrow.cancelTx && (!event.result || event.result === "tesSUCCESS"));
+    });
+    if (!hasCancelReceipt)
+      throw new DomainError("NEEDS_HUMAN", `Reconciliation required for ${mid}: no persisted successful cancellation receipt; refund withheld`);
     // Refund the vault: multisig LoanPay from the SPV (separate commit; keeperTick retries if it fails).
     const tx = await this.onLedger("escrow refund LoanPay", () => this.ledger.repayLoan({ project: p, amount: m.amount, source: "escrow_refund" }));
     const evs = this.evs([tx], { projectId: id, milestoneId: mid, kind: "loan_payment", actor: p.chain.spv, amount: m.amount });
@@ -924,27 +933,23 @@ export class CoreService implements CoreApi {
     return { milestone, events };
   }
 
-  /**
-   * EscrowCancel, or null when the escrow is already gone from the ledger (cancelled out of band: anyone may cancel
-   * after CancelAfter, or our commit was lost after a successful cancel). A `verified` milestone whose escrow is gone
-   * may have been finished, so that case is left for a human instead of refunding.
-   */
-  private async cancelOrConfirmGone(m: Milestone): Promise<TxResult | null> {
+  /** An absent escrow cannot distinguish cancellation from finish, regardless of local workflow status. */
+  private async cancelWithReceipt(m: Milestone): Promise<TxResult> {
     const { owner, offerSequence } = m.escrow!;
+    let tx: TxResult;
     try {
-      return await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner, offerSequence }));
+      tx = await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner, offerSequence }));
     } catch (e) {
       if (!(e instanceof DomainError)) throw e;
-      // The devnet adapter maps this exact missing-escrow result to NOT_FOUND.
-      // Other not-found errors (account, destination, RPC, etc.) do not establish an absent escrow.
       const missingEscrow = e.code === "NOT_FOUND" && e.txResult === "tecNO_TARGET";
       if (e.code !== "LEDGER_ERROR" && !missingEscrow) throw e;
       const onLedger = await this.ledger.getEscrow(owner, offerSequence).catch(() => undefined);
-      if (onLedger !== null) throw e; // still there (or unknown): the cancel really failed
-      if (m.status === "verified")
-        throw new DomainError("LEDGER_ERROR", `Escrow for ${m.id} is gone from the ledger but the milestone is verified; check for a finish before refunding`, e);
-      return null;
+      if (onLedger !== null) throw e; // present or unknown: preserve the original failure
+      throw new DomainError("NEEDS_HUMAN", `Reconciliation required for ${m.id}: escrow is absent but cancellation is unproven; refund withheld`, e);
     }
+    if (tx.result !== "tesSUCCESS" || !tx.hash)
+      throw new DomainError("NEEDS_HUMAN", `Reconciliation required for ${m.id}: no successful cancellation receipt; refund withheld`);
+    return tx;
   }
 
   // ---------- route 14 ----------

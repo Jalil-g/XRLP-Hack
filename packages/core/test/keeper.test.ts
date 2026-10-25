@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { LedgerError } from "@xrlp/shared";
 import { toAdapterError } from "../../xrpl/src/adapter-map.ts";
 import { XrplTxError } from "../../xrpl/src/errors.ts";
-import { ledgerErrorCode } from "../src/errors.ts";
+import { DomainError, ledgerErrorCode } from "../src/errors.ts";
 import type { KeeperTickResult } from "../src/api-surface.ts";
 import { DAY_MS, FakeClock } from "../src/clock.ts";
 import { demoCancelAfter, mapleInput, registerParticipants, toFunded } from "../src/demo/scenario.ts";
@@ -62,28 +62,29 @@ describe("keeperTick (CORE-06)", () => {
     assert.deepEqual(t3, { events: [], issues: [] }, "nothing left to do");
   });
 
-  it("escrow already cancelled out of band: no cancel tx, still refunds the vault", async () => {
+  it("escrow already cancelled out of band: requires reconciliation without a receipt", async () => {
     const { ledger, calls, svc, project, m1 } = await m1Expired();
     const { owner, offerSequence } = m1.escrow!;
     await ledger.cancelEscrow({ owner, offerSequence }); // someone else cancelled (anyone may, after CancelAfter)
     const t = await svc.keeperTick();
-    assert.deepEqual(t.events.map((e) => e.kind), ["loan_payment"]);
-    assert.deepEqual(t.issues, []);
+    assert.deepEqual(t.events, []);
+    assert.deepEqual(t.issues.map((i) => i.code), ["NEEDS_HUMAN"]);
+    assert.equal(calls.repay, 0);
     assert.equal(calls.cancel, 2, "ours hit tecNO_TARGET, then the ledger read showed the escrow gone");
-    assert.equal(await status(svc, project.id, m1.id), "refunded");
+    assert.equal(await status(svc, project.id, m1.id), "escrowed");
   });
 
-  it("real tecNO_TARGET mapping reconciles an out-of-band cancel before refunding", async () => {
+  it("real tecNO_TARGET mapping requires reconciliation and preserves state", async () => {
     const { ledger, calls, svc, project, m1 } = await m1Expired();
     await ledger.cancelEscrow(m1.escrow!);
     const error = toAdapterError(new XrplTxError("EscrowCancel", "tecNO_TARGET"));
     assert.equal(ledgerErrorCode(error), "NOT_FOUND");
     ledger.cancelEscrow = async () => { throw error; };
-    const result = await svc.cancelExpired(project.id, m1.id);
-    assert.deepEqual(result.events.map((e) => e.kind), ["loan_payment"]);
-    assert.equal(result.milestone.status, "refunded");
-    assert.equal(result.milestone.escrow!.cancelTx, undefined, "do not invent a cancel receipt");
-    assert.equal(calls.repay, 1);
+    const before = await svc.getProject(project.id);
+    await assert.rejects(svc.cancelExpired(project.id, m1.id), (e: unknown) =>
+      e instanceof DomainError && e.code === "NEEDS_HUMAN" && /Reconciliation required/.test(e.message));
+    assert.deepEqual(await svc.getProject(project.id), before);
+    assert.equal(calls.repay, 0);
   });
 
   for (const situation of ["present", "unknown", "verified", "other-not-found"] as const) {
@@ -99,6 +100,45 @@ describe("keeperTick (CORE-06)", () => {
       await assert.rejects(svc.cancelExpired(project.id, m1.id));
       assert.equal(calls.repay, 0);
       assert.equal(await status(svc, project.id, m1.id), situation === "verified" ? "verified" : "escrowed");
+    });
+  }
+
+  it("a returned unsuccessful cancellation result is not a receipt", async () => {
+    const { ledger, calls, svc, project, m1 } = await m1Expired();
+    ledger.cancelEscrow = async () => ({ hash: "failed", result: "tecNO_TARGET", explorerUrl: "https://example.com/failed" });
+    const before = await svc.getProject(project.id);
+    await assert.rejects(svc.cancelExpired(project.id, m1.id), (e: unknown) => e instanceof DomainError && e.code === "NEEDS_HUMAN");
+    assert.deepEqual(await svc.getProject(project.id), before);
+    assert.equal(calls.repay, 0);
+  });
+
+  it("lost cancel response with absent escrow cannot authorize a refund", async () => {
+    const { ledger, calls, svc, project, m1 } = await m1Expired();
+    await ledger.cancelEscrow(m1.escrow!);
+    ledger.cancelEscrow = async () => { throw new LedgerError("ledger_error", "response lost"); };
+    const before = await svc.getProject(project.id);
+    await assert.rejects(svc.cancelExpired(project.id, m1.id), (e: unknown) => e instanceof DomainError && e.code === "NEEDS_HUMAN");
+    assert.deepEqual(await svc.getProject(project.id), before);
+    assert.equal(calls.repay, 0);
+  });
+
+  for (const receipt of ["missing", "hash-only", "failed-event"] as const) {
+    it(`legacy expired state with ${receipt} cannot trigger LoanPay`, async () => {
+      const { calls, svc, store, project, m1 } = await m1Expired();
+      await store.write((db) => {
+        const m = db.projects.find((p) => p.id === project.id)!.milestones[0]!;
+        m.status = "expired";
+        if (receipt !== "missing") m.escrow!.cancelTx = "unproven";
+        if (receipt === "failed-event") db.chainEvents.push({
+          projectId: project.id, milestoneId: m1.id, kind: "escrow_cancelled", txHash: "unproven",
+          result: "tecNO_TARGET", explorerUrl: "https://example.com/unproven", at: T0,
+        });
+      });
+      const before = await svc.getProject(project.id);
+      await assert.rejects(svc.cancelExpired(project.id, m1.id), (e: unknown) => e instanceof DomainError && e.code === "NEEDS_HUMAN");
+      assert.deepEqual(await svc.getProject(project.id), before);
+      assert.equal(calls.cancel, 0);
+      assert.equal(calls.repay, 0);
     });
   }
 

@@ -208,3 +208,16 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - Per-payee escrows (subcontractors + lien waivers): roadmap line only (VER-12 stretch).
 - Default handling for already-released money (collateral / lien story for the pitch).
 - AWS Lending slice: undecided (Jalil not sure). Only do the Bedrock swap (VER-14) if the booth confirms it qualifies and the demo is green at T+24h.
+
+
+### 2026-10-25: cancellation recovery requires a receipt
+
+Safety correction supersedes the absence-only recovery enabled by commit `2110d35`.
+A missing escrow after a failed/uncertain EscrowCancel cannot distinguish cancellation
+from finish, even when local milestone status is not verified. Core returns NEEDS_HUMAN
+(reconciliation required) without changing status or submitting refund LoanPay.
+Normal successful cancellation stores its hash and cancellation event before LoanPay;
+refund-only retries require that matching successful persisted receipt. Legacy expired
+state without it fails closed. No state is reset or fabricated: independently reconcile
+ledger history before repairing legacy/imported records. Ledger-history recovery is not
+implemented by this change.
