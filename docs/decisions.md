@@ -88,7 +88,10 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   `connection_lost` / `unknown_outcome`; every submit sets `fail_hard` (devnet showed rippled otherwise holds a refused
   provisional tx and applies it later, `spike:fail-hard`), and waits are bounded. (2) `finishEscrow` signs one blob per preflight and submits it pre-signed (never
   re-signed by the engine); `unsafe_release` from a finish means the fulfillment never left the process, a refusal after a
-  submit is `preflight_refused_after_submit`. (3) Mainnet guard = URL/label denylist + `server_info.network_id === 2` on
+  submit is `preflight_refused_after_submit`. Follow-up (PR #171 review): a `tec*` under `fail_hard` is discarded by
+  rippled, so the engine resubmits the same blob once without `fail_hard` (same hash: at most one apply) and tracks it as
+  maybe-applied from then on; `tefPAST_SEQ` re-signs at once for blobs the engine signed in this call, pre-signed blobs
+  are decided from account state (who used the Sequence), never from a cached `tx` lookup. (3) Mainnet guard = URL/label denylist + `server_info.network_id === 2` on
   connect (`XRPL_NETWORK_ID` for another custom net, never 0/1). (4) Adapter keys are bound to roles per input
   (`SIGNING_ROLES`); aiAgent / releaseService / issuer can't be SPV signers. (5) Before LoanSet the escrow destination must
   exist, be on the SPV's signer list and not be another role's key; the multisig path refuses an SPV whose master key is
