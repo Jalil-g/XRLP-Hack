@@ -84,7 +84,7 @@ test("store and evidence files are private; evidence IDs cannot escape their dir
   const store = new FileStore(dir);
   await store.reset();
   const blob = await saveEvidenceBlob(dir, {
-    projectId: "project-1", milestoneId: "foundation_1", filename: "../photo.jpg", bytes: Buffer.from("photo"),
+    projectId: "maple-st-duplex", milestoneId: "maple-st-duplex:m1", filename: "../photo.jpg", bytes: Buffer.from("photo"),
   });
   if (process.platform !== "win32") {
     assert.equal((await stat(store.path)).mode & 0o777, 0o600);

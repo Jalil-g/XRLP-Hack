@@ -77,7 +77,8 @@ by a killed process can be removed while all writers are stopped. This is for a
 single local filesystem, not distributed storage. It does not serialize ledger
 calls made outside the database transaction or deduplicate chain events.
 
-Evidence IDs must be alphanumeric with underscores/hyphens; filenames are
+Evidence IDs must be alphanumeric with underscores, hyphens, or colons (including
+the demo's `project:m1` milestone IDs); filenames are
 sanitized. `FileStore` holds application state, not release preimages: the
 separate `FilePreimageVault` retains its existing encryption and key handling.
 

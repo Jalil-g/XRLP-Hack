@@ -101,7 +101,7 @@ export async function saveEvidenceBlob(
   input: { projectId: string; milestoneId: string; filename: string; bytes: Uint8Array },
 ): Promise<{ uri: string; sha256: string; absPath: string }> {
   for (const id of [input.projectId, input.milestoneId]) {
-    if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Invalid evidence project or milestone ID");
+    if (!/^[A-Za-z0-9_:-]+$/.test(id)) throw new Error("Invalid evidence project or milestone ID");
   }
   const sha256 = sha256Hex(Buffer.from(input.bytes));
   const safe = input.filename.replace(/[^A-Za-z0-9._-]/g, "_");
