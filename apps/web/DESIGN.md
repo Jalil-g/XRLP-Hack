@@ -68,7 +68,7 @@ Capital in focus. Proof within reach. This implemented system replaces the forme
 
 ## Colors
 
-Warm workspace surrounds white evidence, financial tables, and forms. A near-black green capital summary anchors overview pages. Chartreuse selects the active milestone and the investment action on dark surfaces; it never means passed. Green, amber, red, and blue remain semantic statuses, always paired with words. Dark metadata uses capital-secondary, never light-surface secondary ink.
+Warm workspace surrounds white evidence, financial tables, and forms. A near-black green capital summary anchors overview pages. Chartreuse marks the selected milestone's track, the leading segment of a capital bar, and the investment action on dark surfaces; it never means passed. Green, amber, red, and blue remain semantic statuses, always paired with words. Dark metadata uses capital-secondary, never light-surface secondary ink.
 
 ## Typography
 
@@ -76,7 +76,7 @@ One local system sans stack. Financial values use tabular numerals, not monospac
 
 ## Layout
 
-64px shared header, 1200px content inside a 1264px wrapper with 32px gutters. Main content uses 32–48px between task regions. Marketplace is a capital overview followed by a precise project collection with explicit destinations. Portfolio separates vault share value, redemption-phase holdings, and locked holdings; no fabricated profit line. Project detail links capital summary → labeled milestone rail → checks/evidence plus a compact draw-context column. Builder workspaces foreground the current draw and its next action. Setup and verification narrow to focused form widths, while the demo separates its release/hold story from engineering controls.
+64px shared header, 1200px content inside a 1264px wrapper with 32px gutters. Main content uses 32–48px between task regions. Marketplace is a capital overview followed by a precise project collection with explicit destinations. Portfolio leads with vault share value and a capital bar splitting withdrawable from locked holdings; no fabricated profit line. Project detail links capital summary → labeled milestone rail → checks/evidence plus a compact draw-context column. Builder workspaces foreground the current draw and its next action. Setup and verification narrow to focused form widths, while the demo separates its release/hold story from engineering controls.
 
 Tables become structured lists on compact screens. Wide Schedule of Values is intentionally contained in a labeled scroll region. Projector mode increases base text to 18px without hiding environment or proof. Responsive safeguards remain, but mobile-specific polish was deprioritized by the user.
 
@@ -90,7 +90,7 @@ White surfaces have a fine divider and at most `0 2px 8px -4px rgb(23 37 28 / .1
 
 ## Components
 
-Primary buttons are dark on light and chartreuse only in capital summaries. Secondary buttons are bordered white. Milestone rail labels include sequence, title, amount and state. Checks preserve outcome → signed audit → individual results → attestation, with evidence directly below. Money-location rows use actual ledger snapshots. Unknown balances are not invented.
+Primary buttons are dark on light and chartreuse only in capital summaries. Secondary buttons are bordered white. Capital bar (`components/ui/capital-bar.tsx`): a proportional bar of real amounts on the dark summary, every segment named with its amount in the legend; used for raised vs open, released vs escrowed, withdrawable vs locked. Milestone rail (`components/project/milestone-tabs.tsx`), shared by project and builder pages: each stop shows sequence, title, amount and state tag under a 4px status-colored track; the selected stop takes the capital surface with a chartreuse track. Linked on project pages, read-only on the builder page; stacks vertically under 640px. Setup and verification screens use white surfaces, not dark summaries. Checks preserve outcome → signed audit → individual results → attestation, with evidence directly below. Money-location rows use actual ledger snapshots. Unknown balances are not invented.
 
 Investment and other money actions retain enter → review → submit → receipt. Builder evidence retains choose → review → submit → receipt; the receipt survives refreshed milestone transitions. Back keeps drafts. Inspector signatures, evidence-version re-review and software-key semantics remain unchanged. Mock hashes are plain text and never explorer links. Error, empty, loading and pending states explain recovery without presenting skeletons as actual amounts.
 
