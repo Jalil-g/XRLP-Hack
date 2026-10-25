@@ -1,5 +1,5 @@
 // The licensed inspector's signed site audit: a required check, shown with who signed it and the attestation tx.
-import { TxLink } from "@/components/chain";
+import { Address, TxLink } from "@/components/chain";
 import type { CheckResult, InspectorAudit } from "@/lib/contract";
 import { cn } from "@/lib/utils";
 import { ROW_GRID, StatusIcon, type RowState } from "./status-icon";
@@ -42,7 +42,11 @@ export function AuditRow({
       <span className="text-small font-medium text-ink">Inspector audit signed</span>
       <span className={cn("text-small", state === "fail" ? "font-medium text-fail" : "text-ink-2")}>
         {detail}
-        {audit?.notes && state !== "fail" && state !== "running" && <span className="block text-caption text-ink-2">“{audit.notes}”</span>}
+        {audit && state !== "fail" && state !== "running" && (
+          <span className="block text-caption text-ink-2">
+            {audit.notes && <>“{audit.notes}” · </>}signer <Address address={audit.inspector} />
+          </span>
+        )}
       </span>
       <span className="justify-self-end">{audit?.txHash && <TxLink hash={audit.txHash} />}</span>
     </li>

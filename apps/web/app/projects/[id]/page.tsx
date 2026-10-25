@@ -5,11 +5,14 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { Address, TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
 import { Activity } from "@/components/project/activity";
+import { EvidenceStrip } from "@/components/project/evidence-strip";
 import { InvestDialog } from "@/components/project/invest-dialog";
 import { MilestoneTabs } from "@/components/project/milestone-tabs";
+import { SovTable } from "@/components/project/sov-table";
 import { PageHeader, Properties, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
+import { LOCKED_MILESTONE_V2 } from "@xrlp/shared";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
 import { PROJECT_STATUS, VAULT_PHASE, focusMilestone, namer } from "@/lib/display";
 import { getSession } from "@/lib/session";
@@ -37,8 +40,6 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-const LOCKED: Milestone["status"][] = ["escrowed", "evidence_submitted", "audited", "verified", "failed", "needs_human", "expired"];
-
 export default async function ProjectPage({ params, searchParams }: Props) {
   const [{ id }, { m: selectedId }, session] = await Promise.all([params, searchParams, getSession()]);
   const d = await load(id);
@@ -50,6 +51,8 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const raised = d.investments.reduce((a, i) => a + toCents(i.amount), 0);
   const sum = (statuses: Milestone["status"][]) => p.milestones.filter((m) => statuses.includes(m.status)).reduce((a, m) => a + toCents(m.amount), 0);
   const status = PROJECT_STATUS[p.status];
+  const checks = (selected && d.checks[selected.id]) ?? { required: [], optional: [], outcome: "pending" as const };
+  const audits = (selected && d.audits[selected.id]) ?? [];
 
   return (
     <div className="space-y-10">
@@ -84,79 +87,107 @@ export default async function ProjectPage({ params, searchParams }: Props) {
           <>
             <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-caption text-ink-2">
               <span>
-                SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
-                {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}`}
+                Pays for SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
+                {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}, then the money can only go back`}
               </span>
               {selected.escrow && (
                 <span>
-                  Escrow <TxLink hash={selected.escrow.createTx} />
+                  EscrowCreate <TxLink hash={selected.escrow.createTx} />
                 </span>
               )}
             </div>
             <ChecksPanel
               milestone={selected}
-              status={d.checks[selected.id] ?? { required: [], optional: [], outcome: "pending" }}
-              audits={d.audits[selected.id] ?? []}
+              status={checks}
+              audits={audits}
               attestations={d.attestations[selected.id] ?? []}
               builderName={builder.name}
+              builderBalance={d.balances?.builder}
               evidence={d.evidence?.[selected.id]}
               names={names}
               run={{ projectId: p.id, pinHref: `?m=${encodeURIComponent(selected.id)}` }}
             />
+            <EvidenceStrip evidence={d.evidence?.[selected.id] ?? []} audit={audits[audits.length - 1]} results={[...checks.required, ...checks.optional]} />
           </>
         )}
       </section>
 
-      <dl className="flex flex-wrap gap-x-10 gap-y-3 border-y border-line py-4">
-        <Fact label="Principal" value={`${formatAmount(p.terms.principal)} RLUSD`} />
-        <Fact label="Rate" value={`${formatBps(p.terms.interestRateBps)} a year`} />
-        <Fact label="Term" value={`${Math.round(p.terms.termDays / 30.4)} months`} />
-        <Fact label="Inspector" value={d.inspectors.map((i) => i.name).join(", ") || "Assigned when terms lock"} />
-        {d.vault && (
-          <Fact
-            label="Vault share price"
-            value={`${Number(d.vault.sharePrice).toFixed(4)} RLUSD`}
-            title="Booked when the loan closes (LoanSet): contracted interest, net of fees. Repayments add liquidity, not value."
+      <div className="grid gap-12 border-t border-line pt-10 md:grid-cols-3">
+        <Section title="Loan">
+          <Properties
+            labelWidth={124}
+            items={[
+              { label: "Principal", value: <Val main={`${formatAmount(p.terms.principal)} RLUSD`} note={`${formatBps(p.terms.interestRateBps)} a year · ${Math.round(p.terms.termDays / 30.4)} months`} /> },
+              ...(d.loan
+                ? [
+                    { label: "Still owed", value: <Val main={`${formatAmount(d.loan.totalValueOutstanding)} RLUSD`} note={`${formatAmount(d.loan.principalOutstanding)} principal`} /> },
+                    { label: "Payments", value: <Val main={`${formatAmount(d.loan.periodicPayment)} RLUSD`} note={`${d.loan.paymentRemaining} left · next ${formatDate(d.loan.nextPaymentDueDate)}`} /> },
+                  ]
+                : [{ label: "Status", value: <Val main="Not closed yet" note={`Closes after funding ends ${formatDate(p.terms.fundingDeadline)}`} /> }]),
+            ]}
           />
-        )}
-        {d.balances && p.chain.loanId && <Fact label="Builder balance" value={`${formatAmount(d.balances.builder)} RLUSD`} />}
-      </dl>
-
-      <div className="grid gap-12 pt-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Section title="Activity" aside="Every line is an XRPL transaction">
-          <Activity events={d.events} who={who} milestoneTitle={title} limit={12} />
         </Section>
 
+        <Section title="Vault">
+          {d.vault ? (
+            <Properties
+              labelWidth={124}
+              items={[
+                { label: "Phase", value: <Val main={VAULT_PHASE[d.vault.phase]} note={`${formatAmount(raised / 100)} RLUSD from ${new Set(d.investments.map((i) => i.investor)).size} investors`} /> },
+                { label: "Share price", value: <span title="Contracted interest, net of fees, is booked into the share price when the loan closes (LoanSet). Repayments add liquidity, not value."><Val main={`${Number(d.vault.sharePrice).toFixed(4)} RLUSD`} note="Booked at loan close" /></span> },
+                { label: "Available", value: <Val main={`${formatAmount(d.vault.assetsAvailable)} RLUSD`} note="Repayments and refunds land here" /> },
+                { label: "Withdrawals", value: <Val main={d.vault.phase === "redemption" ? "Open" : `From ${formatDate(d.vault.redemptionDate)}`} note="Vault RedemptionDate" /> },
+              ]}
+            />
+          ) : (
+            <p className="text-small text-ink-2">Opens when the platform locks terms.</p>
+          )}
+        </Section>
+
+        <Section title="Project account">
+          <Properties
+            labelWidth={124}
+            items={[
+              ...(p.chain.spv ? [{ label: "Account", value: <Val main={<Address address={p.chain.spv} />} note="Master key disabled" /> }] : []),
+              { label: "Signers", value: <Val main="3 of 4 needed" note="Platform, builder, inspector, trustee" /> },
+              { label: "Releases", value: <Val main="Decided by the checks" note="Escrows pay the builder or go back" /> },
+              ...(d.balances ? [{ label: "Builder balance", value: <Val main={`${formatAmount(d.balances.builder)} RLUSD`} note={builder.name} /> }] : []),
+            ]}
+          />
+        </Section>
+      </div>
+
+      {(p.sov?.length ?? 0) > 0 && (
+        <Section title="Schedule of Values" aside="AIA G703 lines; each milestone escrow pays for its lines only">
+          <SovTable sov={p.sov ?? []} milestones={p.milestones} selectedId={selected?.id} />
+        </Section>
+      )}
+
+      <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <Section title="Activity" aside="Every line is an XRPL transaction">
+          <Activity events={d.events} who={who} milestoneTitle={title} limit={14} />
+        </Section>
         <aside className="space-y-10">
           {p.chain.loanId && (
             <Section title="Where the money is">
               <Properties
                 labelWidth={140}
                 items={[
-                  { label: "Locked in escrow", value: <span className="tabular">{formatAmount(fromCents(sum(LOCKED)))} RLUSD</span> },
+                  { label: "Locked in escrow", value: <span className="tabular">{formatAmount(fromCents(sum(LOCKED_MILESTONE_V2 as Milestone["status"][])))} RLUSD</span> },
                   { label: "Released", value: <span className="tabular">{formatAmount(fromCents(sum(["released"])))} RLUSD</span> },
                   { label: "Returned", value: <span className="tabular">{formatAmount(fromCents(sum(["refunded"])))} RLUSD</span> },
-                  ...(d.vault ? [{ label: "Vault available", value: <span className="tabular">{formatAmount(d.vault.assetsAvailable)} RLUSD</span> }] : []),
                 ]}
               />
             </Section>
           )}
-          <Section title="Accounts">
+          <Section title="Builder">
             <Properties
               labelWidth={140}
               items={[
-                {
-                  label: "Builder",
-                  value: (
-                    <>
-                      {builder.name}
-                      {builder.verified && <span className="block text-caption text-pass">Verified builder</span>}
-                      {builder.credentialTx && <TxLink hash={builder.credentialTx} />}
-                    </>
-                  ),
-                },
-                ...(p.chain.spv ? [{ label: "Project account", value: <><Address address={p.chain.spv} /><span className="block text-caption text-ink-2">3 of 4 signers; master key off</span></> }] : []),
-                ...(d.vault ? [{ label: "Vault", value: <>{VAULT_PHASE[d.vault.phase]}<span className="block text-caption text-ink-2">Withdrawals from {formatDate(d.vault.redemptionDate)}</span></> }] : []),
+                { label: "Name", value: builder.name },
+                { label: "Credential", value: builder.verified ? <Val main={<span className="text-pass">VERIFIED_BUILDER</span>} note={builder.credentialTx ? <TxLink hash={builder.credentialTx} /> : undefined} /> : "Not verified" },
+                { label: "Licence", value: builder.licenseNumber },
+                { label: "Track record", value: `${builder.completedProjects} completed projects` },
               ]}
             />
           </Section>
@@ -166,11 +197,11 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   );
 }
 
-function Fact({ label, value, title }: { label: string; value: string; title?: string }) {
+function Val({ main, note }: { main: React.ReactNode; note?: React.ReactNode }) {
   return (
-    <div title={title}>
-      <dt className="text-caption text-ink-2">{label}</dt>
-      <dd className="tabular mt-0.5 text-small font-medium text-ink">{value}</dd>
-    </div>
+    <>
+      <span className="tabular text-ink">{main}</span>
+      {note && <span className="block text-caption text-ink-2">{note}</span>}
+    </>
   );
 }
