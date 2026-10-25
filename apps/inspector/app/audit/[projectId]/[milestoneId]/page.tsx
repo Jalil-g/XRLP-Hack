@@ -5,7 +5,9 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, PenLine, RotateCcw } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, PenLine } from "lucide-react";
+import { ReAuditContext } from "@/components/audit/re-audit-context";
+import { latestOwnAudit } from "@/lib/re-audit";
 import { Checklist } from "@/components/audit/checklist";
 import { EvidenceGallery } from "@/components/audit/evidence-gallery";
 import { PhotoPicker } from "@/components/audit/photo-picker";
@@ -17,10 +19,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, SectionLabel } from "@/components/ui/card";
 import { ApiError, api } from "@/lib/api";
-import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, type AuditDraft } from "@/lib/audit";
+import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, withBrowserExif, type AuditDraft } from "@/lib/audit";
 import { evidenceStatus } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
-import type { InspectorTask, SubmitAuditResult } from "@/lib/types";
+import type { ChecksStatus, Inspector, InspectorTask, SubmitAuditResult } from "@/lib/types";
 import { cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
 
 type AuditTask = InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> };
@@ -39,22 +41,39 @@ export default function AuditPage() {
   const projectId = param(params.projectId);
   const milestoneId = param(params.milestoneId);
   const { inspector } = useIdentity();
+  if (!inspector) return <p className="text-sm text-muted">Loading inspector…</p>;
+  return <AuditLoader key={`${inspector.address}:${projectId}:${milestoneId}`} inspector={inspector} projectId={projectId} milestoneId={milestoneId} />;
+}
+
+function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspector; projectId: string; milestoneId: string }) {
+  const [checks, setChecks] = useState<ChecksStatus>();
   const [task, setTask] = useState<AuditTask | null>();
   const [loadError, setLoadError] = useState<string>();
   const [reloads, setReloads] = useState(0);
+  const [browserExif, setBrowserExif] = useState<ReadonlySet<string>>(new Set());
 
   // One-shot load, not polled: the evidence must not change under the inspector while they review it.
   useEffect(() => {
     if (!inspector) return;
     let live = true;
     setTask(undefined);
+    setChecks(undefined);
+    setBrowserExif(new Set());
     setLoadError(undefined);
     api
-      .getQueue(inspector.address)
-      .then((tasks) => {
+      .getAuditReview(inspector.address, projectId, milestoneId)
+      .then((review) => {
         if (!live) return;
-        const t = tasks.find((x) => x.projectId === projectId && x.milestone?.id === milestoneId);
-        setTask(t?.milestone ? (t as AuditTask) : null);
+        setTask(review?.task.milestone ? (review.task as AuditTask) : null);
+        setChecks(review?.checks);
+        // Fill in EXIF core's record lacks without holding up the form (sha256s, so the bundle hash, are unchanged).
+        if (review?.task.milestone) {
+          void withBrowserExif(review.task.evidence, (e) => api.fileBytes(e)).then(({ evidence, browserRead }) => {
+            if (!live || browserRead.size === 0) return;
+            setTask((t) => (t ? { ...t, evidence } : t));
+            setBrowserExif(browserRead);
+          });
+        }
       })
       .catch((err: Error) => live && setLoadError(err.message));
     return () => {
@@ -68,7 +87,7 @@ export default function AuditPage() {
     </Link>
   );
 
-  if (loadError) return <Shell back={back}><p className="text-sm text-bad">{loadError}</p></Shell>;
+  if (loadError) return <Shell back={back}><p role="alert" className="text-sm text-bad">Could not load the review: {loadError}</p><Button onClick={() => setReloads((n) => n + 1)}>Retry review</Button></Shell>;
   if (!inspector || task === undefined) return <Shell back={back}><p className="text-sm text-muted">Loading…</p></Shell>;
   if (task === null) {
     return (
@@ -77,8 +96,9 @@ export default function AuditPage() {
       </Shell>
     );
   }
+  if (task.needs !== "audit" && task.needs !== "re_audit") return <Shell back={back}><p className="text-sm text-muted">No audit is due from you for this milestone. Return to the queue for your current assignments.</p></Shell>;
   // Keyed so a reload (after the builder changed evidence) starts a clean draft bound to the new bundle.
-  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} inspector={inspector.address} back={back} onReload={() => setReloads((n) => n + 1)} />;
+  return <AuditForm key={`${inspector.address}:${reloads}`} task={task} checks={checks} browserExif={browserExif} inspector={inspector.address} back={back} onReload={() => setReloads((n) => n + 1)} />;
 }
 
 function Shell({ back, children }: { back: React.ReactNode; children: React.ReactNode }) {
@@ -90,7 +110,21 @@ function Shell({ back, children }: { back: React.ReactNode; children: React.Reac
   );
 }
 
-function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspector: string; back: React.ReactNode; onReload(): void }) {
+function AuditForm({
+  task,
+  checks,
+  browserExif,
+  inspector,
+  back,
+  onReload,
+}: {
+  task: AuditTask;
+  checks?: ChecksStatus;
+  browserExif: ReadonlySet<string>;
+  inspector: string;
+  back: React.ReactNode;
+  onReload(): void;
+}) {
   const m = task.milestone;
   const [draft, setDraft] = useState<AuditDraft>(() => emptyDraft(task));
   const [showErrors, setShowErrors] = useState(false);
@@ -119,7 +153,7 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
   }, [task.evidence]);
 
   const problems = useMemo(() => draftProblems(task, draft), [task, draft]);
-  const myPrior = task.priorAudits.filter((a) => a.inspector === inspector);
+  const isReAudit = task.needs === "re_audit" || !!latestOwnAudit(task, inspector);
   const ev = evidenceStatus(task);
 
   const pins = useMemo<MapPin[]>(
@@ -137,7 +171,7 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
     [],
   );
 
-  /** `sign`: attestation signed here with the inspector's key. Otherwise core signs it with the inspector's demo key. */
+  /** `sign`: attestation signed here with the inspector's key. Otherwise core attests it on the inspector's behalf (05-api: their demo key; CORE-03 today: the platform key). */
   async function submit(sign: boolean) {
     setShowErrors(true);
     setSubmitError(undefined);
@@ -181,7 +215,7 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
           <div>
             <SectionLabel>{task.projectName}</SectionLabel>
             <h1 className="text-2xl font-semibold tracking-tight">
-              M{m.index + 1} · {m.title}
+              {isReAudit && "Re-audit: "}M{m.index + 1} · {m.title}
             </h1>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -204,14 +238,14 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
           <Card>
             <CardHeader>
               <div>
-                <CardTitle>Builder evidence</CardTitle>
+                <CardTitle>Current builder evidence</CardTitle>
                 <CardDescription>
                   {ev.uploaded} file{ev.uploaded === 1 ? "" : "s"} · the suite checks these against your audit
                 </CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <EvidenceGallery evidence={task.evidence} site={task.siteGeo} />
+              <EvidenceGallery evidence={task.evidence} site={task.siteGeo} browserExif={browserExif} />
             </CardContent>
           </Card>
           <Card>
@@ -226,32 +260,13 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
 
         {/* Right: the inspector's audit. */}
         <div className="space-y-6">
-          {myPrior.length > 0 && (
-            <Card className="border-warn-line">
-              <CardHeader>
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <RotateCcw className="size-4 text-warn" /> Your previous audit
-                  </CardTitle>
-                  <CardDescription>Filed {formatDateTime(myPrior.at(-1)!.at)}. The audit you file now supersedes it.</CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-1 text-sm">
-                {myPrior.at(-1)!.checklist.map((c) => (
-                  <p key={c.sovCode}>
-                    <span className="font-mono text-faint">{c.sovCode}</span> <Badge tone={c.status === "done" ? "ok" : c.status === "partial" ? "warn" : "bad"}>{c.status}</Badge>{" "}
-                    <span className="text-muted">{c.note}</span>
-                  </p>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+          {isReAudit && <ReAuditContext task={task} checks={checks} inspector={inspector} bundle={bundle} onReload={onReload} busy={busy} />}
 
           <Card id="checklist">
             <CardHeader>
               <div>
                 <CardTitle>Checklist</CardTitle>
-                <CardDescription>One line per Schedule of Values item this milestone pays for.</CardDescription>
+                <CardDescription>{isReAudit ? "Record fresh observations for every SoV line; previous answers are not copied." : "One line per Schedule of Values item this milestone pays for."}</CardDescription>
               </div>
             </CardHeader>
             <Checklist sov={task.sov} value={draft.checklist} onChange={setLine} showErrors={showErrors} />
@@ -340,6 +355,7 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
               The AI runs the test suite over your audit and the builder&apos;s evidence.
             </p>
           </div>
+          {(task.needs === "re_audit" || latestOwnAudit(task, result.audit.inspector)) && <p className="text-sm text-muted">Re-audit filed. This report supersedes your earlier report for the next suite. Filing it does not release the escrow; fresh checks must run.</p>}
           {attested && (
             <a href={attested.explorerUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-mono text-sm text-brand hover:underline">
               Attestation {shortHash(attested.txHash)} <ExternalLink className="size-3.5" />
@@ -362,10 +378,13 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
                 </Row>
               </>
             ) : (
-              <Row label="Signed by">core, with your demo key (no key loaded in this browser)</Row>
+              <Row label="Signed by">core, on your behalf (no key loaded in this browser)</Row>
             )}
           </dl>
-          <div>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Link href="/history" className={buttonClass("primary")}>
+              View audit history
+            </Link>
             <Link href="/" className={buttonClass("secondary")}>
               Back to queue
             </Link>

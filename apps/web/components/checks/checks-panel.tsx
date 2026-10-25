@@ -1,157 +1,140 @@
-// The milestone's test suite, styled like GitHub checks: outcome on top, one row per check, the attested verdict.
-import { AlertCircle, CheckCircle2, CircleDashed, MinusCircle, XCircle } from "lucide-react";
-import { TxLink } from "@/components/chain";
-import type { Attestation, CheckResult, ChecksStatus, InspectorAudit, Milestone } from "@/lib/contract";
-import { AI_CHECKS, checkName } from "@/lib/display";
-import { cn, formatAmount } from "@/lib/utils";
+"use client";
 
-const ICON = {
-  pass: { Icon: CheckCircle2, className: "text-pass", label: "Passed" },
-  fail: { Icon: XCircle, className: "text-fail", label: "Failed" },
-  warn: { Icon: AlertCircle, className: "text-review-icon", label: "Needs review" },
-  skipped: { Icon: MinusCircle, className: "text-ink-3", label: "Skipped" },
-  queued: { Icon: CircleDashed, className: "text-ink-3", label: "Not run" },
-} as const;
+// The milestone's test suite, like GitHub checks: outcome banner, the inspector's signed audit, one row per check
+// (failures first), and the attested AI verdict. "Run checks" shows rows running, then resolves them top to bottom.
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { ApiError, api } from "@/lib/api";
+import type { Attestation, CheckResult, ChecksStatus, Evidence, InspectorAudit, Milestone } from "@/lib/contract";
+import { AuditRow } from "./audit-row";
+import { CheckRow } from "./check-row";
+import { OutcomeBanner, outcomeOf } from "./outcome-banner";
+import type { RowState } from "./status-icon";
+import { VerdictRow } from "./verdict-row";
 
-type Row = { name: string; result: keyof typeof ICON; reason: string; proof?: string };
+const AUDIT_CHECK = "inspector_audit_present";
+const ORDER: Record<CheckResult["result"], number> = { fail: 0, warn: 1, pass: 2, skipped: 3 };
+const STEP_MS = 110;
 
-export function ChecksPanel({
-  milestone: m,
-  status,
-  audits,
-  attestations,
-  builderName,
-  action,
-}: {
+export type ChecksPanelProps = {
   milestone: Milestone;
   status: ChecksStatus;
   audits: InspectorAudit[];
   attestations: Attestation[];
+  evidence?: Evidence[];
   builderName: string;
-  /** e.g. the Run checks button; shown in the header while the milestone can run. */
-  action?: React.ReactNode;
-}) {
-  const results: CheckResult[] = [...status.required, ...status.optional];
+  /** Builder's RLUSD balance, shown in the released banner so the payout is visible where it happens. */
+  builderBalance?: string;
+  /** Address → display name (inspector on the audit row). */
+  names?: Record<string, string>;
+  /** Enables the Run checks button (route 11). */
+  run?: { projectId: string; /** Where to land after the run, e.g. "?m=<id>" so the selection doesn't move. */ pinHref?: string };
+};
+
+export function ChecksPanel({ milestone: m, status, audits, attestations, evidence, builderName, builderBalance, names = {}, run }: ChecksPanelProps) {
+  const router = useRouter();
+  const [running, setRunning] = useState(false);
+  const verdictAt = status.verdict?.createdAt;
+  // Stay "running" until the refreshed props carry the new verdict, so the panel never flashes back to "ready".
+  useEffect(() => setRunning(false), [verdictAt]);
+
+  const results = [...status.required, ...status.optional];
   const ran = results.length > 0;
-  const rows: Row[] = ran
-    ? results.map((c) => ({ name: c.check, result: c.result, reason: c.reason, proof: c.check === "inspector_audit_present" ? audits[audits.length - 1]?.txHash : undefined }))
-    : (status.suite ?? []).map((name) => ({ name, result: "queued", reason: "Not run yet" }));
-  const failed = results.filter((c) => c.result === "fail").length;
+  const auditResult = results.find((c) => c.check === AUDIT_CHECK);
+  const rows: { check: Pick<CheckResult, "check" | "reason" | "evidenceIds">; result?: CheckResult["result"] }[] = ran
+    ? results
+        .filter((c) => c.check !== AUDIT_CHECK)
+        .map((c, i) => ({ c, i }))
+        .sort((a, b) => ORDER[a.c.result] - ORDER[b.c.result] || a.i - b.i)
+        .map(({ c }) => ({ check: c, result: c.result }))
+    : (status.suite ?? []).filter((n) => n !== AUDIT_CHECK).map((n) => ({ check: { check: n, reason: "", evidenceIds: [] } }));
+
+  const revealed = useReveal(verdictAt, rows.length + 1);
+  const stateAt = (index: number, result?: CheckResult["result"]): RowState => {
+    if (running) return "running";
+    if (!result) return "queued";
+    if (index >= revealed) return "running";
+    return result;
+  };
+
   const latest = (kind: Attestation["kind"]) => [...attestations].reverse().find((a) => a.kind === kind);
-  const verdictTx = latest("verdict")?.txHash;
-  const decision = latest("decision");
-  const verdict = status.verdict;
+  const audit = audits[audits.length - 1];
+  const revealing = revealed < rows.length + 1;
+  const failed = results.filter((c) => c.result === "fail").length;
+  const total = ran ? results.length : (status.suite?.length ?? 0);
+  const canRun = !!run && ["evidence_submitted", "audited", "failed"].includes(m.status);
+
+  const runChecks = async () => {
+    if (!run) return;
+    setRunning(true);
+    window.setTimeout(() => setRunning(false), 15_000); // never spin forever if the refresh brings nothing new
+    try {
+      await api.runChecks(run.projectId, m.id);
+      if (run.pinHref) router.replace(run.pinHref, { scroll: false });
+      router.refresh();
+    } catch (err) {
+      setRunning(false);
+      toast.error(err instanceof Error ? err.message : "Checks could not run", {
+        description: err instanceof ApiError && err.txResult ? err.txResult : undefined,
+      });
+    }
+  };
 
   return (
     <div className="overflow-hidden rounded-panel border border-line">
-      <Header m={m} ran={ran} total={results.length || rows.length} failed={failed} outcome={status.outcome} builderName={builderName} decision={decision} action={action} />
-
-      {rows.length > 0 && (
-        <ul className="divide-y divide-line">
-          {rows.map((r) => {
-            const { Icon, className, label } = ICON[r.result];
-            return (
-              <li key={r.name} className={cn("grid grid-cols-[18px_236px_minmax(0,1fr)_auto] items-baseline gap-x-3 px-5 py-2", r.result === "fail" && "bg-fail-bg/50")}>
-                <Icon className={cn("size-[18px] translate-y-[3px]", className)} aria-label={label} />
-                <span className="text-small font-medium text-ink">
-                  {checkName(r.name)}
-                  {AI_CHECKS.has(r.name) && <span className="ml-1.5 font-normal text-ink-2">· AI</span>}
-                </span>
-                <span className={cn("text-small", r.result === "fail" ? "font-medium text-fail" : "text-ink-2")}>{r.reason}</span>
-                <span className="justify-self-end">{r.proof && <TxLink hash={r.proof} />}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-
-      {verdict && (
-        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-t border-line bg-band px-5 py-2.5 text-caption text-ink-2">
-          <span>
-            AI verdict <span className="font-medium text-ink">{verdict.decision === "needs_human" ? "needs review" : verdict.decision}</span> · confidence{" "}
-            <span className="tabular font-medium text-ink">{verdict.confidence.toFixed(2)}</span> · {verdict.model === "mock" ? "mock verifier" : verdict.model}
-          </span>
-          {verdictTx && (
-            <span>
-              {m.status === "released" ? "Result attested before release" : "Result attested on-chain"} <TxLink hash={verdictTx} />
-            </span>
-          )}
-        </div>
+      <OutcomeBanner
+        outcome={revealing && ran ? "running" : outcomeOf(m, running)}
+        milestone={m}
+        builderName={builderName}
+        builderBalance={builderBalance}
+        total={total}
+        failed={failed}
+        decision={latest("decision")}
+        failedChecks={results.filter((c) => c.result === "fail").map((c) => c.check)}
+        action={
+          canRun && (
+            <Button variant={m.status === "failed" ? "secondary" : "primary"} onClick={runChecks} disabled={running}>
+              {m.status === "failed" ? "Run again" : "Run checks"}
+            </Button>
+          )
+        }
+      />
+      <ul className="divide-y divide-line">
+        <AuditRow
+          audit={audit}
+          result={auditResult}
+          state={stateAt(0, auditResult?.result)}
+          inspectorName={audit ? names[audit.inspector] : undefined}
+        />
+        {rows.map((r, i) => (
+          <CheckRow key={r.check.check} check={r.check} state={stateAt(i + 1, r.result)} evidence={evidence} />
+        ))}
+      </ul>
+      {status.verdict && !running && !revealing && (
+        <VerdictRow verdict={status.verdict} attestationTx={latest("verdict")?.txHash} hash={latest("verdict")?.hash} released={m.status === "released"} />
       )}
     </div>
   );
 }
 
-function Header({
-  m,
-  ran,
-  total,
-  failed,
-  outcome,
-  builderName,
-  decision,
-  action,
-}: {
-  m: Milestone;
-  ran: boolean;
-  total: number;
-  failed: number;
-  outcome: ChecksStatus["outcome"];
-  builderName: string;
-  decision?: Attestation;
-  action?: React.ReactNode;
-}) {
-  const bar = (tone: string, Icon: (typeof ICON)[keyof typeof ICON]["Icon"], iconClass: string, title: React.ReactNode, sub?: React.ReactNode, right?: React.ReactNode) => (
-    <div className={cn("flex items-center justify-between gap-4 border-b border-line px-5 py-3.5", tone)}>
-      <div className="flex min-w-0 items-start gap-3">
-        <Icon className={cn("mt-0.5 size-5 shrink-0", iconClass)} aria-hidden />
-        <div className="min-w-0">
-          <p className="text-body font-semibold text-ink">{title}</p>
-          {sub && <p className="text-small text-ink-2">{sub}</p>}
-        </div>
-      </div>
-      {right}
-    </div>
-  );
-
-  if (m.status === "released") {
-    return bar(
-      "bg-pass-bg",
-      CheckCircle2,
-      "text-pass",
-      <>
-        Released {formatAmount(m.amount)} RLUSD to {builderName}
-      </>,
-      decision ? `Approved by the platform operator: ${decision.notes}` : `All ${total} checks passed`,
-      m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} label="EscrowFinish" />,
-    );
-  }
-  if (m.status === "refunded" || m.status === "expired") {
-    return bar(
-      "bg-band",
-      MinusCircle,
-      "text-ink-3",
-      m.status === "refunded" ? "Escrow expired. Money returned to the vault" : "Escrow expired",
-      m.status === "refunded" ? "Cancelled back to the project account, then repaid to the vault." : "The keeper cancels it and repays the vault.",
-      m.escrow?.cancelTx && <TxLink hash={m.escrow.cancelTx} label="EscrowCancel" />,
-    );
-  }
-  if (m.status === "failed") {
-    return bar(
-      "bg-fail-bg",
-      XCircle,
-      "text-fail",
-      decision ? "Rejected by the platform operator. Money stays locked" : `${failed} of ${total} checks failed. Money stays locked`,
-      decision ? decision.notes : "The builder can resubmit evidence, or the inspector can re-audit.",
-      action,
-    );
-  }
-  if (m.status === "needs_human" || outcome === "needs_human") {
-    return bar("bg-review-bg", AlertCircle, "text-review-icon", "Needs review by the platform operator", "Checks passed, but below the confidence this milestone requires. The decision and its reason are attested on-chain.");
-  }
-  if (!ran) {
-    const waiting = m.status === "escrowed" || m.status === "pending";
-    return bar("bg-band", CircleDashed, "text-ink-3", waiting ? "Waiting for the builder's evidence" : `${total} checks ready to run`, waiting ? "Checks run once evidence and the inspector's audit are in." : undefined, action);
-  }
-  return bar("bg-band", CircleDashed, "text-ink-3", `${total} checks`, undefined, action);
+/** Rows revealed so far. A verdict that arrives after mount resolves rows one by one; first render shows everything. */
+function useReveal(verdictAt: string | undefined, count: number): number {
+  const seen = useRef(verdictAt);
+  const [revealed, setRevealed] = useState(Number.POSITIVE_INFINITY);
+  useEffect(() => {
+    if (!verdictAt || verdictAt === seen.current) return;
+    seen.current = verdictAt;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    setRevealed(0);
+    let n = 0;
+    const id = window.setInterval(() => {
+      n += 1;
+      setRevealed(n >= count ? Number.POSITIVE_INFINITY : n);
+      if (n >= count) window.clearInterval(id);
+    }, STEP_MS);
+    return () => window.clearInterval(id);
+  }, [verdictAt, count]);
+  return revealed;
 }

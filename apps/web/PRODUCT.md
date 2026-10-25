@@ -48,7 +48,7 @@ Needs review. The ledger fixes *where* money can go; the suite makes *when* publ
 - Visual bar (user decision, 2026-10-24): **simple, like Apple's and Notion's web design**. Familiar, quiet, exact. No theme
   costume, no decoration. See `DESIGN.md`.
 - Say: the ledger fixes where money goes; the suite decides when. Don't say: "trustless AI", "ledger-enforced release",
-  "mainnet-ready", "automatic refunds to investors". Share value is booked at LoanSet; refunds are withdrawable from RedemptionDate.
+  "mainnet-ready", "automatic refunds to investors". Share value rises as interest is repaid (not at LoanSet: devnet is cash basis, decisions.md 10-24); refunds are withdrawable from RedemptionDate.
 
 ## Evidence on Hand
 

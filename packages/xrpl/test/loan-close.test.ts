@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { isoTimeToRippleTime, rippleTimeToISOTime } from "xrpl";
 import { LedgerError } from "@xrlp/shared";
-import { CloseLoanPartialError, CloseValidationError, MIN_ESCROW_LIFETIME_S, planLoanClose, type ClosePlanInput } from "../src/loan-close.ts";
+import { CloseLoanPartialError, CloseValidationError, escrowDestinationProblems, MIN_ESCROW_LIFETIME_S, planEscrowResume, planLoanClose, validateEscrowSpecs, type ClosePlanInput } from "../src/loan-close.ts";
 import { XrplTxError } from "../src/errors.ts";
-import { testConditionPairs } from "./support/conditions.ts";
+import { testConditionPair, testConditionPairs } from "./support/conditions.ts";
+import { Wallet } from "xrpl";
 
 const NOW = isoTimeToRippleTime("2026-10-25T12:00:00.000Z");
 const INTERVAL = 300;
@@ -156,4 +157,43 @@ test("CloseLoanPartialError carries loanId, created escrows, pending milestones 
   assert.deepEqual(e.created, created);
   assert.deepEqual(e.pending, ["m2", "m3"]);
   assert.match(e.message, /loan LOAN1.*milestone m2 failed.*Created: \[m1@7\]; pending: \[m2, m3\]/);
+});
+
+// ---------------------------------------------------------------- security review M2 / M5
+
+test("M2: planLoanClose / validateEscrowSpecs / planEscrowResume never echo a fulfillment passed as a condition", () => {
+  const secret = testConditionPair();
+  const preimage = secret.fulfillment.slice(8).toUpperCase();
+  const leaks = (f: () => unknown) => {
+    try {
+      f();
+    } catch (e) {
+      assert.ok(e instanceof CloseValidationError, String(e));
+      assert.ok(!e.message.toUpperCase().includes(preimage), "preimage in the message");
+      assert.match(e.message, /FULFILLMENT, which is the secret/);
+      return;
+    }
+    assert.fail("expected CloseValidationError");
+  };
+  leaks(() => planLoanClose(base({ conditions: [c1, secret.fulfillment, c3] })));
+  leaks(() => validateEscrowSpecs([{ milestoneId: "m1", amount: "1", condition: secret.fulfillment, cancelAfter: NOW + 600 }]));
+  leaks(() => planEscrowResume({ spv: "rSpv", builder: "rB", milestones: [{ milestoneId: "m1", index: 0, amount: "1", condition: secret.fulfillment, cancelAfter: NOW + 600 }], created: [], ledgerEscrows: [], now: NOW }));
+});
+
+test("M5: escrowDestinationProblems: the destination must be a real, separate account on the SPV's list and not another role's key", () => {
+  const [spv, builder, issuer, platform, inspector, trustee] = Array.from({ length: 6 }, () => Wallet.generate().classicAddress) as [string, string, string, string, string, string];
+  const signers = [platform, builder, inspector, trustee];
+  const ok = { spv, issuer, otherRoles: { platform, trustee, inspector1: inspector }, spvSigners: signers, exists: true };
+  assert.deepEqual(escrowDestinationProblems({ ...ok, destination: builder }), []);
+  assert.match(escrowDestinationProblems({ ...ok, destination: platform }).join(" "), /is the platform key, not the builder/);
+  assert.match(escrowDestinationProblems({ ...ok, destination: inspector }).join(" "), /is the inspector1 key/);
+  assert.match(escrowDestinationProblems({ ...ok, destination: spv }).join(" "), /is the SPV itself/);
+  assert.match(escrowDestinationProblems({ ...ok, destination: issuer }).join(" "), /is the RLUSD issuer/);
+  assert.match(escrowDestinationProblems({ ...ok, destination: Wallet.generate().classicAddress }).join(" "), /not on the SPV's signer list/);
+  assert.match(escrowDestinationProblems({ ...ok, destination: builder, exists: false }).join(" "), /not an account on the ledger.*tecNO_DST/);
+  const bad = escrowDestinationProblems({ ...ok, destination: "sEdBadSeedLookingValue123456789" });
+  assert.equal(bad.length, 1);
+  assert.match(bad[0]!, /not a classic XRPL address \(31 chars; value not echoed\)/);
+  // single-key fallback (no SignerList yet): the list check is skipped, the rest still applies
+  assert.deepEqual(escrowDestinationProblems({ spv, issuer, destination: builder }), []);
 });

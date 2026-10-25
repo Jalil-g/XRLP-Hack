@@ -41,7 +41,7 @@ describe("fixtures match docs/05-api.md", () => {
   });
 
   it("route 2: every project parses as ProjectDetail", async () => {
-    for (const id of ["maple-st-duplex", "rhinebeck-farmhouse", "elm-ct-fourplex"]) assertExact(ProjectDetail, await api.getProject(id));
+    for (const id of ["maple-st-duplex", "rhinebeck-farmhouse", "elm-ct-fourplex", "oak-ave-rowhouse"]) assertExact(ProjectDetail, await api.getProject(id));
   });
 
   it("route 18b: every queue parses as InspectorTask[]", async () => {
@@ -49,7 +49,7 @@ describe("fixtures match docs/05-api.md", () => {
   });
 
   it("SoV lines of each milestone sum to its amount", async () => {
-    for (const id of ["maple-st-duplex", "rhinebeck-farmhouse"]) {
+    for (const id of ["maple-st-duplex", "rhinebeck-farmhouse", "oak-ave-rowhouse"]) {
       const { project } = await api.getProject(id);
       for (const m of project.milestones) {
         const sum = (project.sov ?? []).filter((l) => m.sovCodes?.includes(l.code)).reduce((s, l) => s + Number(l.amount), 0);
@@ -66,6 +66,7 @@ describe("route 18: queue", () => {
       "maple-st-duplex:m1=audit",
       "maple-st-duplex:m2=audit",
       "maple-st-duplex:m3=none",
+      "oak-ave-rowhouse:m1=none",
       "elm-ct-fourplex=pre_visit",
     ]);
     assert.deepEqual(await needs(ADDR.marcus), ["rhinebeck-farmhouse:m1=re_audit", "rhinebeck-farmhouse:m2=none"]);

@@ -1,7 +1,7 @@
 // In-memory stand-in for @xrlp/core's HTTP API (docs/05-api.md routes 1–23) for NEXT_PUBLIC_API_MODE=mock.
 // It gates on state the way core does (invalid_state, too_soon, validation) and keeps balances as bookkeeping.
-// It never decides anything: verdicts, verifications, assignments and booked share prices are played back from
-// ./fixtures (MockScript). State lives on globalThis (shared by route handlers + server components, survives HMR).
+// It never decides anything: verdicts, verifications and assignments are played back from ./fixtures (MockScript).
+// Vault/loan snapshots mimic devnet's cash basis: interest reaches the vault (and the share price) only on LoanPay. State lives on globalThis (shared by route handlers + server components, survives HMR).
 import { explorerTxUrl } from "@xrlp/shared";
 import { ApiError, type ApiRequest } from "../api";
 import type {
@@ -140,7 +140,8 @@ function release(db: MockDb, p: Project, m: Milestone): { events: ChainEvent[]; 
     txHash: fakeHash(`att-release:${m.id}:${at}`),
     at,
   });
-  const fin = emit(db, { projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: b.address, amount: m.amount });
+  // The release service submits the finish; the builder is the escrow's fixed destination.
+  const fin = emit(db, { projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: RELEASE_SERVICE.address, amount: m.amount });
   m.status = "released";
   if (m.escrow) m.escrow.finishTx = fin.txHash;
   addBalance(db, b.address, toCents(m.amount));
@@ -358,9 +359,8 @@ const routes: Route[] = [
       m.escrow.createTx = events[events.length - 1]!.txHash;
     });
     if (v) {
+      // Devnet: AssetsTotal stays at principal after LoanSet; the money is lent out, so nothing is available.
       v.phase = "investment";
-      v.sharePrice = s.bookedSharePrice[p.id] ?? s.genericBookedSharePrice;
-      v.assetsTotal = (Number(v.sharesOutstanding) * Number(v.sharePrice)).toFixed(2);
       v.assetsAvailable = "0.00";
     }
     const periods = Math.max(2, Math.ceil(p.terms.termDays / p.terms.paymentIntervalDays));
@@ -389,7 +389,10 @@ const routes: Route[] = [
       return uploadToEvidence(f, `${m.id}-u${db.seq}`, kind, at);
     });
     db.evidence[m.id] = m.status === "failed" ? added : [...(db.evidence[m.id] ?? []), ...added];
-    if (m.status === "failed") db.checks[m.id] = pendingChecks();
+    if (m.status === "failed") {
+      db.checks[m.id] = pendingChecks();
+      db.resubmitted[m.id] = true;
+    }
     m.status = (db.audits[m.id]?.length ?? 0) > 0 && m.status !== "failed" ? "audited" : "evidence_submitted";
     return { milestone: m, evidence: added };
   }],
@@ -430,7 +433,8 @@ const routes: Route[] = [
     requireStatus(m.status, ["evidence_submitted", "audited", "failed"], m.title);
     const at = now();
     const hasAudit = (db.audits[m.id]?.length ?? 0) > 0;
-    const result = hasAudit ? (s.verdicts[m.id]?.(at) ?? s.genericPass(p, m, at)) : s.missingAudit(p, m, at);
+    // Canned playback: missing audit → fail; a resubmission after a fail → pass; otherwise the milestone's fixture verdict.
+    const result = !hasAudit ? s.missingAudit(p, m, at) : db.resubmitted[m.id] ? s.genericPass(p, m, at) : (s.verdicts[m.id]?.(at) ?? s.genericPass(p, m, at));
     db.checks[m.id] = result;
     const verdict = result.verdict!;
     const v = emit(db, { projectId: p.id, milestoneId: m.id, kind: "verdict_attested", actor: AI_AGENT.address });
@@ -492,11 +496,21 @@ const routes: Route[] = [
     const ev = emit(db, { projectId: p.id, kind: "loan_payment", actor: p.chain.spv, amount });
     addBalance(db, builderOf(db, p).address, -toCents(amount));
     const v = db.vaults[p.id];
-    if (v) v.assetsAvailable = fromCents(toCents(v.assetsAvailable) + toCents(amount));
     const l = db.loans[p.id];
+    // Split the payment pro rata between interest and principal still owed (ledger stand-in). Devnet books the interest
+    // into AssetsTotal on LoanPay, which is what moves the share price.
+    const owed = l ? toCents(l.totalValueOutstanding) : 0;
+    const interestCents = l && owed > 0 ? Math.round((toCents(amount) * (owed - toCents(l.principalOutstanding))) / owed) : 0;
     if (l) {
-      l.totalValueOutstanding = fromCents(Math.max(0, toCents(l.totalValueOutstanding) - toCents(amount)));
+      l.totalValueOutstanding = fromCents(Math.max(0, owed - toCents(amount)));
+      l.principalOutstanding = fromCents(Math.max(0, toCents(l.principalOutstanding) - (toCents(amount) - interestCents)));
       l.paymentRemaining = Math.max(0, l.paymentRemaining - 1);
+    }
+    if (v) {
+      v.assetsAvailable = fromCents(toCents(v.assetsAvailable) + toCents(amount));
+      v.assetsTotal = fromCents(toCents(v.assetsTotal) + interestCents);
+      const shares = Number(v.sharesOutstanding);
+      if (shares > 0) v.sharePrice = (toCents(v.assetsTotal) / 100 / shares).toFixed(6);
     }
     return { project: p, events: [ev] };
   }],
@@ -577,7 +591,7 @@ const routes: Route[] = [
     const p = project(db, id!);
     const m = milestone(p, mid!);
     if (!m.escrow || m.escrow.finishTx || m.escrow.cancelTx) throw fail("invalid_state", `${m.title} has no open escrow to try`, 409);
-    const ev = emit(db, { projectId: p.id, milestoneId: m.id, kind: "release_refused", actor: PLATFORM.address, amount: m.amount });
+    const ev = emit(db, { projectId: p.id, milestoneId: m.id, kind: "release_refused", actor: PLATFORM.address, amount: m.amount, result: "tecCRYPTOCONDITION_ERROR" });
     return { result: "tecCRYPTOCONDITION_ERROR", txHash: ev.txHash, explorerUrl: ev.explorerUrl };
   }],
   // PROPOSED (#53)
