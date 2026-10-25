@@ -14,11 +14,14 @@ export interface AdapterOptions {
   /** Server-owned lock-terms assignments and history. Never populate from submitted audit notes. */
   assignedInspectors?: (project: Project) => readonly string[];
   history?: (project: Project) => ProjectHistory | undefined;
-  riskTier?: (project: Project) => RiskTier;
+  /** Trusted builder risk tier for a project (e.g. from core's store). Undefined = unknown. */
+  riskTier?: (project: Project) => RiskTier | undefined;
   registry?: VerifyBuilderInput["registry"];
   judge?: MilestoneJudge;
   projectJudge?: ProjectVerifyOptions["judge"];
 }
+
+export const UNKNOWN_RISK_TIER: RiskTier = "medium";
 
 /** Shared v2 port. Legacy core-shaped calls are accepted but cannot bypass mandatory audit context. */
 export class ClaudeVerifierAdapter implements VerifierPort {
@@ -41,7 +44,11 @@ export class ClaudeVerifierAdapter implements VerifierPort {
   policyFor(project: Project, builder: Builder, milestone: Milestone): VerificationPolicy;
   policyFor(project: Project, second: Milestone | Builder, third?: Milestone): ReleasePolicy | VerificationPolicy {
     if (third) return policyFor(project, second as Builder, third);
-    return releasePolicyFor(project, second as Milestone, this.risks.get(project.id) ?? this.options.riskTier?.(project) ?? "high");
+    // Unknown tier (project verified in another process / before a restart, e.g. prestaged): "medium", not "high".
+    // A process-local cache miss must not double the audit requirement. Safety does not rest on this tier:
+    // verifyMilestone still enforces the builder's own riskTier (max of both policies), so a high-risk
+    // builder cannot pass with fewer audits or lower confidence than its tier requires.
+    return releasePolicyFor(project, second as Milestone, this.risks.get(project.id) ?? this.options.riskTier?.(project) ?? UNKNOWN_RISK_TIER);
   }
 
   verdictHash(verdict: Verdict): string { return verdictHash(verdict); }

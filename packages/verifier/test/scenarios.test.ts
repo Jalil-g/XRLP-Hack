@@ -8,6 +8,7 @@ import { extractEvidenceMeta, verifyBuilder, verifyMilestone, verifyMilestoneDet
 import { unavailableJudgement } from "../src/llm/types.ts";
 import { evidenceBundleHash } from "../src/audit.ts";
 import { builder, builderOnboardingInput, FIXTURES_DIR, project, SCENARIOS } from "../fixtures/scenarios.ts";
+import type { PriorEvidence } from "../src/types.ts";
 
 for (const s of SCENARIOS) {
   test(`scenario ${s.key}: ${s.title} -> ${s.expect}`, { skip: s.pending && `needs ${s.pending}` }, async () => {
@@ -43,6 +44,19 @@ test("scenario A with one half-size invoice uploaded twice (audit covers the pad
   assert.equal(invoice.result, "fail", invoice.reason);
   assert.deepEqual(invoice.evidenceIds.sort(), ["inv_a", "inv_b"]);
   assert.equal(v.decision, "fail", v.summary);
+});
+
+test("scenario B still catches the copy when prior evidence arrives without meta (core's HTTP upload shape)", async () => {
+  const input = await SCENARIOS[1]!.input();
+  const priorEvidence = (input.priorEvidence as PriorEvidence[]).map((p) => ({ ...p, evidence: { ...p.evidence, meta: {} } }));
+  const dup = (await verifyMilestone({ ...input, priorEvidence, mode: "mock" })).checks.find((c) => c.check === "no_duplicate_photo")!;
+  assert.equal(dup.result, "fail", dup.reason);
+  assert.deepEqual(dup.evidenceIds, ["ev_IMG_5121"]);
+  // Prior photo bytes unavailable and no stored hash: warn (operator review), never a silent pass.
+  const missing = priorEvidence.map((p) => ({ ...p, evidence: { ...p.evidence, uri: "missing/nope.jpg" } }));
+  const v = await verifyMilestone({ ...input, priorEvidence: missing, mode: "mock" });
+  assert.equal(v.checks.find((c) => c.check === "no_duplicate_photo")!.result, "warn");
+  assert.notEqual(v.decision, "pass");
 });
 
 for (const s of SCENARIOS) {
