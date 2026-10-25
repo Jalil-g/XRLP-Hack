@@ -66,5 +66,5 @@ test("policyFor satisfies MilestonePolicy", () => {
   const p = port.policyFor(project, builder, project.milestones[0]!);
   assert.equal(p.requiredInspectors, 1);
   assert.equal(p.riskTier, "medium");
-  assert.equal(p.minConfidence, 0.7);
+  assert.equal(p.minConfidence, 0.8);
 });
