@@ -152,6 +152,12 @@ importers:
       '@xrlp/shared':
         specifier: workspace:*
         version: link:../shared
+      '@xrlp/verifier':
+        specifier: workspace:*
+        version: link:../verifier
+      '@xrlp/xrpl':
+        specifier: workspace:*
+        version: link:../xrpl
       hono:
         specifier: ^4.13.13
         version: 4.13.13

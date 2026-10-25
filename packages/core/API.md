@@ -12,8 +12,16 @@ pnpm --filter @xrlp/core test
 ## Wiring (`createCore()`)
 - `store`: `FileStore(DATA_DIR/core-db.json)` (in-memory with `inMemory: true`).
 - `ledger`: `LEDGER_MODE=fake` → `FakeLedger` (state persisted in `DATA_DIR/fake-ledger.json` so seed and server share escrows).
-  `devnet` → TODO adapter in `packages/xrpl`.
-- `verifier`: `CORE_VERIFIER=fake` → `FakeVerifier` (deterministic Maple St fixtures). `verifier` → TODO adapter in `packages/verifier`.
+  `devnet` → `XrplLedgerAdapter` (`@xrlp/xrpl`, CORE-05). Needs a bootstrapped `WALLETS_FILE` (relative paths = repo root) and
+  `XRPL_NETWORK=devnet`; mainnet endpoints are refused (xrpl's `assertNotMainnet`). Platform / AI agent / release service, the
+  demo builder, inspectors 1–3 and investors 1–3 are the `WALLETS_FILE` roles (`src/adapters/devnet-identities.ts`); route 21
+  `{"seed":"maple-st"}` registers them (no projects: prestage is CORE-07). First-loss cover is 11% of principal on devnet
+  (the ledger wants ≥ 10% of principal + interest). `DEMO_CANCEL_AFTER_S=1500,1800,420` = CancelAfter per milestone, seconds after close.
+- `verifier`: `CORE_VERIFIER=fake` → `FakeVerifier` (deterministic Maple St fixtures); on devnet it reads EXIF / pHash / invoice
+  totals from the uploaded bytes (`src/adapters/evidence-meta.ts`). `CORE_VERIFIER=verifier`, or `VERIFIER_MODE=live` without
+  `CORE_VERIFIER`, → `ClaudeVerifierAdapter` (`@xrlp/verifier`, mode = `VERIFIER_MODE`) via `src/adapters/verifier.ts`.
+- Errors from the ledger: `too_soon` / `unsafe_release` → 409, adapter `not_found` → 404, `validation` → 400, else `ledger_error` 502.
+- Devnet HTTP e2e: `pnpm --filter @xrlp/core e2e:devnet` against a running devnet server (`scripts/devnet-e2e.ts` header).
 - `release`: `ReleaseService` + `FilePreimageVault(DATA_DIR)` (AES-256-GCM sealed preimages). The service never sees a preimage.
 
 ## Flow rules (enforced in `src/service.ts`)

@@ -13,11 +13,14 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "seed": "tsx src/scripts/seed.ts",
     "simulate": "tsx src/scripts/simulate.ts",
-    "serve": "tsx src/http/server.ts"
+    "serve": "tsx src/http/server.ts",
+    "e2e:devnet": "NODE_USE_ENV_PROXY=1 tsx scripts/devnet-e2e.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
     "@xrlp/shared": "workspace:*",
+    "@xrlp/verifier": "workspace:*",
+    "@xrlp/xrpl": "workspace:*",
     "hono": "^4.13.13",
     "zod": "^3.25.0"
   },
