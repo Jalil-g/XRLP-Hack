@@ -1,74 +1,32 @@
-# @xrlp/core — API
+# @xrlp/core — v2 (test-suite release model)
 
-Workflow orchestrator + JSON store. Runs today on fakes (`FakeLedger`, `FakeVerifier`); real adapters plug in via the ports in `src/ports.ts`.
-
-```ts
-import { createCore, isDomainError } from "@xrlp/core";
-const core = createCore();            // FileStore at DATA_DIR (default <repo>/.data/core-db.json), fakes
-// core.service  -> mutations (CoreService)      core.read -> read models (ReadModels)
-```
-
-Create **one core per server process** (module-level singleton). All money is `Rlusd` decimal strings (`"25000.00"`). All read models are plain JSON.
-
-**Errors**: every expected failure throws `DomainError { code, message, details, status }`, where
-`code` is one of `NOT_FOUND | VALIDATION | ILLEGAL_TRANSITION | FORBIDDEN | CONFLICT | QUORUM_NOT_MET | LEDGER_ERROR | VERIFIER_ERROR`. `status` is the suggested HTTP status (404/400/409/403/502). Route handlers can do
-`catch (e) { if (isDomainError(e)) return Response.json({ error: e.code, message: e.message }, { status: e.status }) }`.
-
-Zod input schemas are exported for reuse: `RegisterBuilderInput`, `CreateProjectInput`, `EvidenceInput`, `RegisterInvestorInput`, `RegisterInspectorInput`.
-
-## Mutations — `core.service`
-
-| Method | Allowed when | Effect / chain events |
-|---|---|---|
-| `registerBuilder({name, address, licenseNumber, insurancePolicy, completedProjects?, riskTier?, id?})` | — | Builder (`verified: false`) |
-| `verifyBuilder(builderId, documents: BuilderDocument[])` | not yet verified | AI doc review → if ok `credential_issued` (VERIFIED_BUILDER), `verified: true`, riskTier from verifier. Returns `{builder, verification, event?}` |
-| `registerInvestor({address, name})` | — | mock KYC → `credential_issued` (KYC_INVESTOR) |
-| `registerInspector({address, name, licenseNumber})` | — | — |
-| `createProject({builderId, name, type, siteAddress, siteGeo, description, terms, inspectors, id?})` | builder verified | `draft`; milestones from `MILESTONE_TEMPLATES[type]`, amount = defaultShare × principal, `requiredInspectors` from `verifier.policyFor`. `inspectors[0]` = default escrow-condition holder |
-| `lockTerms(projectId)` | `draft` | → `terms_locked` |
-| `openFunding(projectId)` | `terms_locked`, before deadline | SPV + Vault + LoanBroker on-chain (`vault_created`, `loan_broker_created`) → `funding` |
-| `submitMilestoneConditions(projectId, {inspector, conditions:[{milestoneId, condition}]})` | before `escrowed`; assigned inspector | stores **public** PREIMAGE-SHA-256 conditions. Inspector keeps fulfillments (see below). If already `funded` → auto close |
-| `invest(projectId, {investor, amount})` | `funding`, KYC'd investor, ≤ remaining, before deadline | `vault_deposit`. Last deposit → `funded` → (autoClose + all conditions present) `closeLoan` |
-| `closeLoan(projectId)` | `funded`, all conditions present | `loan_set` + one `escrow_created` per milestone (same step) → project `escrowed`, milestones `escrowed` with `cancelAfter` |
-| `checkFundingDeadline(projectId)` | `funding` past deadline | → `stalled` (investors withdraw). Returns boolean |
-| `submitEvidence(projectId, milestoneId, {evidence: EvidenceInput[]})` | milestone `escrowed` or `rejected`, before cancelAfter | new review round → `evidence_submitted`. Store files first with `saveEvidenceBlob(core.dataDir, …)` → `{uri, sha256}` |
-| `runAiReview(projectId, milestoneId)` | `evidence_submitted` | Verdict stored. `pass` → AI `approval_attested` + `ai_reviewed`; `needs_human` → `ai_reviewed` (no AI approval); `fail` → `rejected` |
-| `inspectorAttest(projectId, milestoneId, {inspector, decision, notes?, fulfillment?})` | `ai_reviewed`/`inspected`, assigned inspector, once per round | `approval_attested`. reject → `rejected`; approve → `inspected`. If quorum now met **and** `fulfillment` given → releases in the same call (`released` in result) |
-| `platformAttest(projectId, milestoneId, {decision, notes?})` | `ai_reviewed`/`inspected` | platform co-sign (weight 1), `approval_attested` |
-| `releaseMilestone(projectId, milestoneId, {fulfillment})` | `inspected` + quorum met + fulfillment matches condition | `escrow_finished` → `released` |
-| `expireMilestone(projectId, milestoneId)` | escrow still locked and `now ≥ cancelAfter` | → `expired` → `escrow_cancelled` + `loan_payment` (refund LoanPays the vault) → `refunded`; project → `stalled` |
-| `sweepExpired(projectId?)` | — | `expireMilestone` for everything past CancelAfter (cron / admin "fast-forward") |
-| `repayLoan(projectId, {amount})` | `escrowed`/`repaying`/`stalled`, ≤ outstanding | `loan_payment`; → `repaying`; fully repaid + all milestones settled → `completed` |
-| `withdraw(projectId, {investor, amount?})` | `escrowed`/`repaying`/`stalled`/`completed` | `vault_withdraw`; default amount = everything withdrawable (pro-rata share of liquid vault assets) |
-
-**Approval rule** (`evaluateQuorum`, mirrors the SPV SignerList): inspector weight 2, AI 1, platform 1, quorum 3 → an inspector is **always** required plus one of: second inspector / AI pass / platform. If the milestone's `requiredInspectors` is 2, both inspectors must approve. Any reject blocks. A resubmission starts a new round; old attestations don't count.
-
-**Escrow fulfillments** are generated and held by the condition-holding inspector (`generateMilestoneCondition()` → `{condition, fulfillment}`), never by core. The inspector UI must supply `fulfillment` when approving (or later via `releaseMilestone`). Demo stand-in for the inspector's device: `FileInspectorKeyring(inspectorAddress, dataDir)` (`.conditionFor(milestoneId)`, `.fulfillmentFor(milestoneId)`) — kept outside the core store. `getInspectorQueue` shows which items need the fulfillment.
-
-## Read models — `core.read`
-
-| Method | Returns |
-|---|---|
-| `getMarketplace({status?})` | `ProjectCard[]` — name, type, status, builder summary (verified, riskTier), principal, raised, fundedPct, investorCount, rate, term, deadline, milestone counts, releasedAmount, nextMilestone |
-| `getProjectDetail(id)` | `{project, card, builder, inspectors, milestones: MilestoneView[], funding {raised, remaining, fundedPct, investors[]}, vault {deposits, available, loaned, owed, repaid, outstanding, withdrawn, totalValue}, timeline: ChainEvent[], activity: ActivityItem[], stalledReason?}` |
-| `getInvestorPortfolio(address)` | `{address, name, kycCredentialTx, positions[{project, deposited, withdrawn, sharePct, currentValue, withdrawable, events}], totals}` |
-| `getInspectorQueue(address)` | `{inspector, pending[] (needs my signature), awaitingRelease[] (quorum met, I hold the condition), conditionsNeeded[] (pre-escrow), history[]}` |
-| `getBuilderDashboard(builderId)` | `{builder, verification, credentialEvent, projects[card + milestoneViews + nextAction], totals {released, locked, repaid, outstanding}}` |
-| `getDirectory()` | builders / investors / inspectors (role switcher) |
-| `getPlatformEvents()` | credential events (projectId `"_platform"`) |
-
-`MilestoneView` = `Milestone` + `template` (required evidence, visual criteria), `round`, current-round `evidence`, latest `verdict` (+`verdictHistory`), current-round `attestations`, `quorum` (`met`, `weight`, `missing[]` human-readable), `conditionHolder`, `awaitingFulfillment`, `events`.
-
-`ActivityItem` merges chain events with off-chain steps (evidence uploaded, AI verdict, attestations) — use it for the project's audit feed. Every chain event has `explorerUrl`.
-
-## Scripts
+HTTP contract: `docs/05-api.md`. `CoreService implements CoreApi` (`src/api-surface.ts`): one method per route 1–23.
 
 ```bash
-pnpm --filter @xrlp/core seed [--stage=funding] [--keep]   # fresh|verified|funding|escrowed|m1-released|fraud-caught
-pnpm --filter @xrlp/core simulate                          # whole demo story in memory, prints timeline
+pnpm --filter @xrlp/core serve      # HTTP on :4000 (PORT, DATA_DIR, CORS_ORIGINS); fake ledger + fake verifier by default
+pnpm --filter @xrlp/core seed       # = POST /api/admin/demo/reset {"seed":"maple-st"}: wipes DATA_DIR, writes the pre-staged demo
+pnpm --filter @xrlp/core simulate   # docs/04-demo-script.md end to end in memory, prints the timeline
 pnpm --filter @xrlp/core test
 ```
 
-Env: `DATA_DIR` (store location), `LEDGER_MODE=fake` (devnet adapter TODO), `CORE_VERIFIER=fake` (verifier adapter TODO), `FAKE_LEDGER_DELAY_MS` (simulated tx latency, e.g. `1500` for a realistic demo).
+## Wiring (`createCore()`)
+- `store`: `FileStore(DATA_DIR/core-db.json)` (in-memory with `inMemory: true`).
+- `ledger`: `LEDGER_MODE=fake` → `FakeLedger` (state persisted in `DATA_DIR/fake-ledger.json` so seed and server share escrows).
+  `devnet` → TODO adapter in `packages/xrpl`.
+- `verifier`: `CORE_VERIFIER=fake` → `FakeVerifier` (deterministic Maple St fixtures). `verifier` → TODO adapter in `packages/verifier`.
+- `release`: `ReleaseService` + `FilePreimageVault(DATA_DIR)` (AES-256-GCM sealed preimages). The service never sees a preimage.
 
-Demo helpers: `import { demo } from "@xrlp/core"` — `demo.DEMO` (fixed names/addresses), `demo.MAPLE_ID`, `demo.MAPLE_M`, and the story steps (`mapleToEscrowed`, `mapleMilestone1`, `mapleMilestone2Fraud`, `mapleExpireMilestone3`). `demoPhoto()` / `demoDoc()` create SVG data-URL evidence.
+## Flow rules (enforced in `src/service.ts`)
+fee (max 250 RLUSD, 20 bps) → `verifying` → verify (pass → `verified` + `VERIFIED_BUILDER` on first pass; fail → `rejected`;
+needs_human → stays `verifying`, inspectors get a `pre_visit` task) → lock (platform only; AI assigns inspector(s); vault with
+SubscriptionDate = funding deadline, RedemptionDate = + term + 7 days; 10% first-loss cover) → invest (KYC'd only, Subscription only,
+**never auto-closes**) → close (platform only, **explicit**, `too_soon` before SubscriptionDate; conditions only from the release
+service) → evidence (new round on resubmit) → audit (assigned inspector only; attested) → run checks (verdict attested **before**
+release; `evaluateRelease` → `verified`→`released` / `failed` / `needs_human`) → operator decision (platform only, reason required,
+attested **first**; can't override a failed check) → cancel per milestone (EscrowCancel then refund LoanPay; project `stalled`,
+other milestones continue) → repay → withdraw (Redemption only).
+
+`keeperTick()` cancels expired escrows (+ refund), retries pending refunds, and retries releases for `verified` milestones
+(e.g. after an `unsafe_release`). Idempotent. `tryStealDemo()` records a `release_refused` event with `tecCRYPTOCONDITION_ERROR`.
+
+Errors: `DomainError` → `toApiError()` → `{ error: { code, message, txResult?, txHash? } }` (codes per 05 §1).

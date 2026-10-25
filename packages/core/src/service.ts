@@ -394,7 +394,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 4 ----------
 
-  payVerificationFee(id: string, body: { builder: XrplAddress }): Promise<{ project: Project; events: ChainEvent[] }> {
+  async payVerificationFee(id: string, body: { builder: XrplAddress }): Promise<{ project: Project; events: ChainEvent[] }> {
     return this.locks.run(id, async () => {
       const { p, b } = await this.read((db) => {
         const p = this.projectIn(db, id);
@@ -417,7 +417,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 5 ----------
 
-  verifyProject(id: string): Promise<{ verification: ProjectVerification; project: Project; events: ChainEvent[] }> {
+  async verifyProject(id: string): Promise<{ verification: ProjectVerification; project: Project; events: ChainEvent[] }> {
     return this.locks.run(id, async () => {
       const { p, b, meta } = await this.read((db) => {
         const p = this.projectIn(db, id);
@@ -467,7 +467,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 6 ----------
 
-  lockTermsAndOpenFunding(id: string, body: { actor: XrplAddress }): Promise<{ project: Project; assignment: InspectorAssignment; events: ChainEvent[] }> {
+  async lockTermsAndOpenFunding(id: string, body: { actor: XrplAddress }): Promise<{ project: Project; assignment: InspectorAssignment; events: ChainEvent[] }> {
     this.requirePlatform(body.actor, "Lock terms");
     return this.locks.run(id, async () => {
       const { p, b, panel } = await this.read((db) => {
@@ -530,7 +530,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 7 ----------
 
-  invest(id: string, body: { investor: XrplAddress; amount: Rlusd }): Promise<{ investment: Investment; events: ChainEvent[] }> {
+  async invest(id: string, body: { investor: XrplAddress; amount: Rlusd }): Promise<{ investment: Investment; events: ChainEvent[] }> {
     const amount = fromMicro(toMicro(body.amount));
     if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Investment must be positive");
     return this.locks.run(id, async () => {
@@ -571,7 +571,7 @@ export class CoreService implements CoreApi {
     return d < cap ? d : cap;
   }
 
-  closeLoan(id: string, body: { actor: XrplAddress }): Promise<{ project: Project; events: ChainEvent[] }> {
+  async closeLoan(id: string, body: { actor: XrplAddress }): Promise<{ project: Project; events: ChainEvent[] }> {
     this.requirePlatform(body.actor, "Close the loan");
     return this.locks.run(id, async () => {
       const { p, b } = await this.read((db) => {
@@ -626,7 +626,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 9 ----------
 
-  submitEvidence(id: string, mid: string, files: EvidenceFile[]): Promise<{ milestone: Milestone; evidence: Evidence[] }> {
+  async submitEvidence(id: string, mid: string, files: EvidenceFile[]): Promise<{ milestone: Milestone; evidence: Evidence[] }> {
     if (!files.length) throw new DomainError("VALIDATION", "No evidence files");
     return this.locks.run(id, () =>
       this.store.write((db) => {
@@ -657,7 +657,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 10 ----------
 
-  submitAudit(
+  async submitAudit(
     id: string,
     mid: string,
     body: { report: AuditReportInput; photos: StoredFile[]; signedTxBlob?: string },
@@ -720,7 +720,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 11 ----------
 
-  runChecks(id: string, mid: string): Promise<{ verdict: Verdict; release?: { txHash: string; explorerUrl: string }; events: ChainEvent[] }> {
+  async runChecks(id: string, mid: string): Promise<{ verdict: Verdict; release?: { txHash: string; explorerUrl: string }; events: ChainEvent[] }> {
     return this.locks.run(id, async () => {
       const ctx = await this.read((db) => {
         const p = this.projectIn(db, id);
@@ -830,7 +830,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 12 ----------
 
-  resolveNeedsHuman(
+  async resolveNeedsHuman(
     id: string,
     mid: string,
     body: { actor: XrplAddress; decision: "approve" | "reject"; reason: string },
@@ -877,7 +877,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 13 ----------
 
-  cancelExpired(id: string, mid: string): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
+  async cancelExpired(id: string, mid: string): Promise<{ milestone: Milestone; events: ChainEvent[] }> {
     return this.locks.run(id, () => this.cancelExpiredLocked(id, mid));
   }
 
@@ -926,7 +926,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 14 ----------
 
-  repay(id: string, body: { amount: Rlusd }): Promise<{ project: Project; events: ChainEvent[] }> {
+  async repay(id: string, body: { amount: Rlusd }): Promise<{ project: Project; events: ChainEvent[] }> {
     const amount = fromMicro(toMicro(body.amount));
     if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Repayment must be positive");
     return this.locks.run(id, async () => {
@@ -957,7 +957,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 15 ----------
 
-  withdraw(id: string, body: { investor: XrplAddress; amount: Rlusd }): Promise<{ events: ChainEvent[] }> {
+  async withdraw(id: string, body: { investor: XrplAddress; amount: Rlusd }): Promise<{ events: ChainEvent[] }> {
     const amount = fromMicro(toMicro(body.amount));
     if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Withdrawal must be positive");
     return this.locks.run(id, async () => {
@@ -1020,7 +1020,7 @@ export class CoreService implements CoreApi {
 
   // ---------- route 23 ----------
 
-  tryStealDemo(id: string, mid: string): Promise<TryStealResult> {
+  async tryStealDemo(id: string, mid: string): Promise<TryStealResult> {
     return this.locks.run(id, async () => {
       const { p, m } = await this.read((db) => {
         const p = this.projectIn(db, id);
