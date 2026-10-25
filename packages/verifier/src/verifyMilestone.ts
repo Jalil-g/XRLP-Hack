@@ -105,7 +105,7 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     checkGpsWithinSite(ctx, loaded, policy),
     checkPhotoFresh(loaded, timeline, policy),
     checkNoDuplicatePhoto(ctx, loaded, prior, policy),
-    checkInvoiceMatchesBudget(ctx, loaded, policy, judgement.invoiceTotals),
+    checkInvoiceMatchesBudget(ctx, loaded, policy, judgement.invoiceTotals, prior),
     checkLienWaiverPresent(loaded, previousInvoices, { previousRequired: !!previousMilestone }),
     checkLienWaivers(loaded, previousInvoices),
     ...checkInspectorAudits(input, loaded, policy.requiredInspectors),
