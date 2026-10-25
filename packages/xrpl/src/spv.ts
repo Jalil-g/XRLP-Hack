@@ -2,7 +2,7 @@
 // After setup: master key disabled, only the SignerList {platform, builder, inspector, trustee} (w1 each, quorum 3)
 // can act for it. The AI key is NOT a signer (it only attests). See docs/03-architecture.md "SPV signer list".
 import { AccountSetAsfFlags, hashes, multisign, Wallet, type SubmittableTransaction } from "xrpl";
-import { getClient, signAndSubmit, submitBlob, XrplTxError, type TxResult } from "./client.ts";
+import { getClient, signAndSubmit, submitWithSigner, XrplTxError, type SubmitOptions, type TxResult } from "./client.ts";
 import { fundFromFaucet } from "./wallets.ts";
 import { ensureTrustline } from "./rlusd.ts";
 
@@ -101,16 +101,45 @@ export function checkSignerQuorum(list: { quorum: number; signers: { account: st
   return { ok: unknown.length === 0 && duplicates.length === 0 && weight >= list.quorum, weight, quorum: list.quorum, unknown, duplicates };
 }
 
+/** `sign` callback for submitWithSigner: each signer signs the prepared tx for multisig, then the blobs are combined. */
+export function multisignWith(signers: Wallet[]): <T extends SubmittableTransaction>(prepared: T) => string {
+  return (prepared) => multisign(signers.map((w) => w.sign(prepared, true).tx_blob));
+}
+
 /**
  * Autofill (fee sized for `signers.length`), sign with each signer (multisign) and combine. No network submit.
- * Returns the combined blob + its hash.
+ * Returns the combined blob + its hash. Not locked: submitting this blob later can race other txs from the same
+ * account on Sequence. To submit, use submitMultisigned.
  */
 export async function multisignBlob<T extends SubmittableTransaction>(tx: T, signers: Wallet[]): Promise<{ blob: string; hash: string }> {
   if (!signers.length) throw new Error(`${tx.TransactionType}: multisig needs at least one signer`);
   const client = await getClient();
   const prepared = await client.autofill({ ...tx, SigningPubKey: "" }, signers.length);
-  const blob = multisign(signers.map((w) => w.sign(prepared, true).tx_blob));
+  const blob = multisignWith(signers)(prepared);
   return { blob, hash: hashes.hashSignedTx(blob) };
+}
+
+/** Throws the XrplTxError rippled would return (tefNOT_MULTI_SIGNING / tefBAD_QUORUM / tefBAD_SIGNATURE), or returns. */
+export function assertSignerQuorum(txType: string, info: Pick<SpvInfo, "signerQuorum" | "signers">, signerAddresses: string[]): void {
+  if (info.signerQuorum == null) throw new XrplTxError(txType, "tefNOT_MULTI_SIGNING");
+  const q = checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signerAddresses);
+  if (q.ok) return;
+  const code = q.unknown.length || q.duplicates.length ? "tefBAD_SIGNATURE" : "tefBAD_QUORUM";
+  const why = q.unknown.length ? ` not on signer list: ${q.unknown.join(", ")}` : q.duplicates.length ? ` duplicate: ${q.duplicates.join(", ")}` : ` weight ${q.weight} < quorum ${q.quorum}`;
+  throw new XrplTxError(txType, `${code} (local check:${why})`);
+}
+
+/** Network seams of submitMultisigned (tests inject fakes; defaults are the real devnet calls). */
+export interface MultisigDeps {
+  getSpvInfo: (address: string) => Promise<Pick<SpvInfo, "signerQuorum" | "signers">>;
+  submitWithSigner: typeof submitWithSigner;
+}
+
+export interface SubmitMultisignedOptions extends SubmitOptions {
+  /** Check the signers against the on-ledger SignerList first. Default true. */
+  checkQuorum?: boolean;
+  /** Test seam. */
+  deps?: Partial<MultisigDeps>;
 }
 
 /**
@@ -118,20 +147,18 @@ export async function multisignBlob<T extends SubmittableTransaction>(tx: T, sig
  * Before submitting, checks the signers against the account's on-ledger SignerList and throws an XrplTxError
  * (`tefBAD_QUORUM` / `tefBAD_SIGNATURE`, no hash: tef results never reach the ledger) instead of waiting
  * for LastLedgerSequence to expire (what xrpl.js submitAndWait does with a tef). `checkQuorum: false` skips that.
+ * Goes through submitWithSigner, so autofill → multisign → submit → validation holds `withAccountLock(tx.Account)`:
+ * concurrent multisig txs for the same SPV never race on Sequence, and transient failures re-sign with all signers.
  */
-export async function submitMultisigned<T extends SubmittableTransaction>(tx: T, signers: Wallet[], opts: { checkQuorum?: boolean } = {}): Promise<TxResult> {
-  if (opts.checkQuorum !== false) {
-    const info = await getSpvInfo(tx.Account);
-    if (info.signerQuorum == null) throw new XrplTxError(tx.TransactionType, "tefNOT_MULTI_SIGNING");
-    const q = checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signers.map((w) => w.classicAddress));
-    if (!q.ok) {
-      const code = q.unknown.length || q.duplicates.length ? "tefBAD_SIGNATURE" : "tefBAD_QUORUM";
-      const why = q.unknown.length ? ` not on signer list: ${q.unknown.join(", ")}` : q.duplicates.length ? ` duplicate: ${q.duplicates.join(", ")}` : ` weight ${q.weight} < quorum ${q.quorum}`;
-      throw new XrplTxError(tx.TransactionType, `${code} (local check:${why})`);
-    }
+export async function submitMultisigned<T extends SubmittableTransaction>(tx: T, signers: Wallet[], opts: SubmitMultisignedOptions = {}): Promise<TxResult> {
+  const { checkQuorum, deps, ...submitOpts } = opts;
+  if (!signers.length) throw new Error(`${tx.TransactionType}: multisig needs at least one signer`);
+  if (checkQuorum !== false) {
+    const info = await (deps?.getSpvInfo ?? getSpvInfo)(tx.Account);
+    assertSignerQuorum(tx.TransactionType, info, signers.map((w) => w.classicAddress));
   }
-  const { blob } = await multisignBlob(tx, signers);
-  return submitBlob(blob, tx.TransactionType);
+  const submit = deps?.submitWithSigner ?? submitWithSigner;
+  return submit(tx.Account, { ...tx, SigningPubKey: "" }, multisignWith(signers), { ...submitOpts, signersCount: signers.length });
 }
 
 /** @deprecated compat alias for loan.ts / escrow.ts; use submitMultisigned. */
