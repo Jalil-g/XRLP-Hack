@@ -1,7 +1,10 @@
-// Offline tests for pipelined submission (XRPL-17, submit.ts R1-R6). `SeqLedger` is a sequence-aware fake ledger:
-// an open ledger applied in Sequence order, held (terPRE_SEQ) txs, LastLedgerSequence expiry, validated history with
-// searched_all, plus scripted faults (reject at submit, drop or delay after a tesSUCCESS prelim, tec final, socket
-// drops, another writer taking a Sequence). One ledger closes per round of polling (every sleep in the same turn).
+// Offline tests for pipelined submission (XRPL-17, submit.ts R1-R6). `SeqLedger` is a sequence-aware fake ledger that
+// behaves like rippled where it matters (devnet-checked, protocol notes §0a): an open ledger applied in Sequence order,
+// held txs (terPRE_SEQ, and tel* rejects, which rippled caches and retries), LastLedgerSequence expiry, and a `tx`
+// lookup that answers "not validated" forever for any blob the server has seen (never txnNotFound), so "dead" has to
+// come from account state (Sequence at a ledger, account_tx). Scripted faults: reject at submit, drop / delay / lose
+// the Sequence to another tx after a tesSUCCESS prelim, tec final, socket drops, busy lookups, another writer, a
+// lagging tx index. One ledger closes per round of polling (every sleep in the same turn), or mid-call via `closeHook`.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DisconnectedError } from "xrpl";
@@ -46,9 +49,13 @@ interface Fault {
   delay?: number;
   /** The socket dies during submit; `received`: the server took the blob anyway. */
   disconnect?: { received: boolean };
+  /** Accepted, but another tx with the same Sequence wins the next ledger (another writer on another server). */
+  dropAndReplace?: boolean;
+  /** Validates normally, but its `tx` lookup keeps answering "not validated" (a lagging tx index). */
+  lagLookup?: boolean;
 }
 
-type Entry = FakeTx & { delay: number; drop: boolean; final: string };
+type Entry = FakeTx & { delay: number; drop: boolean; final: string; replace: boolean };
 
 class SeqLedger implements PipelineIo {
   validated = 100;
@@ -60,8 +67,14 @@ class SeqLedger implements PipelineIo {
   busyLookups = 0;
   /** Added to the next nextSequence() answer only (a stale-high counter). */
   nextSeqSkew = 0;
-  /** false → `tx` lookups never report searched_all (gaps in server history). */
+  /** false → the server can't show past account state or history (sequenceAt / txWithSequence answer nothing). */
   completeHistory = true;
+  /** rippled holds locally submitted tel* txs and retries them at the next ledger (xrpl.org: tel is provisional). */
+  holdTel = true;
+  /** Called before every request; true → a ledger closes right then (closes in the middle of issue/resync). */
+  closeHook?: () => boolean;
+  /** Lookups answered txnNotFound (rippled never does that for a blob it has seen). */
+  missingAnswers = 0;
   /** Accounts that don't exist: account_info → actNotFound. */
   readonly unfunded = new Set<string>();
   /** Blobs carry minLedger (as client.ts does); false → the engine asks for the validated index itself. */
@@ -77,6 +90,9 @@ class SeqLedger implements PipelineIo {
   readonly rangeViolations: string[] = [];
   maxOutstanding = 0;
   externals = 0;
+  /** Every hash ever submitted: rippled's TransactionMaster cache, which `tx` answers from. */
+  private readonly seen = new Set<string>();
+  private readonly lagging = new Set<string>();
   onPrepare?: (intent: string, n: number, sequence: number) => void;
   private readonly seqs = new Map<string, number>();
   private open: Entry[] = [];
@@ -126,6 +142,7 @@ class SeqLedger implements PipelineIo {
   }
 
   private net(): void {
+    if (this.closeHook?.()) this.close();
     if (this.dropRequests > 0) {
       this.dropRequests--;
       throw new DisconnectedError("websocket closed");
@@ -138,7 +155,8 @@ class SeqLedger implements PipelineIo {
     if (this.validated + 1 > tx.lls) return "tefMAX_LEDGER";
     const next = this.openSeq(tx.account);
     if (tx.seq < next) return "tefPAST_SEQ";
-    const e: Entry = { ...tx, delay: f.delay ?? 0, drop: !!f.drop, final: f.final ?? "tesSUCCESS" };
+    const e: Entry = { ...tx, delay: f.delay ?? 0, drop: !!f.drop, final: f.final ?? "tesSUCCESS", replace: !!f.dropAndReplace };
+    if (f.lagLookup) this.lagging.add(tx.hash);
     if (tx.seq > next) {
       this.held.push(e);
       this.track();
@@ -161,7 +179,14 @@ class SeqLedger implements PipelineIo {
     const seqNow = (a: string) => next.get(a) ?? this.seqs.get(a) ?? this.start;
     const carry: Entry[] = [];
     for (const tx of this.open) {
-      if (tx.drop) {
+      if (tx.replace && tx.seq === seqNow(tx.account)) {
+        // another writer's tx with this Sequence wins the ledger; ours can never apply now
+        const hash = `foreign-${tx.account}-${tx.seq}-${++this.externals}`;
+        this.done.set(hash, { tx: { hash, account: tx.account, seq: tx.seq, lls: tx.lls, intent: hash }, result: "tesSUCCESS", ledger });
+        this.applied.set(hash, 1);
+        next.set(tx.account, seqNow(tx.account) + 1);
+        this.limbo.push(tx);
+      } else if (tx.drop) {
         this.limbo.push(tx);
       } else if (tx.delay > 0 || tx.seq !== seqNow(tx.account)) {
         tx.delay = Math.max(0, tx.delay - 1);
@@ -194,9 +219,14 @@ class SeqLedger implements PipelineIo {
     this.net();
     const tx = JSON.parse(blob) as FakeTx;
     this.submits.push(tx.hash);
+    this.seen.add(tx.hash);
     const f = this.faults.get(tx.hash) ?? {};
     this.faults.delete(tx.hash);
-    if (f.reject) return { engineResult: f.reject };
+    if (f.reject) {
+      // rippled caches a locally submitted tel* tx and retries it when it builds the next open ledger
+      if (this.holdTel && f.reject.startsWith("tel") && this.validated + 1 <= tx.lls) this.held.push({ ...tx, delay: 0, drop: false, final: "tesSUCCESS", replace: false });
+      return { engineResult: f.reject };
+    }
     if (f.disconnect) {
       if (f.disconnect.received) this.accept(tx, f);
       throw new DisconnectedError("websocket closed mid-submit");
@@ -211,12 +241,35 @@ class SeqLedger implements PipelineIo {
       throw Object.assign(new Error("Server is overloaded"), { data: { error: "tooBusy" } });
     }
     const d = this.done.get(hash);
-    if (d) {
+    if (d && !this.lagging.has(hash)) {
       if (range && (d.ledger < range.min || d.ledger > range.max)) this.rangeViolations.push(`${hash}@${d.ledger} not in ${range.min}..${range.max}`);
-      return { status: "validated", result: { hash, validated: true, ledger_index: d.ledger, meta: { TransactionResult: d.result }, tx_json: { Account: d.tx.account, Sequence: d.tx.seq } } };
+      return { status: "validated", result: this.result(hash) };
     }
-    if ([...this.open, ...this.held, ...this.limbo].some((x) => x.hash === hash)) return { status: "pending" };
+    if (this.seen.has(hash)) return { status: "pending" }; // rippled: cached, "validated: false", for as long as it's asked
+    this.missingAnswers++;
     return { status: "missing", searchedAll: range !== undefined && this.completeHistory };
+  }
+
+  private result(hash: string): ValidatedTx {
+    const d = this.done.get(hash)!;
+    return { hash, validated: true, ledger_index: d.ledger, meta: { TransactionResult: d.result }, tx_json: { Account: d.tx.account, Sequence: d.tx.seq } };
+  }
+
+  async sequenceAt(account: string, ledgerIndex: number) {
+    this.net();
+    if (!this.completeHistory || ledgerIndex > this.validated) return undefined;
+    let n = 0;
+    for (const d of this.done.values()) if (d.tx.account === account && d.ledger <= ledgerIndex) n++;
+    return this.start + n;
+  }
+
+  async txWithSequence(account: string, sequence: number, range: { min: number; max: number }) {
+    this.net();
+    if (!this.completeHistory) return undefined;
+    for (const [hash, d] of this.done) {
+      if (d.tx.account === account && d.tx.seq === sequence && d.ledger >= range.min && d.ledger <= range.max) return this.result(hash);
+    }
+    return undefined;
   }
 
   async validatedLedgerIndex() {
@@ -489,6 +542,69 @@ test("a prepare error (account_info actNotFound) propagates as is, like locked m
   assertIdle("rNOACCT");
 });
 
+test("rippled never says txnNotFound for a blob it saw: a dropped blob is proven dead from the account's Sequence at its LLS", T, async () => {
+  const L = new SeqLedger(1000);
+  const events: PipelineEvent[] = [];
+  L.faults.set("r1#1", { drop: true });
+  const out = await Promise.all(burst(L, "rSTATE", "r", 4, { margin: 5, onPipeline: (e) => events.push(e) }));
+  assert.deepEqual(out.map(seqOf), range(1000, 4));
+  assert.equal(L.missingAnswers, 0, "every lookup of a seen blob answered 'not validated', like devnet");
+  assert.equal(L.prepares.get("r1"), 2);
+  assert.ok(events.some((e) => e.kind === "resync"));
+  assertAppliedOnce(L, range(0, 4).map((i) => `r${i}`));
+  assertIdle("rSTATE");
+});
+
+test("a tel* blob that rippled holds and applies later: the same-Sequence re-sign gets tefPAST_SEQ, the held blob is the result, applied once", T, async () => {
+  const L = new SeqLedger(1000);
+  L.faults.set("h0#1", { reject: "telINSUF_FEE_P" }); // held by the server, applied while we back off
+  const [out] = await Promise.all(burst(L, "rTELHOLD", "h", 1));
+  assert.equal(out!.hash, "h0#1");
+  assert.equal(seqOf(out!), 1000);
+  assert.equal(L.prepares.get("h0"), 2); // h0#2 (same Sequence) was signed and refused; never a third at a new Sequence
+  assertAppliedOnce(L, ["h0"]);
+  assertIdle("rTELHOLD");
+});
+
+test("another writer's tx wins a pending blob's Sequence: account_tx proves ours dead → re-signed once, applied once", T, async () => {
+  const L = new SeqLedger(1000);
+  const events: PipelineEvent[] = [];
+  L.faults.set("w1#1", { dropAndReplace: true });
+  const out = await Promise.all(burst(L, "rWIN", "w", 3, { margin: 5, onPipeline: (e) => events.push(e) }));
+  const seqs = out.map(seqOf);
+  assert.equal(new Set(seqs).size, 3);
+  assert.ok(!seqs.includes(1001), "1001 went to the other writer");
+  assert.equal(L.prepares.get("w1"), 2);
+  assert.ok(events.some((e) => e.kind === "dirty"));
+  assertAppliedOnce(L, ["w0", "w1", "w2"]);
+  assertIdle("rWIN");
+});
+
+test("our blob validated but its tx lookup lags: the account history names it → returned as the result, never re-signed", T, async () => {
+  const L = new SeqLedger(1000);
+  L.faults.set("g0#1", { lagLookup: true });
+  const [out] = await Promise.all(burst(L, "rLAG", "g", 1, { margin: 4 }));
+  assert.equal(out!.hash, "g0#1");
+  assert.equal(L.prepares.get("g0"), 1);
+  assertAppliedOnce(L, ["g0"]);
+  assertIdle("rLAG");
+});
+
+test("a throwing onPipeline / onRetry callback never stalls the account or replaces the tx's outcome", T, async () => {
+  const L = new SeqLedger(1000);
+  const boom = () => {
+    throw new Error("logger exploded");
+  };
+  L.faults.set("q1#1", { drop: true });
+  L.faults.set("q3#1", { reject: "telINSUF_FEE_P" });
+  const out = await Promise.all(burst(L, "rBOOM", "q", 5, { margin: 5, onPipeline: boom, onRetry: boom }));
+  assert.equal(new Set(out.map(seqOf)).size, 5);
+  assertAppliedOnce(L, range(0, 5).map((i) => `q${i}`));
+  assertIdle("rBOOM");
+  const [after] = await Promise.all(burst(L, "rBOOM", "z", 1, { onPipeline: boom, onRetry: boom }));
+  assert.ok(after);
+});
+
 // ── disconnects ──────────────────────────────────────────────────────────────────────────
 
 test("connection lost before anything was sent → not_applied, retriable (nothing can apply), no hash", T, async () => {
@@ -563,7 +679,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-test("chaos (drops, tem, tel, disconnects, busy, foreign writers, delays, tec; 25 seeds × 30 txs × windows 1/4/10): never double-applied, never stuck", { timeout: 120_000 }, async () => {
+test("chaos (drops, tem, held tel, disconnects, busy, foreign writers, lost Sequences, lagging index, delays, tec, mid-call closes; 25 seeds × 30 txs × windows 1/4/10): never double-applied, never stuck", { timeout: 120_000 }, async () => {
   // Longer local soak: CHAOS_SEEDS=2000 pnpm --filter @xrlp/xrpl test
   const seeds = Number(process.env.CHAOS_SEEDS ?? 25);
   for (let k = 0; k < seeds * 3; k++) {
@@ -572,6 +688,7 @@ test("chaos (drops, tem, tel, disconnects, busy, foreign writers, delays, tec; 2
     const rnd = mulberry32(seed);
     const L = new SeqLedger(5000);
     const acct = `rCHAOS${seed}w${window}`;
+    L.closeHook = () => rnd() < 0.02; // a ledger closes in the middle of issue / resync now and then
     L.onPrepare = (intent, n) => {
       const h = `${intent}#${n}`;
       const r = rnd();
@@ -582,6 +699,8 @@ test("chaos (drops, tem, tel, disconnects, busy, foreign writers, delays, tec; 2
       else if (r < 0.31) L.external(acct);
       else if (r < 0.36) L.faults.set(h, { delay: 2 });
       else if (r < 0.4) L.faults.set(h, { final: "tecUNFUNDED_PAYMENT" });
+      else if (r < 0.44) L.faults.set(h, { dropAndReplace: true });
+      else if (r < 0.47) L.faults.set(h, { lagLookup: true });
       if (rnd() < 0.03) L.dropRequests = 2;
       if (rnd() < 0.03) L.busyLookups = 2;
     };

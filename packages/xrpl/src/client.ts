@@ -141,6 +141,47 @@ export const realLedgerIo: PipelineIo = {
     const high = res.result.queue_data?.highest_sequence;
     return high !== undefined && high + 1 > seq ? high + 1 : seq;
   },
+  async sequenceAt(account, ledgerIndex) {
+    try {
+      const res = await (await getClient()).request({ command: "account_info", account, ledger_index: ledgerIndex });
+      return res.result.validated === false ? undefined : res.result.account_data.Sequence;
+    } catch (e) {
+      const code = rpcError(e)?.error;
+      if (code === "lgrNotFound" || code === "actNotFound") return undefined;
+      throw e;
+    }
+  },
+  async txWithSequence(account, sequence, range) {
+    const client = await getClient();
+    let marker: unknown;
+    for (let page = 0; page < 20; page++) {
+      let res;
+      try {
+        res = await client.request({
+          command: "account_tx",
+          account,
+          ledger_index_min: range.min,
+          ledger_index_max: range.max,
+          forward: true,
+          limit: 200,
+          ...(marker !== undefined ? { marker } : {}),
+        } as Parameters<typeof client.request>[0]);
+      } catch (e) {
+        const code = rpcError(e)?.error;
+        if (code === "lgrIdxsInvalid" || code === "lgrIdxMalformed" || code === "lgrNotFound") return undefined;
+        throw e;
+      }
+      const r = res.result as unknown as { transactions?: Array<Record<string, unknown>>; marker?: unknown };
+      for (const entry of r.transactions ?? []) {
+        const txJson = (entry.tx_json ?? entry.tx) as { Account?: string; Sequence?: number; hash?: string } | undefined;
+        if (entry.validated === false || txJson?.Account !== account || txJson.Sequence !== sequence) continue;
+        return { ...entry, hash: String(entry.hash ?? txJson.hash), tx_json: txJson, validated: true };
+      }
+      if (r.marker === undefined) return undefined;
+      marker = r.marker;
+    }
+    return undefined;
+  },
   async reconnect() {
     await reconnect();
   },
@@ -210,14 +251,15 @@ export async function submitWithSigner<T extends SubmittableTransaction>(
     const prepare = async (sequence: number) => {
       const client = await getClient();
       const own = first ? tx.LastLedgerSequence : undefined; // a caller's LastLedgerSequence (e.g. preflight's): first blob only
-      first = false;
       // The mutex is held meanwhile: Fee (autofill) and the validated index in parallel, one round trip.
       const [validated, prepared] = await Promise.all([
         client.getLedgerIndex(),
         client.autofill({ ...tx, Account: account, Sequence: sequence, LastLedgerSequence: own ?? 0 }, opts.signersCount),
       ]);
       prepared.LastLedgerSequence = own ?? validated + margin;
-      return { ...describeBlob(sign(prepared), tx.TransactionType), minLedger: validated + 1 };
+      const blob = { ...describeBlob(sign(prepared), tx.TransactionType), minLedger: validated + 1 };
+      first = false;
+      return blob;
     };
     return toResult(await submitPipelined({ account, txType: tx.TransactionType, prepare }, realLedgerIo, withLog(opts)));
   }

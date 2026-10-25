@@ -381,15 +381,19 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
 //      never leaves a gap: nothing later has been signed yet, and the next tx reuses that Sequence.
 //  R2  tec* (Sequence consumed, later txs unaffected) and tem* are final and never retried.
 //  R3  Every blob a ticket may have sent carries ONE Sequence. Same-Sequence re-signs (tel*, tefMAX_LEDGER at submit)
-//      are always safe: at most one of them can apply. A ticket only gets a different Sequence once every blob it may
-//      have sent is provably dead: validated ledger past its LastLedgerSequence and `tx` searched_all with no hit.
+//      are always safe: at most one of them can apply. A tel* blob still counts as sent: rippled may hold it and apply
+//      it later (xrpl.org: tel results are provisional). A ticket only gets a different Sequence once every blob it may
+//      have sent is provably dead (R5).
 //  R4  tefPAST_SEQ on a never-sent blob (another writer used the Sequence), terPRE_SEQ (a gap before us), and a blob
 //      that died unapplied (later txs now stall behind its Sequence) mark the account dirty: nothing new is issued,
 //      every in-flight tx settles (validated, or provably dead), the counter is re-read from the ledger, and only the
 //      dead tickets are re-signed, in arrival order. A tx that may still apply is never re-signed with a new Sequence.
-//  R5  Every pipelined blob has a LastLedgerSequence, so "dead" is provable (a ranged `tx` lookup that starts at the
-//      first ledger it could land in: security review L1). Incomplete history, a failing lookup or a lost connection
-//      → `unknown_outcome` / `connection_lost` (never re-signed), and the account resyncs before reuse.
+//  R5  Every pipelined blob has a LastLedgerSequence L, so "dead" is provable from account STATE once the validated
+//      ledger reaches L: the account's Sequence in ledger L ≤ S (nothing used S by L, and no blob can apply after L),
+//      or `account_tx` shows another tx used S. Not from `tx` lookups: rippled answers "validated: false" (never
+//      txnNotFound + searched_all) for any blob it has seen, for as long as it stays cached (devnet: protocol notes
+//      §0a). Missing history, a failing lookup or a lost connection → `unknown_outcome` / `connection_lost` (never
+//      re-signed), and the account resyncs before reuse.
 //  R6  Explicit `withAccountLock` sections (self-autofilled or pre-signed blobs, Batch, loan close) are exclusive: they
 //      wait for the window to drain, run with locked semantics, and the counter is re-read after them. So pre-signed
 //      blobs just submit with their own Sequence; a conflict surfaces as their error. Multisig is just another signer.
@@ -450,10 +454,14 @@ export function usePipeline(account: string, tx: { TransactionType: string; Sequ
   return tx.TransactionType !== "Batch" && tx.Sequence == null && tx.TicketSequence == null;
 }
 
-/** LedgerIo plus the account's next free Sequence. Real implementation: client.ts `realLedgerIo`. */
+/** LedgerIo plus account state. Real implementation: client.ts `realLedgerIo`. */
 export interface PipelineIo extends LedgerIo {
   /** Next Sequence for `account` on the open ledger, after its queued txs (`account_info` current, `queue: true`). */
   nextSequence(account: string): Promise<number>;
+  /** `account`'s Sequence in validated ledger `ledgerIndex`; undefined when the server can't say (no such ledger). */
+  sequenceAt(account: string, ledgerIndex: number): Promise<number | undefined>;
+  /** The validated tx from `account` that used `sequence`, within ledgers `range` (`account_tx`); undefined if none found. */
+  txWithSequence(account: string, sequence: number, range: { min: number; max: number }): Promise<ValidatedTx | undefined>;
 }
 
 export type PipelineEvent =
@@ -479,6 +487,7 @@ type TicketState = "waiting" | "issuing" | "in_flight" | "parked" | "done";
 
 interface SentBlob {
   hash: string;
+  sequence: number;
   lastLedgerSequence: number;
   /** Validated index + 1 at its first submit: the earliest ledger it could be in. */
   firstLedger: number;
@@ -614,11 +623,20 @@ export async function submitPipelined(req: PipelineRequest, io: PipelineIo, opts
   }
 }
 
+/** Run a caller's onRetry/onPipeline: a throwing logger must never break the engine's state. */
+function emit(f: () => void): void {
+  try {
+    f();
+  } catch {
+    // ignored
+  }
+}
+
 function markDirty(p: AccountPipe, t: Ticket, reason: string): void {
   if (p.dirty) return;
   p.dirty = reason;
   const cur = t.cur;
-  t.opts.onPipeline?.({ kind: "dirty", account: p.account, reason, ...(cur ? { hash: cur.hash } : {}), ...(cur?.sequence !== undefined ? { sequence: cur.sequence } : {}) });
+  emit(() => t.opts.onPipeline?.({ kind: "dirty", account: p.account, reason, ...(cur ? { hash: cur.hash } : {}), ...(cur?.sequence !== undefined ? { sequence: cur.sequence } : {}) }));
 }
 
 /**
@@ -644,7 +662,7 @@ async function issue(p: AccountPipe, t: Ticket): Promise<void> {
   };
   const markSent = (firstLedger: number) => {
     const cur = t.cur!;
-    if (!t.sent.some((s) => s.hash === cur.hash)) t.sent.push({ hash: cur.hash, lastLedgerSequence: cur.lastLedgerSequence!, firstLedger });
+    if (!t.sent.some((s) => s.hash === cur.hash)) t.sent.push({ hash: cur.hash, sequence: cur.sequence!, lastLedgerSequence: cur.lastLedgerSequence!, firstLedger });
   };
 
   t.state = "issuing";
@@ -733,7 +751,8 @@ async function issue(p: AccountPipe, t: Ticket): Promise<void> {
       }
       fresh = true; // tefMAX_LEDGER, never sent: same Sequence, fresh LastLedgerSequence
     } else if (cls === "resubmit") {
-      fresh = true; // tel*: not applied, not relayed → same Sequence, fresh Fee
+      markSent(firstLedger); // tel*: not applied now, but rippled may hold and retry it until its LastLedgerSequence
+      fresh = true; // same Sequence, fresh Fee: at most one of the two can apply
     } else if (cls === "fatal") {
       const err = fail(prelim, false, detail ? { detail } : {});
       if (t.sent.length) return inFlight(err);
@@ -741,7 +760,8 @@ async function issue(p: AccountPipe, t: Ticket): Promise<void> {
     }
     // conn / busy: the same blob again (same hash: idempotent); if prepare itself failed, prepare again
 
-    if (t.cur) opts.onRetry?.({ attempt: t.attempts, reason: prelim, hash: t.cur.hash, action: fresh ? "same_seq" : "resubmit_same_blob" });
+    const cur = t.cur;
+    if (cur) emit(() => opts.onRetry?.({ attempt: t.attempts, reason: prelim, hash: cur.hash, action: fresh ? "same_seq" : "resubmit_same_blob" }));
     await io.sleep(Math.min(backoff0 * 2 ** (attempt - 1), 4000));
   }
 }
@@ -751,8 +771,8 @@ export const PIPELINE_POLL_MS = 250;
 
 /**
  * One validated-ledger poller per LedgerIo, shared by every pipelined tx waiting on it: they all wake right after a
- * ledger validates (so freed window slots refill into the next open ledger), and run their `tx` lookups once per
- * ledger instead of once per poll. Runs only while someone waits.
+ * ledger validates (so freed window slots refill into the next open ledger), and run their lookups once per ledger
+ * instead of once per poll. Runs only while someone waits, outside any caller's lock context.
  */
 class LedgerWatch {
   ms = PIPELINE_POLL_MS;
@@ -767,25 +787,30 @@ class LedgerWatch {
     if (this.seen > after) return Promise.resolve(this.seen);
     return new Promise((resolve, reject) => {
       this.waiters.push({ after, resolve, reject });
-      if (!this.running) void this.run();
+      if (!this.running) {
+        this.running = true;
+        held.exit(() => void this.run());
+      }
     });
   }
 
   private async run(): Promise<void> {
-    this.running = true;
     try {
       while (this.waiters.length) {
+        let v: number;
         try {
-          this.seen = Math.max(this.seen, await this.io.validatedLedgerIndex());
+          v = await this.io.validatedLedgerIndex();
         } catch (e) {
-          const all = this.waiters; // each waiter handles it (reconnect, bounded)
+          const all = this.waiters; // each waiter handles it (reconnect / back off, bounded)
           this.waiters = [];
           for (const w of all) w.reject(e);
           return;
         }
-        const ready = this.waiters.filter((w) => this.seen > w.after);
-        this.waiters = this.waiters.filter((w) => !(this.seen > w.after));
-        for (const w of ready) w.resolve(this.seen);
+        const back = v < this.seen; // a devnet reset, or a server behind the last one: wake everyone with the new index
+        this.seen = v;
+        const ready = back ? this.waiters : this.waiters.filter((w) => v > w.after);
+        this.waiters = back ? [] : this.waiters.filter((w) => !(v > w.after));
+        for (const w of ready) w.resolve(v);
         if (this.waiters.length) await this.io.sleep(this.ms);
       }
     } finally {
@@ -796,44 +821,57 @@ class LedgerWatch {
 
 const watches = new WeakMap<LedgerIo, LedgerWatch>();
 
-/** Outside the mutex: wait until one sent blob is validated (→ result) or all are provably dead (R3, R5). */
+/**
+ * Outside the mutex: wait until one sent blob is validated (→ result) or all are provably dead (R3, R5). All sent blobs
+ * carry one Sequence S. While the validated ledger is below their highest LastLedgerSequence L, only the blob lookups
+ * can decide (validated → result). From L on, account state decides: Sequence in ledger L ≤ S → none applied (dead);
+ * > S → S was used by some tx by L: `account_tx` names it (ours → that's the result; another → ours are dead).
+ */
 async function settle(t: Ticket): Promise<ValidatedTx | "dead"> {
   const { io, opts, req } = t;
   if (!t.sent.length) throw new Error(`${req.txType}: settle with nothing sent (pipeline bug)`); // "dead" must be proven
+  const seq = t.sent[0]!.sequence;
+  if (t.sent.some((s) => s.sequence !== seq)) throw new Error(`${req.txType}: sent blobs with different Sequences (pipeline bug)`);
   let watch = watches.get(io);
   if (!watch) watches.set(io, (watch = new LedgerWatch(io)));
   if (opts.pollMs !== undefined) watch.ms = Math.min(watch.ms, opts.pollMs);
-  const unknown = (hash: string | undefined, detail: string, cause?: unknown) =>
-    new XrplTxError(req.txType, "unknown_outcome", hash, { detail, ...(cause !== undefined ? { cause: redactedCause(cause) } : {}) });
+  const last = () => t.sent[t.sent.length - 1]!.hash;
+  const unknown = (detail: string, cause?: unknown) =>
+    new XrplTxError(req.txType, "unknown_outcome", last(), { detail, ...(cause !== undefined ? { cause: redactedCause(cause) } : {}) });
   let connErrors = 0;
   let incomplete = 0;
   let busy = 0;
   let seen = 0;
   for (;;) {
     try {
-      const v = (seen = await watch.next(seen)); // a stale cached index only delays "closed out": never wrongly dead
-      let dead = 0;
+      const v = (seen = await watch.next(seen)); // a stale cached index only delays the proof: never wrongly dead
       for (const s of t.sent) {
-        const closedOut = v >= s.lastLedgerSequence;
-        const floor = Math.min(s.firstLedger, s.lastLedgerSequence);
-        const min = Math.max(floor, s.lastLedgerSequence - MAX_LOOKUP_SPAN);
-        const lk = await io.lookup(s.hash, closedOut ? { min, max: s.lastLedgerSequence } : undefined);
+        const lk = await io.lookup(s.hash);
         if (lk.status === "validated") return lk.result;
-        if (closedOut && lk.status === "missing") {
-          if (lk.searchedAll && min <= floor) dead++; // proof only if the range starts where it could first land (L1)
-          else if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS) throw unknown(s.hash, "server history incomplete; check the hash");
+      }
+      const lls = Math.max(...t.sent.map((s) => s.lastLedgerSequence));
+      if (v >= lls) {
+        const at = await io.sequenceAt(req.account, lls);
+        if (at !== undefined && at <= seq) return "dead"; // nothing used S by L, and no blob can apply after its LLS
+        if (at !== undefined) {
+          const floor = Math.min(...t.sent.map((s) => Math.min(s.firstLedger, s.lastLedgerSequence)));
+          const taker = await io.txWithSequence(req.account, seq, { min: floor, max: lls });
+          if (taker && t.sent.some((s) => s.hash === taker.hash)) return taker; // ours (its tx lookup lagged)
+          if (taker) return "dead"; // another tx used S: none of ours can ever apply
+        }
+        if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS) {
+          throw unknown(at === undefined ? "server can't show the account at the LastLedgerSequence ledger; check the hash" : "Sequence used but the tx isn't in the account history yet; check the hash");
         }
       }
-      if (dead === t.sent.length) return "dead";
     } catch (e) {
       if (e instanceof XrplTxError) throw e;
       if (isConnectionError(e)) {
-        if (++connErrors > MAX_CONN_ERRORS) throw new XrplTxError(req.txType, "connection_lost", t.cur?.hash, { detail: "outcome unknown; check the hash", cause: redactedCause(e) });
+        if (++connErrors > MAX_CONN_ERRORS) throw new XrplTxError(req.txType, "connection_lost", last(), { detail: "outcome unknown; check the hash", cause: redactedCause(e) });
         await io.reconnect();
       } else if (isTransientRpcError(e) && ++busy <= MAX_BUSY_POLLS) {
         await io.sleep(1000); // tooBusy / noNetwork …: says nothing about the tx, ask again later
       } else {
-        throw unknown(t.cur?.hash, "could not look the tx up; check the hash", e);
+        throw unknown("could not look the tx up; check the hash", e);
       }
       seen = 0; // look again right away
     }
@@ -842,16 +880,18 @@ async function settle(t: Ticket): Promise<ValidatedTx | "dead"> {
 
 /**
  * R4: once the account is dirty and nothing of it may still apply (no ticket issuing or in flight), re-read the
- * counter from the ledger and re-sign the parked tickets in arrival order, all under the mutex.
+ * counter from the ledger and re-sign the parked tickets in arrival order, all under the mutex. Detached from the
+ * caller's lock context; state changes happen before any callback runs.
  */
 function maybeResync(p: AccountPipe, trigger: Ticket): void {
   if (!p.dirty || p.resyncing || p.live() > 0) return;
   if (![...p.tickets].some((x) => x.state === "parked")) {
     // Nothing to re-sign: forget the counter, the next issue re-reads it under the mutex.
-    trigger.opts.onPipeline?.({ kind: "resync", account: p.account, reason: p.dirty, resign: 0 });
+    const reason = p.dirty;
     p.dirty = undefined;
     p.nextSeq = undefined;
     p.wake();
+    emit(() => trigger.opts.onPipeline?.({ kind: "resync", account: p.account, reason, resign: 0 }));
     return;
   }
   p.resyncing = true;
@@ -867,10 +907,12 @@ function maybeResync(p: AccountPipe, trigger: Ticket): void {
         } catch {
           // issue() reads it again (with its own connection handling)
         }
-        trigger.opts.onPipeline?.({ kind: "resync", account: p.account, reason, ...(p.nextSeq !== undefined ? { nextSequence: p.nextSeq } : {}), resign: parked.length });
+        const next = p.nextSeq;
+        emit(() => trigger.opts.onPipeline?.({ kind: "resync", account: p.account, reason, ...(next !== undefined ? { nextSequence: next } : {}), resign: parked.length }));
         for (const x of parked) {
           if (p.dirty) break; // a re-sign hit a new anomaly: the rest wait for the next round
-          if (x.cur) x.opts.onRetry?.({ attempt: x.attempts, reason: `resync (${reason})`, hash: x.cur.hash, action: "new_seq" });
+          const cur = x.cur;
+          if (cur) emit(() => x.opts.onRetry?.({ attempt: x.attempts, reason: `resync (${reason})`, hash: cur.hash, action: "new_seq" }));
           try {
             await issue(p, x);
           } catch (e) {
@@ -888,5 +930,5 @@ function maybeResync(p: AccountPipe, trigger: Ticket): void {
       maybeResync(p, trigger);
     }
   };
-  void run();
+  held.exit(() => void run());
 }
