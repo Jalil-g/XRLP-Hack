@@ -4,6 +4,10 @@
 
 The user rejected the restrained frontend polish and requested a more impressive, intuitive finance platform inspired by Ramp, Robinhood and Apple. `docs/ideas/shared-frontend-style.md` now supersedes the previous white/blue Apple/Notion visual restrictions across both apps. The chosen implementation direction uses warm neutrals, dark capital summaries, selective chartreuse and stronger financial hierarchy. Preserve all domain behavior and guided reviews. Write the guide first, then implement on a new branch with Opus or GPT-6.1 Sol agents; independent rendered review is required. Pitch timing/storyline are unchanged.
 
+- Implementation: GPT-6.1 Sol built the first pass, but its Codex run stopped at the usage limit. Claude Opus finished it and acted on an independent visual review. New shared pieces: a capital bar (labelled proportions from real amounts) and a milestone rail used on both the project and builder pages. Amounts follow one rule: whole amounts without decimals, fractional amounts to the cent.
+- Inspector mock mode now shows the verifier's CC0 fixture photos through `apps/inspector/app/fixture-files`, which mirrors the web route. Scenes with no matching photo (dry-in, rough-in) keep the drawn stand-ins.
+- Open: in mock mode, the inspector's Maple St fixture amounts and SoV codes differ from web's (M1 30,000 vs 36,000). Live mode reads one core, so they agree there. Aligning the mocks means changing the inspector fixtures and their tests (owner @RoroDev2023).
+
 ## Shared frontend polish — 2026-10-25
 
 - User authorized a consistent Apple/Notion-style polish of both `apps/web` and `apps/inspector`. Both consume `apps/styles/drawproof.css`; inspector compatibility aliases preserve existing component APIs. No domain contracts or signing algorithms change.
