@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -79,7 +79,11 @@ export function recorder(page, dir) {
         while (running) {
           const t = Date.now() - t0
           try {
-            const r = await page.send('Page.captureScreenshot', { format: 'jpeg', quality: 85 })
+            // a screenshot can never resolve while the page is navigating: give up on it after 2.5 s and move on
+            const r = await Promise.race([
+              page.send('Page.captureScreenshot', { format: 'jpeg', quality: 85 }),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('capture timeout')), 2500)),
+            ])
             const f = join(dir, `f${String(n++).padStart(5, '0')}.jpg`)
             writeFileSync(f, Buffer.from(r.data, 'base64'))
             frames.push({ f, t })
@@ -87,7 +91,7 @@ export function recorder(page, dir) {
         }
       })()
     },
-    async stop() { running = false; await loop; return frames },
+    async stop() { running = false; await Promise.race([loop, sleep(6000)]); return frames },
   }
 }
 
@@ -96,8 +100,8 @@ export function concatList(frames, listFile, endPadMs = 1500) {
   frames.forEach((fr, i) => {
     const next = frames[i + 1]
     const d = next ? (next.t - fr.t) / 1000 : endPadMs / 1000
-    lines.push(`file '${fr.f}'`, `duration ${Math.max(d, 0.04).toFixed(3)}`)
+    lines.push(`file '${resolve(fr.f)}'`, `duration ${Math.max(d, 0.04).toFixed(3)}`)
   })
-  lines.push(`file '${frames.at(-1).f}'`)
+  lines.push(`file '${resolve(frames.at(-1).f)}'`)
   writeFileSync(listFile, lines.join('\n'))
 }
