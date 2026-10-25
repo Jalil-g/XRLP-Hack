@@ -41,6 +41,35 @@ differently on devnet, devnet wins: write it down here and in `docs/decisions.md
 > **The biggest finding: `LendingProtocolV1_1` is enabled on devnet, and it changes the lending flow.**
 > It is not mentioned in our original architecture. See §3.
 
+### 0a. Pipelined submission (XRPL-17)
+
+Measured 2026-10-25 with `pnpm --filter @xrlp/xrpl stress --pipeline` (fresh faucet wallets, window 5). Semantics:
+`packages/xrpl/API.md` "Pipelined mode".
+
+- **One account can land several txs per ledger.** Consecutive Sequences submitted in order to the same server all get
+  `tesSUCCESS` at submit and validate in the same ledger (up to 5 of ours per ledger). XRPL-12's ~1 tx per ledger per
+  account came from our lock, which waits for validation, not from the ledger.
+- **Timings.** Devnet closes a ledger every ~3.2–3.3 s. Locked: 20 Payments took 20 ledgers spread over 28–33 (~1.6
+  ledgers per tx), 93.9–108.1 s. Pipelined: the same 20 took 6 consecutive ledgers, **21.8 s, 5.0×**
+  ([first](https://devnet.xrpl.org/transactions/505E5C878A7A8F90D2163CC106D5ADB947F23160DFC7ED8CC3AE21D8CB597B69) ·
+  [last](https://devnet.xrpl.org/transactions/35609C7199A951971CCEDF8376D80100D2EA477504A18D95B12CAE9A2CA52647)).
+  20 multisig (2-of-3) Payments pipelined: 23.0 s.
+- **A Sequence is consumed only by a validated tx** (tes or tec). `tem` / `tef` / `tel` at submit consume nothing. A tx
+  that never validates leaves a gap, and every later tx from the account waits behind it (`terPRE_SEQ`, held by the
+  server until its own LastLedgerSequence). That's why the pipeline re-signs only once the stuck txs are provably dead.
+  (rippled semantics, not hit in these runs: [transaction results](https://xrpl.org/docs/references/protocol/transactions/transaction-results),
+  [ter codes](https://xrpl.org/docs/references/protocol/transactions/transaction-results/ter-codes),
+  [reliable submission](https://xrpl.org/docs/concepts/transactions/reliable-transaction-submission); offline-tested in
+  `packages/xrpl/test/pipeline.test.ts`.)
+- **Another writer on the same account** (`--foreign`): a raw Payment took the pipeline's next Sequence 6395951
+  ([tx](https://devnet.xrpl.org/transactions/9B7AFC1C84824A4D0939ED5E7E61C918D6DA51BFBEB94C607583B9B8340162AE)). Our
+  next submit got `tefPAST_SEQ` (nothing applied), so the account drained, resynced to 6395952 and re-signed 5 txs
+  ([re-signed](https://devnet.xrpl.org/transactions/42DD30CFAE74F620DF31FAC7208C6AE57E24551DF9A8F85EC438FD0E19BCE3F8)).
+  Still 20/20 in 21.3 s.
+- **Sequential flows don't speed up.** `prestage --only A`: 123 s locked, 123 s pipelined, 132 s locked again. The script
+  awaits each of its ~20 txs (validation: ~1.5 ledgers each) and waits ~30 s for the vault's SubscriptionDate. Only
+  concurrent submits from one account gain.
+
 ---
 
 ## 1. (a) Escrow: who can release, timing, DepositAuth, IOU requirements
