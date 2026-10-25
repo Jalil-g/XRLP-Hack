@@ -8,7 +8,7 @@ import {
   type LoanSet,
   type Wallet,
 } from "xrpl";
-import { createdNodeId, getClient, getLedgerEntry, signAndSubmit, submitBlob, type TxResult } from "./client.ts";
+import { createdNodeId, getClient, getLedgerEntry, signAndSubmit, submitBlob, withAccountLock, type TxResult } from "./client.ts";
 import { COVER_RATE_LIQUIDATION, COVER_RATE_MINIMUM, MANAGEMENT_FEE_RATE, validateBrokerRates } from "./lending-math.ts";
 import { rlusdAmount } from "./rlusd.ts";
 import { multisignAndSubmit } from "./spv.ts";
@@ -113,9 +113,13 @@ export interface LoanSetParams {
 /**
  * Broker-owner-initiated LoanSet: platform signs as Account with Counterparty = borrower,
  * then the borrower (SPV multisig quorum, or single key) fills CounterpartySignature.
+ * Drawproof terms: PaymentTotal ≥ 2, InterestRate > 0, no late fees (LatePaymentFee / LateInterestRate never set).
+ * autofill → sign → countersign → submit runs under the broker owner's account lock (XRPL-12), so no other tx from
+ * the platform can take this Sequence in between.
  */
 export async function loanSet(p: LoanSetParams): Promise<{ tx: TxResult; loanId: string }> {
-  const client = await getClient();
+  if (!Number.isInteger(p.paymentTotal) || p.paymentTotal < 2) throw new Error(`LoanSet: PaymentTotal must be an integer >= 2, got ${p.paymentTotal}`);
+  if (!Number.isInteger(p.interestRate) || p.interestRate <= 0) throw new Error(`LoanSet: InterestRate must be a positive integer (1/10 bps), got ${p.interestRate}`);
   const base: LoanSet = {
     TransactionType: "LoanSet",
     Account: p.brokerOwner.classicAddress,
@@ -132,16 +136,19 @@ export async function loanSet(p: LoanSetParams): Promise<{ tx: TxResult; loanId:
     ...(p.fee ? { Fee: p.fee } : {}),
     ...(p.data ? { Data: convertStringToHex(p.data.slice(0, 200)) } : {}),
   };
-  const prepared = await client.autofill(base);
-  const firstSigned = p.brokerOwner.sign(prepared);
-  let blob: string;
-  if ("multisig" in p.borrowerSig) {
-    const parts = p.borrowerSig.multisig.map((w) => signLoanSetByCounterparty(w, firstSigned.tx_blob, { multisign: true }).tx);
-    blob = combineLoanSetCounterpartySigners(parts).tx_blob;
-  } else {
-    blob = signLoanSetByCounterparty(p.borrowerSig.single, firstSigned.tx_blob).tx_blob;
-  }
-  const tx = await submitBlob(blob, "LoanSet");
+  const tx = await withAccountLock(p.brokerOwner.classicAddress, async () => {
+    const client = await getClient();
+    const prepared = await client.autofill(base);
+    const firstSigned = p.brokerOwner.sign(prepared);
+    let blob: string;
+    if ("multisig" in p.borrowerSig) {
+      const parts = p.borrowerSig.multisig.map((w) => signLoanSetByCounterparty(w, firstSigned.tx_blob, { multisign: true }).tx);
+      blob = combineLoanSetCounterpartySigners(parts).tx_blob;
+    } else {
+      blob = signLoanSetByCounterparty(p.borrowerSig.single, firstSigned.tx_blob).tx_blob;
+    }
+    return submitBlob(blob, "LoanSet");
+  });
   const loanId = createdNodeId(tx, "Loan");
   if (!loanId) throw new Error(`LoanSet ${tx.hash}: no Loan node in metadata`);
   return { tx, loanId };
