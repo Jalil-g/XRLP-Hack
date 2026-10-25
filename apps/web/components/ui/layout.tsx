@@ -44,7 +44,7 @@ export function Section({
 }) {
   return (
     <section className={cn("min-w-0", className)}>
-      <div className="mb-4 flex items-baseline justify-between gap-4">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-4">
         <h2 className="text-heading">{title}</h2>
         {aside && <div className="text-caption text-ink-2">{aside}</div>}
       </div>
@@ -56,7 +56,7 @@ export function Section({
 /** Notion-style property list: label column in secondary text, value in ink. */
 export function Properties({ items, labelWidth = 160, className }: { items: { label: string; value: React.ReactNode }[]; labelWidth?: number; className?: string }) {
   return (
-    <dl className={cn("grid gap-x-4 text-small", className)} style={{ gridTemplateColumns: `${labelWidth}px minmax(0,1fr)` }}>
+    <dl className={cn("grid gap-x-4 text-small", className)} style={{ gridTemplateColumns: `minmax(0, min(40%, ${labelWidth}px)) minmax(0,1fr)` }}>
       {items.map((it) => (
         <React.Fragment key={it.label}>
           <dt className="py-1.5 text-ink-2">{it.label}</dt>

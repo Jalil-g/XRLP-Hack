@@ -76,6 +76,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
                 remaining={fromCents(toCents(p.terms.principal) - raised)}
                 rateBps={p.terms.interestRateBps}
                 investor={session.investor}
+                redemptionDate={d.vault?.redemptionDate}
               />
             ) : undefined
           }

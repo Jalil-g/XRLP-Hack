@@ -80,7 +80,7 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
         <NextStep
           title="Pay the verification fee"
           body="250 RLUSD pays for the AI review of your identity, the project's feasibility and your capability, plus an inspector visit if one is needed. In production the fee scales with project size."
-          action={<ActionButton action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>Pay 250 RLUSD</ActionButton>}
+          action={<ActionButton context={p.name} action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>Pay 250 RLUSD</ActionButton>}
         />
       )}
       {p.status === "verifying" && (

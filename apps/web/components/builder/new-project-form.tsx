@@ -176,7 +176,9 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
           Each line becomes part of a milestone escrow. The evidence and checks per line are set by the template, or during verification for lines you add. You
           can change amounts and wording, not what counts as done.
         </p>
-        <table className="w-full border-collapse text-left">
+        <p className="text-caption text-ink-2 lg:hidden">Scroll horizontally to edit all schedule fields.</p>
+        <div role="region" aria-label="Edit Schedule of Values" tabIndex={0} className="overflow-x-auto">
+        <table className="w-full min-w-[900px] border-collapse text-left">
           <thead>
             <tr className="border-y border-line bg-band text-caption text-ink-2">
               <th className="w-[130px] px-3 py-2.5 font-medium">Code</th>
@@ -191,19 +193,19 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
             {rows.map((r) => (
               <tr key={r.id} className="border-b border-line align-top">
                 <td className="px-3 py-2">
-                  <Input aria-label="Code" className="h-9 text-small" value={r.line.code} onChange={(e) => update(r.id, { code: e.target.value })} />
+                  <Input aria-label="Code" className="h-11 text-small" value={r.line.code} onChange={(e) => update(r.id, { code: e.target.value })} />
                 </td>
                 <td className="px-3 py-2">
-                  <Input aria-label="Work" className="h-9 text-small" value={r.line.title} onChange={(e) => update(r.id, { title: e.target.value })} />
+                  <Input aria-label="Work" className="h-11 text-small" value={r.line.title} onChange={(e) => update(r.id, { title: e.target.value })} />
                 </td>
                 <td className="px-3 py-2">
-                  <Input aria-label="Trade" className="h-9 text-small" value={r.line.trade} onChange={(e) => update(r.id, { trade: e.target.value })} />
+                  <Input aria-label="Trade" className="h-11 text-small" value={r.line.trade} onChange={(e) => update(r.id, { trade: e.target.value })} />
                 </td>
                 <td className="px-3 py-2">
                   <Input
                     aria-label="Amount"
                     inputMode="decimal"
-                    className="tabular h-9 text-right text-small"
+                    className="tabular h-11 text-right text-small"
                     value={r.line.amount}
                     onChange={(e) => update(r.id, { amount: e.target.value.replace(/[^\d.]/g, "") || "0" })}
                   />
@@ -235,6 +237,7 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
             ))}
           </tbody>
         </table>
+        </div>
         <Button
           variant="secondary"
           size="sm"
@@ -255,7 +258,7 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
         <ul className="divide-y divide-line border-y border-line">
           {DOCUMENTS.map((d) => (
             <li key={d.kind}>
-              <label className="flex cursor-pointer items-center gap-3 py-2.5 text-small">
+              <label className="flex cursor-pointer flex-wrap items-center gap-3 py-2.5 text-small">
                 <input
                   type="checkbox"
                   className="size-4 accent-[var(--color-action)]"
@@ -270,7 +273,7 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
                   }
                 />
                 <span className="flex-1">{d.label}</span>
-                <span className="font-mono text-[12px] text-ink-2">{d.filename}</span>
+                <span className="break-all font-mono text-caption text-ink-2">{d.filename}</span>
                 <Tag className="h-5 px-1.5 text-[11px]">MOCK</Tag>
               </label>
             </li>

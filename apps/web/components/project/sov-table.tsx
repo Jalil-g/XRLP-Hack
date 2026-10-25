@@ -9,7 +9,10 @@ export function SovTable({ sov, milestones, selectedId }: { sov: SovLine[]; mile
   const groups = milestones.map((m) => ({ m, lines: sov.filter((l) => (m.sovCodes ?? []).includes(l.code)) }));
   const total = sov.reduce((a, l) => a + toCents(l.amount), 0);
   return (
-    <table className="w-full border-collapse text-left">
+    <div>
+      <p className="mb-2 text-caption text-ink-2 lg:hidden">Scroll horizontally to see all schedule details.</p>
+      <div role="region" aria-label="Schedule of Values" tabIndex={0} className="overflow-x-auto">
+    <table className="w-full min-w-[760px] border-collapse text-left">
       <thead>
         <tr className="border-y border-line bg-band text-caption text-ink-2">
           <th className="w-[96px] px-4 py-2.5 font-medium">Code</th>
@@ -52,5 +55,7 @@ export function SovTable({ sov, milestones, selectedId }: { sov: SovLine[]; mile
         </tr>
       </tfoot>
     </table>
+      </div>
+    </div>
   );
 }

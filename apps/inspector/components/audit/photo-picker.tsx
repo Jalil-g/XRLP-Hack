@@ -11,16 +11,20 @@ import type { SiteGeo } from "@/lib/types";
 export function PhotoPicker({ photos, onChange, site }: { photos: DraftPhoto[]; onChange(next: DraftPhoto[]): void; site: SiteGeo }) {
   const input = useRef<HTMLInputElement>(null);
   const [reading, setReading] = useState(false);
+  const [error, setError] = useState<string>();
   const previews = usePreviews(photos);
 
   async function add(files: FileList | null) {
     if (!files?.length) return;
     setReading(true);
+    setError(undefined);
     try {
       const now = new Date().toISOString();
       const picked = await Promise.all([...files].map(async (file) => ({ file, evidence: await photoEvidence(file, now) })));
       const seen = new Set(photos.map((p) => p.evidence.sha256));
       onChange([...photos, ...picked.filter((p) => !seen.has(p.evidence.sha256) && seen.add(p.evidence.sha256))]);
+    } catch {
+      setError("Could not read these photos. Try a JPEG or PNG file; your existing photos are still here.");
     } finally {
       setReading(false);
       if (input.current) input.current.value = "";
@@ -40,7 +44,7 @@ export function PhotoPicker({ photos, onChange, site }: { photos: DraftPhoto[]; 
               <button
                 type="button"
                 onClick={() => onChange(photos.filter((x) => x !== p))}
-                className="absolute top-1.5 right-1.5 rounded-md bg-surface/90 p-1 text-muted shadow-card hover:text-bad"
+                className="absolute top-1.5 right-1.5 flex size-11 items-center justify-center rounded-control bg-surface text-muted hover:text-bad"
                 aria-label={`Remove ${p.evidence.filename}`}
               >
                 <Trash2 className="size-3.5" />
@@ -49,6 +53,7 @@ export function PhotoPicker({ photos, onChange, site }: { photos: DraftPhoto[]; 
           ))}
         </ul>
       )}
+      {error && <p role="alert" className="text-small text-bad">{error}</p>}
       <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => void add(e.target.files)} />
       <Button type="button" variant="secondary" onClick={() => input.current?.click()} disabled={reading}>
         <ImagePlus /> {reading ? "Reading EXIF…" : photos.length ? "Add more photos" : "Add site photos"}

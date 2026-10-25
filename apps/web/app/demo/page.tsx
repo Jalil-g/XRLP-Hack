@@ -57,7 +57,7 @@ export default async function DemoPage() {
       <AutoRefresh ms={2500} />
       <PageHeader
         title="Demo control room"
-        description="The 3-minute demo in order. Each button is one API call; the link shows the screen the audience should see."
+        description="Prepare the 100-second recording: show the project, review the evidence, release one milestone, and hold a failed milestone."
         action={
           <div className="flex gap-2">
             <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>
@@ -90,7 +90,7 @@ export default async function DemoPage() {
         />
         <Scene
           n={3}
-          title="Money shot: checks pass, escrow releases"
+          title="Review evidence and release"
           body="The inspector's signed audit plus the AI's checks run on the first milestone. All green, so the release service finishes the escrow."
           state={m1 && <MilestoneTag m={m1} />}
           detail={m1?.status === "released" && a?.balances ? `Builder balance ${formatAmount(a.balances.builder)} RLUSD` : undefined}
@@ -99,17 +99,22 @@ export default async function DemoPage() {
         />
         <Scene
           n={4}
-          title="Fraud held: one red check"
+          title="Failed check: funds stay locked"
           body="The second milestone includes a photo reused from another project. One check fails and the money stays locked."
           state={m2 && <MilestoneTag m={m2} />}
           detail={failedCheck && `${checkName(failedCheck.check)}: ${failedCheck.reason}`}
           action={a && m2 && RUNNABLE.includes(m2.status) && m2.status !== "failed" && <ActionButton action={{ kind: "runChecks", projectId: a.project.id, milestoneId: m2.id }}>Run checks</ActionButton>}
           screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label={m2.title} />}
         />
+      </ol>
+
+      <details className="space-y-4">
+        <summary className="min-h-11 cursor-pointer py-2 text-heading">Extended walkthrough and engineering checks</summary>
+        <p className="text-small text-ink-2">Outside the timed pitch. Use these controls for preparation or technical Q&A.</p>
+        <ol className="divide-y divide-line border-y border-line">
         <Scene
-          n={5}
           title="Ledger says no"
-          body="The platform submits a finish for the failed milestone with a wrong fulfillment. The ledger refuses it."
+          body="A wrong fulfillment is rejected. This tests the escrow condition; it does not prove that the ledger enforces AI checks."
           state={refused && <Tag tone="fail">Refused by the ledger</Tag>}
           detail={
             refused && (
@@ -131,7 +136,6 @@ export default async function DemoPage() {
           screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label={m2.title} />}
         />
         <Scene
-          n={6}
           title="Stall: escrow expires, money goes back"
           body="An escrow passed its CancelAfter. The keeper cancels it, and the project account repays the vault. Investors redeem at maturity."
           state={b && (bExpired ? <Tag tone="review">Expired, not cancelled yet</Tag> : bRefunded ? <Tag>Returned to the vault</Tag> : <Tag>Nothing expired</Tag>)}
@@ -139,11 +143,6 @@ export default async function DemoPage() {
           action={bExpired && <ActionButton action={{ kind: "keeperTick" }}>Keeper tick</ActionButton>}
           screen={b && <ScreenLink href={`/projects/${b.project.id}`} label={b.project.name} />}
         />
-      </ol>
-
-      <section className="space-y-4">
-        <h2 className="text-heading">Off-script</h2>
-        <ol className="divide-y divide-line border-y border-line">
           <Scene
             title="Operator decision"
             body={
@@ -171,12 +170,12 @@ export default async function DemoPage() {
             title="Builder repays an instalment"
             body="Repayments flow to the vault through LoanPay. The interest in each one raises the vault's share price."
             detail={a?.loan && a.vault && `Share price ${Number(a.vault.sharePrice).toFixed(4)} · ${a.loan.paymentRemaining} payments left`}
-            action={a?.loan && <ActionButton size="sm" variant="secondary" disabled={toCents(a.loan.totalValueOutstanding) <= 0} action={{ kind: "repay", projectId: a.project.id, amount: a.loan.periodicPayment }}>Repay {formatAmount(a.loan.periodicPayment)} RLUSD</ActionButton>}
+            action={a?.loan && <ActionButton size="sm" variant="secondary" disabled={toCents(a.loan.totalValueOutstanding) <= 0} context={a.project.name} action={{ kind: "repay", projectId: a.project.id, amount: a.loan.periodicPayment }}>Repay {formatAmount(a.loan.periodicPayment)} RLUSD</ActionButton>}
             screen={a && <ScreenLink href={`/projects/${a.project.id}`} label={a.project.name} />}
           />
           {onboard && <OnboardScene d={onboard} platform={platform} investor={investor?.address} />}
         </ol>
-      </section>
+      </details>
     </div>
   );
 }
@@ -194,7 +193,7 @@ function OnboardScene({ d, platform, investor }: { d: ProjectDetail; platform?: 
       detail={st === "funding" || st === "funded" ? `Raised ${formatAmount(raised / 100)} of ${formatAmount(p.terms.principal)} RLUSD` : undefined}
       action={
         st === "draft" ? (
-          <ActionButton size="sm" action={{ kind: "payFee", projectId: p.id, builder: d.builder.address }}>
+          <ActionButton size="sm" context={p.name} action={{ kind: "payFee", projectId: p.id, builder: d.builder.address }}>
             Pay verification fee
           </ActionButton>
         ) : st === "verifying" ? (
@@ -206,7 +205,7 @@ function OnboardScene({ d, platform, investor }: { d: ProjectDetail; platform?: 
             Lock terms
           </ActionButton>
         ) : st === "funding" && investor && remaining > 0 ? (
-          <ActionButton size="sm" action={{ kind: "invest", projectId: p.id, investor, amount: fromCents(remaining) }}>
+          <ActionButton size="sm" context={p.name} action={{ kind: "invest", projectId: p.id, investor, amount: fromCents(remaining) }}>
             Investors fill the vault
           </ActionButton>
         ) : st === "funded" && platform ? (

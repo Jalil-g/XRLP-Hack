@@ -1,87 +1,35 @@
 @import "tailwindcss";
+@import "../../styles/drawproof.css";
 
-@theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
-
-  /* Surfaces & ink */
-  --color-canvas: #f6f7f9;
-  --color-surface: #ffffff;
-  --color-subtle: #f1f3f6;
-  --color-line: #e4e7ec;
-  --color-line-strong: #d0d5dd;
-  --color-ink: #0c111d;
-  --color-ink-2: #344054;
-  --color-muted: #667085;
-  --color-faint: #98a2b3;
-
-  /* Brand */
-  --color-brand: #3538cd;
-  --color-brand-600: #2d31a6;
-  --color-brand-50: #eef0ff;
-  --color-brand-100: #dfe2ff;
-
-  /* Status */
-  --color-ok: #067647;
-  --color-ok-bg: #ecfdf3;
-  --color-ok-line: #abefc6;
-  --color-warn: #b54708;
-  --color-warn-bg: #fffaeb;
-  --color-warn-line: #fedf89;
-  --color-bad: #b42318;
-  --color-bad-bg: #fef3f2;
-  --color-bad-line: #fecdca;
-  --color-info: #175cd3;
-  --color-info-bg: #eff8ff;
-  --color-info-line: #b2ddff;
-  --color-lock: #5925dc;
-  --color-lock-bg: #f4f3ff;
-  --color-lock-line: #d9d6fe;
-
-  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --shadow-pop: 0 12px 32px -8px rgba(16, 24, 40, 0.18), 0 4px 8px -4px rgba(16, 24, 40, 0.08);
-
-  --animate-pulse-ring: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  @keyframes pulse-ring {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(53, 56, 205, 0.35); }
-    50% { box-shadow: 0 0 0 6px rgba(53, 56, 205, 0); }
-  }
+/* Compatibility names for inspector components; values come from the shared theme. */
+@theme inline {
+  --color-canvas: var(--color-page);
+  --color-surface: var(--color-page);
+  --color-subtle: var(--color-band);
+  --color-line-strong: var(--color-line-2);
+  --color-muted: var(--color-ink-2);
+  --color-faint: var(--color-ink-2);
+  --color-brand: var(--color-action);
+  --color-brand-600: var(--color-action-hover);
+  --color-brand-50: var(--color-info-bg);
+  --color-brand-100: var(--color-info-bg);
+  --color-ok: var(--color-pass);
+  --color-ok-bg: var(--color-pass-bg);
+  --color-ok-line: var(--color-pass);
+  --color-warn: var(--color-review);
+  --color-warn-bg: var(--color-review-bg);
+  --color-warn-line: var(--color-review);
+  --color-bad: var(--color-fail);
+  --color-bad-bg: var(--color-fail-bg);
+  --color-bad-line: var(--color-fail);
+  --color-info-line: var(--color-info);
+  --color-lock: var(--color-neutral);
+  --color-lock-bg: var(--color-neutral-bg);
+  --color-lock-line: var(--color-line-2);
 }
-
-@layer base {
-  html {
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "cv11", "ss01";
-  }
-  body {
-    @apply bg-canvas text-ink;
-  }
-  ::selection {
-    background: var(--color-brand-100);
-  }
-}
-
-@utility tabular {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Opt-in presentation mode: larger rem-based text and readable secondary labels. */
 html[data-projector="true"] {
   font-size: 20px;
-  --color-muted: #475467;
-  --color-faint: #475467;
-  --color-line: #c4cad4;
-}
-
-html[data-projector="true"] :is([class~="text-[11px]"], [class~="text-[13px]"]) {
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-
-@utility bg-grid {
-  background-image:
-    linear-gradient(to right, rgba(16, 24, 40, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(16, 24, 40, 0.05) 1px, transparent 1px);
-  background-size: 32px 32px;
+  --color-ink-2: #45454a;
+  --color-ink-3: #55555b;
+  --color-line: #c7c7ce;
 }
