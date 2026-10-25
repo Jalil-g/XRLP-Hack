@@ -1,0 +1,114 @@
+.transfer { padding-top: 8px; }
+.amount { text-align: center; overflow-wrap: anywhere; }
+.scene { position: relative; display: flex; justify-content: space-between; margin: 30px 0 24px; }
+.endpoint { position: relative; z-index: 1; width: 112px; min-width: 0; text-align: center; }
+
+.wallet {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto;
+  border: 1px solid var(--color-line-2);
+  border-radius: 18px;
+  background: var(--color-page);
+  color: var(--color-ink);
+}
+.wallet > svg { width: 28px; height: 28px; stroke-width: 1.6; }
+.vault {
+  border-color: var(--color-action);
+  background: var(--color-info-bg);
+  color: var(--color-action);
+  transition: background 200ms ease-out, border-color 200ms ease-out, color 200ms ease-out;
+}
+.path { position: absolute; top: 32px; right: 56px; left: 56px; height: 1px; }
+.line { position: absolute; inset: 0; background: var(--color-line-2); }
+.coin {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--color-page);
+  border-radius: 50%;
+  background: var(--color-action);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  animation: sending 1.65s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: var(--radius-control);
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+}
+.received {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 3px solid var(--color-page);
+  border-radius: 50%;
+  background: var(--color-pass);
+  color: white;
+  animation: received 250ms ease-out both;
+}
+.received > svg { width: 14px; height: 14px; stroke-width: 3; }
+.transfer[data-state="confirmed"] .vault {
+  border-color: var(--color-pass);
+  background: var(--color-pass-bg);
+  color: var(--color-pass);
+}
+.transfer[data-state="confirmed"] .line { background: var(--color-pass); }
+.transfer[data-state="confirmed"] .coin {
+  background: var(--color-pass);
+  /* Replay once even for an immediate response; never delay the receipt. */
+  animation-name: arriving;
+  animation-iteration-count: 1;
+  animation-fill-mode: both;
+}
+.transfer[data-state="confirmed"] .status { background: var(--color-pass-bg); color: var(--color-pass); }
+
+@keyframes sending {
+  0% { left: 0; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+@keyframes arriving {
+  0% { left: 0; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { left: 100%; opacity: 0; }
+}
+@keyframes received {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@media (max-width: 380px) {
+  .endpoint { width: 88px; }
+  .path { right: 44px; left: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .coin { display: none; animation: none !important; }
+  .received { animation: none; }
+  .vault { transition: none; }
+}

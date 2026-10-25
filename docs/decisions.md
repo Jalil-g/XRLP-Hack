@@ -1,5 +1,11 @@
 # Decisions log
 
+## Investment transfer animation — 2026-10-25
+
+- User requested visible money movement after confirming an investment. The deposit dialog shows RLUSD flowing from the investor wallet into the project vault, matching the actual VaultDeposit destination; builder payouts still require milestone checks.
+- This requested motion extends the earlier frontend motion guidance only for investment submission. Pending motion is indeterminate; confirmation and transaction proof require a successful API response. A short arrival animation also plays for immediate responses without delaying the receipt. Reduced motion uses static accounts and explicit status text. No dependencies, ledger operations, or API contracts change.
+- Project auto-refresh pauses while the investment dialog is open and resumes on dismissal, so a deposit that fills the vault cannot unmount its own animation and receipt. Successful dismissal refreshes the project immediately.
+
 ## Shared frontend polish — 2026-10-25
 
 - User authorized a consistent Apple/Notion-style polish of both `apps/web` and `apps/inspector`. Both consume `apps/styles/drawproof.css`; inspector compatibility aliases preserve existing component APIs. No domain contracts or signing algorithms change.
