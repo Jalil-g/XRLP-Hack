@@ -15,6 +15,7 @@ import { prestageSeedOptions } from "./demo/prestage-seed.ts";
 import { DEMO_ADDRESSES, demoCancelAfter, seedDemo, SEED_BACKDATE_MS } from "./demo/scenario.ts";
 import { FakeLedger } from "./fakes/fake-ledger.ts";
 import { FakeVerifier } from "./fakes/fake-verifier.ts";
+import { releaseKeyFromEnv } from "./env.ts";
 import { FileStore, resolveDataDir } from "./file-store.ts";
 import { FilePreimageVault, MemoryPreimageVault, ReleaseService } from "./release-service.ts";
 import { DomainError } from "./errors.ts";
@@ -97,7 +98,8 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const devnet = !opts.ledger && env.LEDGER_MODE === "devnet" ? devnetConfigFromEnv(env) : undefined;
   const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir, devnet);
   const verifier = opts.verifier ?? verifierFromEnv(env, clock, store, dataDir, !!devnet);
-  const vault = dataDir ? new FilePreimageVault(dataDir) : new MemoryPreimageVault();
+  // Hoisted so the CORE-07 prestage import writes into the ReleaseService's own vault (same instance).
+  const vault = dataDir ? new FilePreimageVault(dataDir, releaseKeyFromEnv(env)) : new MemoryPreimageVault();
   const release = opts.release ?? new ReleaseService({ ledger, vault, now: () => clock.now() });
 
   // Route 21 seeding (fake ledger with files only): replay the demo story on a back-dated clock through a twin core

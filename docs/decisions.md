@@ -85,9 +85,13 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] **xrpl security review** (`docs/reviews/xrpl-security-review-2026-10-25.md`), calls made while fixing it: (1) the retry
   engine tracks every blob of an intent that may have reached a server and settles them before a fresh-Sequence re-sign or
   any give-up; `retriable: true` now strictly means "nothing can still apply", an unknown outcome is non-retriable
-  `connection_lost` / `unknown_outcome`. (2) `finishEscrow` signs one blob per preflight and submits it pre-signed (never
+  `connection_lost` / `unknown_outcome`; every submit sets `fail_hard` (devnet showed rippled otherwise holds a refused
+  provisional tx and applies it later, `spike:fail-hard`), and waits are bounded. (2) `finishEscrow` signs one blob per preflight and submits it pre-signed (never
   re-signed by the engine); `unsafe_release` from a finish means the fulfillment never left the process, a refusal after a
-  submit is `preflight_refused_after_submit`. (3) Mainnet guard = URL/label denylist + `server_info.network_id === 2` on
+  submit is `preflight_refused_after_submit`. Follow-up (PR #171 review): a `tec*` under `fail_hard` is discarded by
+  rippled, so the engine resubmits the same blob once without `fail_hard` (same hash: at most one apply) and tracks it as
+  maybe-applied from then on; `tefPAST_SEQ` re-signs at once for blobs the engine signed in this call, pre-signed blobs
+  are decided from account state (who used the Sequence), never from a cached `tx` lookup. (3) Mainnet guard = URL/label denylist + `server_info.network_id === 2` on
   connect (`XRPL_NETWORK_ID` for another custom net, never 0/1). (4) Adapter keys are bound to roles per input
   (`SIGNING_ROLES`); aiAgent / releaseService / issuer can't be SPV signers. (5) Before LoanSet the escrow destination must
   exist, be on the SPV's signer list and not be another role's key; the multisig path refuses an SPV whose master key is
@@ -136,6 +140,12 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   blob leaves. No key → the audit is filed unsigned and core signs with the demo key (05-api §1), labelled as such in the UI.
   Seeds are never put in `NEXT_PUBLIC_*` env (they would ship in the JS bundle). Autofill uses `XRPL_WS_URL`, `LastLedgerSequence` +75.
 - [10-25] `@xrlp/attest-signer` tests run with `node --import tsx` (like core/verifier) because the parity test imports `@xrlp/xrpl`.
+- [10-25] CORE-05 (Jalil's agent, in Sean's core lane): `LEDGER_MODE=devnet` → `XrplLedgerAdapter`; core's demo parties map to the
+  `WALLETS_FILE` roles (`packages/core/src/adapters/devnet-identities.ts`), route 21 seed on devnet = participants only.
+  `VERIFIER_MODE=mock` keeps core's `FakeVerifier` (the verifier package's `verifyProject` needs registry/history inputs core does not
+  supply yet), fed with metadata extracted from uploaded bytes on devnet; `VERIFIER_MODE=live` / `CORE_VERIFIER=verifier` → `ClaudeVerifierAdapter`.
+  Devnet cover = 11% of principal (ledger minimum is 10% of principal + interest). A self-addressed attestation (platform → platform,
+  e.g. inspector assignment before an SPV exists) is a memo-only `AccountSet`: a Payment to yourself is `temREDUNDANT`.
 - [10-25] Submission package `docs/submission/` cites only tx hashes already published in our docs or PR bodies: the v2 proof (#126) first,
   then Batch from protocol-notes §2d / §2e, LoanManage from §3c, the CLI demo's batch close from `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`,
   and the platform try-steal / inspector-app signer / adapter private vault from #125 / #128 / #121.

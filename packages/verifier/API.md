@@ -117,6 +117,21 @@ integer cross-multiplication, so a one-cent excess cannot hide behind a rounded 
 Unreadable/malformed totals need review. Text/JSON parsing is deterministic; PDFs/images use live
 extraction and are explicitly labeled LLM-extracted. No live PDF extraction result was measured here.
 
+## Lien-waiver reconciliation (VER-12)
+
+`lien_waiver_present` requires one conditional waiver for every current-draw invoice. Starting with
+the second milestone, it also requires one unconditional waiver for every invoice from the immediately
+preceding draw. `lien_waiver_matches_invoices` then matches waiver type and invoice number, compares
+amounts in exact integer cents, and requires the claimant/payee to match the invoice vendor.
+
+Waivers currently use `EvidenceKind: "document"` and are detected from their filename or text because
+the shared contract has no dedicated lien-waiver evidence kind yet. The milestone runner therefore
+lists both checks as optional until the shared release templates add waiver requirements; a caller may
+tighten its release policy to require them. Previous-draw invoices must arrive as `PriorEvidence` with
+the same project id and the immediately preceding milestone id. Missing provenance cannot satisfy the
+unconditional-waiver check. Parsing supports plain-text fixtures; unreadable fields require operator
+reconciliation rather than being treated as a match.
+
 ## Project verification
 
 verifyProject({ project, builder, sov, documents, history?, now?, mode?, registry?, dataDir? }) returns

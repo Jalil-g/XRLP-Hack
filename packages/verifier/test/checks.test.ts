@@ -4,6 +4,7 @@ import { MILESTONE_TEMPLATES, type Evidence, type EvidenceKind } from "@xrlp/sha
 import {
   checkGpsWithinSite,
   checkInvoiceMatchesBudget,
+  checkLienWaiverPresent,
   checkLienWaivers,
   checkNoDuplicatePhoto,
   checkPhotoFresh,
@@ -112,15 +113,19 @@ test("invoice_matches_budget: within tolerance, shortfall, overrun, unreadable",
   assert.equal(checkInvoiceMatchesBudget(ctx, [], policy).result, "fail", "template requires an invoice");
 });
 
-// --- lien waivers (stub) ------------------------------------------------------------------------
-test("lien_waiver_matches_invoices: match, amount mismatch, missing waiver", () => {
-  const invoice = ev("invoice", { invoiceTotal: "24850.00" }, { text: "Invoice No: GRM-24117\nTOTAL: $24,850.00" });
-  const waiver = (amt: string) => ev("document", {}, { filename: "lien-waiver.txt", text: `LIEN WAIVER\nInvoice No: GRM-24117\nAmount: $${amt}` });
+// --- lien waivers -------------------------------------------------------------------------------
+test("lien waivers require the right type and match amount plus vendor", () => {
+  const invoice = ev("invoice", { invoiceTotal: "24850.00" }, { text: "Gotham Ready-Mix Concrete\nInvoice No: GRM-24117\nTOTAL: $24,850.00" });
+  const waiver = (amt: string, claimant = "Gotham Ready-Mix Concrete") => ev("document", {}, {
+    filename: "lien-waiver.txt",
+    text: `CONDITIONAL LIEN WAIVER AND RELEASE\nClaimant: ${claimant}\nInvoice No: GRM-24117\nAmount: $${amt}`,
+  });
+  assert.equal(checkLienWaiverPresent([invoice]).result, "fail");
   assert.equal(checkLienWaivers([invoice]).result, "skipped");
+  assert.equal(checkLienWaiverPresent([invoice, waiver("24,850.00")]).result, "pass");
   assert.equal(checkLienWaivers([invoice, waiver("24,850.00")]).result, "pass");
   assert.equal(checkLienWaivers([invoice, waiver("20,000.00")]).result, "fail");
-  const other = ev("invoice", { invoiceTotal: "100.00" }, { text: "Invoice No: XYZ-1\nTOTAL: 100.00" });
-  assert.equal(checkLienWaivers([invoice, other, waiver("24,850.00")]).result, "warn");
+  assert.equal(checkLienWaivers([invoice, waiver("24,850.00", "Other Supplier LLC")]).result, "fail");
 });
 
 // --- decision mapping ---------------------------------------------------------------------------

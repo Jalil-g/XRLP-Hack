@@ -13,6 +13,7 @@ export type { BuilderDocument, BuilderRegistry, BuilderVerdict, InsuranceRecord,
 export { ChecklistStatus, evidenceBundleHash, InspectorAudit } from "./audit.ts";
 export { policyFor, releasePolicyFor } from "./policy.ts";
 export type { CheckRule, Escalation, PolicyThresholds, VerificationPolicy } from "./policy.ts";
+export { checkLienWaiverPresent, checkLienWaivers, isLienWaiver } from "./lienWaiver.ts";
 export {
   extractEvidenceMeta,
   hammingDistance,
