@@ -168,6 +168,9 @@ async function main() {
     conditions,
     paymentTotal: PAYMENT_TOTAL,
     paymentIntervalS: PAYMENT_INTERVAL_S,
+    // TODO(agent D, XRPL-06 #115): planLoanClose now REJECTS this — CancelAfter must be < loan maturity
+    // (here 4 × 300 s ≈ 20 min, not 30 days). Drop defaultCancelAfter (new default = maturity − one payment
+    // interval) or pass `cancelAfters`. Left as-is so the demo.ts rewrite owns the change.
     defaultCancelAfter: new Date(Date.now() + 30 * 86_400_000),
     waitForInvestmentPhase: true,
     allowOverpayment: true,

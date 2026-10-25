@@ -52,6 +52,33 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] SPV default multisig quorum = platform + builder + trustee (any 3 of 4 is valid). These are fixed per project whichever inspector the AI assigned; callers pass the inspector explicitly when it should sign. `submitMultisigned` checks quorum against the on-ledger SignerList before submitting, because xrpl.js `submitAndWait` hangs ~1 min on `tef*` instead of throwing (Jalil's agent, XRPL-05)
 
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
+- [10-25] xrpl: `UnsafeReleaseError` now extends the shared `LedgerError` (code `unsafe_release`) and `toLedgerError(e)` maps XrplTxError tecTOO_SOON → `TooSoonError`, other tx failures → `LedgerError("ledger_error")` with txResult/txHash; release attest memos keep `approval_attested` (shared v2 has no release kind); `toChainEvent` sets `result` only for non-tesSUCCESS — so the LedgerPort adapter throws/emits exactly the shared contract (Jalil's agent, shared-v2 align)
+
+- [10-25] Bootstrap grants the demo credentials idempotently (KYC_INVESTOR investor1/2, VERIFIED_INSPECTOR inspector1..3; VERIFIED_BUILDER only with `preVerifyBuilder`) and **deletes** a stray KYC_INVESTOR from investor3 (`NO_KYC_ROLES`), since the tecNO_AUTH beat needs investor3 uncredentialed; `issueCredential` delegates to `grantCredential` (deprecated); platform RLUSD default stays 25 000 (= cover for 3 concurrent ~68k projects), sized with `platformRlusdFor`; `submitMultisigned` goes through `submitWithSigner` so SPV multisig txs hold the per-SPV lock (Jalil's agent, hardening)
+
+- [10-25] `closeLoanAndCreateEscrows` validates everything before the first tx (`planLoanClose`): `PaymentTotal ≥ 2`, `0 < InterestRate ≤ 100%`, `PaymentInterval ≥ 60s`, loan fits `RedemptionDate`, 32-byte PREIMAGE-SHA-256 conditions only (`A0258020…810120`), unique within the call **and vs the SPV's open escrows** (doubles as a re-run guard), `now + 60s < CancelAfter < maturity` with maturity = ledger now + interval × total (a lower bound of the real one), SPV signer quorum. Failure after LoanSet → `CloseLoanPartialError {loanId, created, pending}`. — never leave principal liquid in the SPV because escrow #2 was bad (Jalil's agent, XRPL-06)
+- [10-25] Default escrow `CancelAfter` = **maturity − one payment interval** (was now + termDays, which equals maturity and would now be rejected) — a refunded escrow still lands in time to pay the last installment. Callers (core, demo, prestage) should pass `cancelAfters` explicitly. (Jalil's agent, XRPL-06)
+- [10-25] `generateMilestoneCondition` dropped from the public API (only a `@deprecated` re-export so `scripts/demo.ts` compiles); tests/spikes use `packages/xrpl/test/support/conditions.ts`. Remove the deprecated export once demo.ts and the G-owned spikes switch. (Jalil's agent, XRPL-06)
+- [10-25] Batch atomic close: devnet rippled 3.4.1 rejects LoanSet (all Lending/SAV types) as a Batch inner tx with `temINVALID_INNER_BATCH` until `LendingProtocolV1_2`. So `closeLoanAtomic` defaults to mode "escrows": countersigned LoanSet, then one `tfAllOrNothing` Batch of every milestone EscrowCreate from the SPV (2 txs, SPV liquid ~2 ledgers). Mode "full" (platform outer, LoanSet + escrows, SPV BatchSigner) is implemented and offline-tested for when V1_2 lands. Not wired into `closeLoanAndCreateEscrows` yet (api.ts owned elsewhere). See protocol-notes §2d (Jalil's agent, XRPL-13)
+
+## Inspector lane (Roro's agent, challenge freely)
+
+- [10-24] `apps/inspector` uses the `@xrlp/shared` v2 schemas; only the read models shared defines as TS interfaces (`ProjectDetail`,
+  `InspectorTask`, snapshots) get local zod schemas in `lib/types.ts`, typed against those interfaces so drift fails typecheck.
+- [10-24] Inspector app data access is **client-side** (polling, in-browser signing later); in http mode the browser calls same-origin
+  `/api/*` and `next.config.ts` rewrites to `CORE_URL`. Responses are checked against the schemas and drift is logged, not thrown.
+- [10-24] Mock-mode parties use **real classic addresses** derived from public entropy `sha256("drawproof/mock/<label>")[0..16]`
+  (never funded, not devnet wallets) so INS-04 can sign as a mock inspector without committing any seed.
+- [10-24] Route 10 multipart fields `report` / `photos` (repeated) / `signedTxBlob` — same as core's CORE-04 handler.
+- [10-25] INS-02 queue evidence status uses the verifier's `required_evidence_present` rule (per kind, bar = largest `minCount`, not the
+  sum), so the queue never shows red where the suite passes.
+- [10-25] INS-03 `evidenceBundleHash` = the verifier's (`sha256` of sorted per-file `sha256` joined by `"\n"`) over **all** the milestone's
+  builder evidence; golden-tested against the verifier's Maple St fixture. Mock route 10 rejects a mismatched bundle up front.
+- [10-25] Inspector app adds `exifr` (same parser + options as the verifier; the `lite` build, because the full one probes for Node `fs`/`zlib`
+  in the Next bundle), so the photo preview shows exactly the EXIF time/GPS the suite reads.
+- [10-25] Inspector mock Maple St moved to the verifier's site (41 Maple St, Brooklyn, 40.6795/-73.962, r=120 m) — the demo photos are
+  geotagged there. **Open:** core's demo scenario still puts Maple St in Beacon, NY (41.5048/-73.9696); with the verifier's photos that
+  fails `gps_within_site`. Core + verifier should agree on one site.
 
 ## Open
 
