@@ -453,6 +453,7 @@ const WARN: { name: string; mut: (f: Fixture) => void; id: string; beat?: StageB
   { name: "B m3 preimage missing (not used on stage)", mut: (f) => delete f.snap.preimages.entries["ps-test-b"]!["ps-test-b-m3"], id: "preimages.B.m3" },
   { name: "an unassigned inspector lost VERIFIED_INSPECTOR", mut: (f) => (role(f, "inspector2").credentials = { VERIFIED_INSPECTOR: "none" }), id: "wallets.inspector2.verified" },
   { name: "trustee unfunded (multisig signers need no account)", mut: (f) => (role(f, "trustee").account = null), id: "wallets.trustee.xrp", beat: "D6" },
+  { name: "investor3's KYC is only pending (deposit still tecNO_AUTH)", mut: (f) => (role(f, "investor3").credentials = { KYC_INVESTOR: "pending" }), id: "wallets.investor3.no_kyc", beat: "D2" },
   { name: "a role below the bootstrap top-up line", mut: (f) => (role(f, "aiAgent").account = { balance: "20000000", ownerCount: 0, flags: 0 }), id: "wallets.aiAgent.xrp", beat: "D3" },
 ];
 

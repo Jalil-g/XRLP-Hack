@@ -440,7 +440,6 @@ interface Check {
   status: StageStatus;
   message: string;
   beats: StageBeat[];
-  all: boolean;
   fix?: StageFix;
   /** The GO detail of this beat shows this check's message. */
   summary?: StageBeat;
@@ -459,7 +458,7 @@ export function evaluateStage(snap: StageSnapshot, now: StageNow, opts: StageOpt
   const add = (id: string, status: StageStatus, message: string, beats: readonly StageBeat[] | "all", extra: { fix?: StageFix; summary?: StageBeat } = {}) => {
     const list = beats === "all" ? [...STAGE_BEATS] : [...beats];
     // An advisory check (it gates no beat) can't hold up the slot.
-    checks.push({ id, status: !list.length && status === "NO-GO" ? "WARN" : status, message, beats: list, all: beats === "all", ...extra });
+    checks.push({ id, status: !list.length && status === "NO-GO" ? "WARN" : status, message, beats: list, ...extra });
   };
 
   // ---- devnet
@@ -642,8 +641,11 @@ export function evaluateStage(snap: StageSnapshot, now: StageNow, opts: StageOpt
     }
     const k3 = cred("investor3", "KYC_INVESTOR");
     if (k3 === "none") add("wallets.investor3.no_kyc", "GO", "investor3 has no KYC_INVESTOR (the tecNO_AUTH deposit)", ["D2"]);
-    else if (k3 !== undefined) {
-      add("wallets.investor3.no_kyc", "NO-GO", `investor3 holds KYC_INVESTOR (${k3}): its deposit would go through and the tecNO_AUTH story breaks`, ["D2"], { fix: BOOT });
+    else if (k3 === "accepted") {
+      add("wallets.investor3.no_kyc", "NO-GO", "investor3 holds an accepted KYC_INVESTOR: its deposit would go through and the tecNO_AUTH story breaks", ["D2"], { fix: BOOT });
+    } else if (k3 !== undefined) {
+      // Domain membership needs an ACCEPTED credential, so a pending one still gets tecNO_AUTH.
+      add("wallets.investor3.no_kyc", "WARN", "investor3 has a pending KYC_INVESTOR (deposit still tecNO_AUTH; bootstrap deletes it)", ["D2"], { fix: BOOT });
     }
     for (const insp of INSPECTORS) {
       const s = cred(insp, "VERIFIED_INSPECTOR");
