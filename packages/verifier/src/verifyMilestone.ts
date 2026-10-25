@@ -52,8 +52,11 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   const { project, builder, milestone } = input;
   const timeline = { ...(input.escrowCreatedAt ? { escrowCreatedAt: input.escrowCreatedAt } : {}), ...input.timeline };
   const template = milestoneTemplate(input);
-  const prior: PriorEvidence[] = (input.priorEvidence ?? [])
-    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }));
+  // Core stores HTTP uploads with `meta: {}`: fingerprint prior photos from their bytes, or the
+  // cross-project reuse check could only catch byte-identical copies.
+  const prior: PriorEvidence[] = await Promise.all((input.priorEvidence ?? [])
+    .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }))
+    .map((record) => withPerceptualHash(record, { files: input.files, dataDir: input.dataDir })));
   const ctx: MilestoneContext = { project, builder, milestone, template, riskTier: builder.riskTier };
   const policy = policyFor(project, builder, milestone);
   const standard = releasePolicyFor(project, milestone, builder.riskTier);
@@ -128,6 +131,17 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     createdAt: timeline.now ?? new Date().toISOString(),
   });
   return { verdict, policy, checks: decided.checks, evidence: loaded };
+}
+
+const PHASH = /^[0-9a-f]{16}$/i;
+
+/** Prior photo without a usable stored pHash: compute it from the stored bytes (left as-is if unreadable; the check then warns). */
+async function withPerceptualHash(record: PriorEvidence, opts: { files?: Record<string, Uint8Array>; dataDir?: string }): Promise<PriorEvidence> {
+  const ev = record.evidence;
+  if (ev.kind !== "photo" || PHASH.test(ev.meta?.perceptualHash ?? "")) return record;
+  const loaded = await loadEvidence(ev, opts);
+  const hash = loaded.loadError ? undefined : loaded.meta.perceptualHash;
+  return hash ? { ...record, evidence: { ...ev, meta: { ...ev.meta, perceptualHash: hash } } } : record;
 }
 
 // ---------------------------------------------------------------------------------------------

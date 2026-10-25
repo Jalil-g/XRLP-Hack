@@ -87,6 +87,16 @@ test("no_duplicate_photo: perceptual near-duplicate fails, similar warns, distan
   assert.equal(checkNoDuplicatePhoto(ctx, [p], [prior("0000ffffffffffff", "c")], policy).result, "pass"); // distance 48
 });
 
+test("no_duplicate_photo: a prior photo with no perceptual hash warns instead of silently passing", () => {
+  const p = okPhoto("0000000000000000");
+  const unhashed: PriorEvidence = { evidence: ev("photo", {}, { sha256: "unhashed" }).evidence, projectId: "prj_other", milestoneId: "ms_x" };
+  const r = checkNoDuplicatePhoto(ctx, [p], [unhashed], policy);
+  assert.equal(r.result, "warn");
+  assert.match(r.reason, /no perceptual hash; reuse cannot be ruled out/);
+  // byte-identical to the unhashed prior: still a hard fail
+  assert.equal(checkNoDuplicatePhoto(ctx, [okPhoto("0000000000000000", { sha256: "unhashed" })], [unhashed], policy).result, "fail");
+});
+
 test("no_duplicate_photo: copies within one submission fail; same-milestone priors (resubmission) are ignored", () => {
   const a = okPhoto("0000000000000000");
   const b = okPhoto("0000000000000001");
