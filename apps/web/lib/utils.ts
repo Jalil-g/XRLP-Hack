@@ -5,11 +5,10 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-/** Product name lives in one place — rename here (still TBD in docs/decisions.md). */
 export const BRAND = {
-  name: "Keystone",
-  tagline: "Investors fund verified builders, and the money moves only when each stage is proven.",
-  network: "XRPL Devnet",
+  name: "Drawproof",
+  line: "Construction money that moves only when the building does.",
+  pitch: "Investors fund verified projects, and the money moves only when each stage passes its tests.",
 };
 
 // ---------- money (decimal strings, integer cents internally — never floats for balances) ----------

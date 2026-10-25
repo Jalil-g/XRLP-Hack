@@ -1,145 +1,162 @@
 import Link from "next/link";
-import { ArrowRight, BadgeCheck, Clock, Lock, Unlock, Wallet } from "lucide-react";
+import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { TxLink, VerifiedBuilderBadge } from "@/components/chain";
 import { EvidenceUploader } from "@/components/builder/evidence-uploader";
-import { ApprovalsPanel } from "@/components/project/approvals-panel";
-import { EscrowPipeline } from "@/components/project/escrow-pipeline";
-import { VerdictCard } from "@/components/project/verdict-card";
-import { StatTile } from "@/components/stat-tile";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { getBuilderDashboard } from "@/lib/api";
-import { MILESTONE_STATUS, projectStatus } from "@/lib/display";
+import { TxLink } from "@/components/chain";
+import { ChecksPanel } from "@/components/checks/checks-panel";
+import { Empty, PageHeader, Section } from "@/components/ui/layout";
+import { Tag } from "@/components/ui/tag";
+import { api } from "@/lib/api";
+import type { CheckResult, ProjectDetail } from "@/lib/contract";
+import { PROJECT_STATUS, checkLabel, sovLinesFor } from "@/lib/display";
 import { getSession } from "@/lib/session";
-import { formatAmount, formatDateTime } from "@/lib/utils";
+import { formatAmount, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Builder" };
 
 export default async function BuilderPage() {
   const session = await getSession();
-  const dash = await getBuilderDashboard(session.builder.id);
-  const { builder } = dash;
+  const builder = session.builder;
+  if (!builder) return <Empty title="No builder accounts">Core did not return any builders.</Empty>;
+  const summaries = (await api.listProjects()).filter((s) => (s.builderId ? s.builderId === builder.id : s.builderName === builder.name));
+  const details = await Promise.all(summaries.map((s) => api.getProject(s.id)));
 
   return (
-    <div className="space-y-8">
-      <AutoRefresh ms={5000} />
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="text-[13px] text-muted">Builder workspace</div>
-          <h1 className="mt-1 flex flex-wrap items-center gap-2 text-[28px] font-semibold tracking-tight">
-            {builder.name} {builder.verified && <VerifiedBuilderBadge />}
-          </h1>
-          <p className="mt-1 text-[13px] text-muted">
-            License {builder.licenseNumber} · {builder.insurancePolicy} · {builder.completedProjects} completed projects
+    <div className="space-y-14">
+      <AutoRefresh ms={4000} />
+      <PageHeader
+        title={builder.name}
+        meta={builder.verified ? <Tag tone="pass">Verified builder</Tag> : <Tag>Not verified yet</Tag>}
+        description={
+          <>
+            Licence {builder.licenseNumber} · {builder.completedProjects} completed projects
             {builder.credentialTx && (
               <>
                 {" "}
                 · credential <TxLink hash={builder.credentialTx} />
               </>
             )}
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile label="Raised across projects" value={formatAmount(dash.totals.raised)} unit="RLUSD" icon={Wallet} />
-        <StatTile label="Waiting in escrow" value={formatAmount(dash.totals.escrowed)} unit="RLUSD" icon={Lock} hint="Released stage by stage on proof" />
-        <StatTile label="Paid out to you" value={formatAmount(dash.totals.released)} unit="RLUSD" icon={Unlock} hint={`${dash.payouts.length} escrow releases`} />
-      </div>
+      {details.length === 0 && <Empty title="No projects yet">Submit a project with its Schedule of Values to get it verified and listed.</Empty>}
 
-      {dash.projects.map(({ summary, current }) => {
-        const p = summary.project;
-        const status = projectStatus(p);
-        const canUpload = current && ["escrowed", "rejected"].includes(current.milestone.status);
-        return (
-          <Card key={p.id}>
-            <CardHeader>
-              <div>
-                <div className="flex items-center gap-2">
-                  <CardTitle className="text-[17px]">{p.name}</CardTitle>
-                  <Badge tone={status.tone} dot>
-                    {status.label}
-                  </Badge>
-                </div>
-                <CardDescription>
-                  {summary.milestonesReleased}/{p.milestones.length} milestones released · {formatAmount(summary.funding.raised)} of{" "}
-                  {formatAmount(summary.funding.target)} RLUSD raised
-                </CardDescription>
-              </div>
-              <Link href={`/projects/${p.id}`} className="inline-flex items-center gap-1 text-[13px] font-medium text-brand hover:underline">
-                Public project page <ArrowRight className="size-3.5" />
-              </Link>
-            </CardHeader>
-            <CardContent className="space-y-5 py-5">
-              {!current ? (
-                <p className="flex items-center gap-2 text-[13px] text-muted">
-                  <Clock className="size-4" />
-                  {p.chain.loanId ? "No milestone is awaiting evidence." : "Evidence upload unlocks once the project is funded and the loan closes (escrows created)."}
-                </p>
-              ) : (
-                <>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <div className="text-xs text-muted">Current milestone</div>
-                      <div className="text-[15px] font-semibold">
-                        {current.milestone.title} · {formatAmount(current.milestone.amount)} RLUSD
-                      </div>
-                    </div>
-                    <Badge tone={MILESTONE_STATUS[current.milestone.status].tone} dot>
-                      {MILESTONE_STATUS[current.milestone.status].label}
-                    </Badge>
-                  </div>
-                  <EscrowPipeline view={current} />
-                  {current.milestone.status === "rejected" && current.verdict && <VerdictCard verdict={current.verdict} />}
-                  {canUpload ? (
-                    <EvidenceUploader
-                      projectId={p.id}
-                      milestoneId={current.milestone.id}
-                      milestoneTitle={current.milestone.title}
-                      template={current.template}
-                    />
-                  ) : (
-                    <div className="grid gap-4 lg:grid-cols-2">
-                      <VerdictCard verdict={current.verdict} />
-                      <ApprovalsPanel view={current} />
-                    </div>
-                  )}
-                </>
-              )}
-            </CardContent>
-          </Card>
-        );
-      })}
+      {details.map((d) => (
+        <BuilderProject key={d.project.id} d={d} />
+      ))}
+    </div>
+  );
+}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Payouts</CardTitle>
-          <BadgeCheck className="size-4 text-faint" />
-        </CardHeader>
-        <CardContent>
-          {dash.payouts.length ? (
-            <ul className="divide-y divide-line">
-              {dash.payouts.map((e) => (
-                <li key={e.txHash} className="flex items-center justify-between py-2.5 text-[13px]">
-                  <span className="text-ink-2">
-                    {dash.projects.find((x) => x.summary.project.id === e.projectId)?.summary.project.name} ·{" "}
-                    {dash.projects.flatMap((x) => x.summary.project.milestones).find((m) => m.id === e.milestoneId)?.title}
-                  </span>
-                  <span className="flex items-center gap-3">
-                    <span className="text-faint">{formatDateTime(e.at)}</span>
-                    <span className="tabular font-semibold text-ok">+{formatAmount(e.amount ?? "0")} RLUSD</span>
-                    <TxLink hash={e.txHash} />
-                  </span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[13px] text-muted">No releases yet.</p>
+function BuilderProject({ d }: { d: ProjectDetail }) {
+  const { project: p, builder } = d;
+  const status = PROJECT_STATUS[p.status];
+  const current = p.milestones.find((m) => !["released", "refunded", "pending"].includes(m.status));
+  const raised = d.investments.reduce((a, i) => a + toCents(i.amount), 0);
+
+  return (
+    <Section
+      title={
+        <span className="flex flex-wrap items-center gap-3">
+          {p.name} <Tag tone={status.tone}>{status.label}</Tag>
+        </span>
+      }
+      aside={
+        <Link href={`/projects/${p.id}`} className="text-link hover:underline">
+          Project page
+        </Link>
+      }
+    >
+      {p.status === "draft" && (
+        <NextStep
+          title="Pay the verification fee"
+          body="250 RLUSD pays for the AI review of your identity, the project's feasibility and your capability, plus an inspector visit if one is needed. In production the fee scales with project size."
+          action={<ActionButton action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>Pay 250 RLUSD</ActionButton>}
+        />
+      )}
+      {p.status === "verifying" && (
+        <NextStep
+          title="Run verification"
+          body="The AI checks your licence, insurance and entity (mock registries), whether the Schedule of Values adds up and is priced in range, and your track record."
+          action={<ActionButton action={{ kind: "verifyProject", projectId: p.id }}>Run verification</ActionButton>}
+        />
+      )}
+      {(p.status === "funding" || p.status === "funded") && (
+        <p className="text-body text-ink-2">
+          Raised <span className="tabular text-ink">{formatAmount(raised / 100)}</span> of {formatAmount(p.terms.principal)} RLUSD. Escrows are created when the loan closes.
+        </p>
+      )}
+      {p.status === "verified" && <p className="text-body text-ink-2">Verified. The platform locks terms and assigns your inspector next.</p>}
+
+      {d.verification && ["verifying", "verified", "rejected"].includes(p.status) && <VerificationReport v={d.verification} />}
+
+      {current && (
+        <div className="space-y-8">
+          <h3 className="text-body font-semibold">
+            Milestone {current.index + 1}: {current.title} · {formatAmount(current.amount)} RLUSD
+          </h3>
+          {["escrowed", "evidence_submitted", "failed"].includes(current.status) && (
+            <EvidenceUploader
+              projectId={p.id}
+              milestoneId={current.id}
+              milestoneTitle={current.title}
+              requirements={sovLinesFor(p, current).flatMap((l) => l.evidence)}
+            />
           )}
-        </CardContent>
-      </Card>
+          <ChecksPanel
+            milestone={current}
+            status={d.checks[current.id] ?? { required: [], optional: [], outcome: "pending" }}
+            audits={d.audits[current.id] ?? []}
+            attestations={d.attestations[current.id] ?? []}
+            builderName={builder.name}
+            action={
+              ["evidence_submitted", "audited", "failed"].includes(current.status) ? (
+                <ActionButton action={{ kind: "runChecks", projectId: p.id, milestoneId: current.id }}>Run checks</ActionButton>
+              ) : undefined
+            }
+          />
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function NextStep({ title, body, action }: { title: string; body: string; action: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-6 rounded-panel bg-band px-6 py-5">
+      <div className="max-w-[60ch]">
+        <p className="text-body font-semibold">{title}</p>
+        <p className="mt-1 text-small text-ink-2">{body}</p>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function VerificationReport({ v }: { v: NonNullable<ProjectDetail["verification"]> }) {
+  const groups: [string, CheckResult[]][] = [
+    ["Identity", v.identity],
+    ["Feasibility", v.feasibility],
+    ["Capability", v.capability],
+  ];
+  return (
+    <div className="mt-6 grid gap-8 md:grid-cols-3">
+      {groups.map(([name, checks]) => (
+        <div key={name}>
+          <h4 className="text-small font-semibold">{name}</h4>
+          <ul className="mt-2 space-y-2">
+            {checks.map((c) => (
+              <li key={c.check} className="text-small">
+                <span className={c.result === "pass" ? "text-pass" : c.result === "fail" ? "text-fail" : "text-review"}>{c.result === "pass" ? "Pass" : c.result === "fail" ? "Fail" : "Review"}</span>{" "}
+                <span className="font-medium">{checkLabel(c)}</span>
+                <span className="block text-caption text-ink-2">{c.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 }

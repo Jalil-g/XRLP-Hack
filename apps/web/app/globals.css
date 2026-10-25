@@ -1,74 +1,103 @@
 @import "tailwindcss";
 
+/* Drawproof design tokens. See DESIGN.md. Apple/Notion bar: quiet chrome, exact type, color only for state. */
 @theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Surfaces & ink */
-  --color-canvas: #f6f7f9;
-  --color-surface: #ffffff;
-  --color-subtle: #f1f3f6;
-  --color-line: #e4e7ec;
-  --color-line-strong: #d0d5dd;
-  --color-ink: #0c111d;
-  --color-ink-2: #344054;
-  --color-muted: #667085;
-  --color-faint: #98a2b3;
+  --color-page: #ffffff;
+  --color-band: #f5f5f7;
+  --color-band-2: #ebebef;
+  --color-ink: #1d1d1f;
+  --color-ink-2: #6e6e73;
+  --color-ink-3: #86868b;
+  --color-line: #e5e5ea;
+  --color-line-2: #d2d2d7;
 
-  /* Brand */
-  --color-brand: #3538cd;
-  --color-brand-600: #2d31a6;
-  --color-brand-50: #eef0ff;
-  --color-brand-100: #dfe2ff;
+  --color-action: #0071e3;
+  --color-action-hover: #0077ed;
+  --color-action-press: #006edb;
+  --color-link: #0066cc;
 
-  /* Status */
-  --color-ok: #067647;
-  --color-ok-bg: #ecfdf3;
-  --color-ok-line: #abefc6;
-  --color-warn: #b54708;
-  --color-warn-bg: #fffaeb;
-  --color-warn-line: #fedf89;
-  --color-bad: #b42318;
-  --color-bad-bg: #fef3f2;
-  --color-bad-line: #fecdca;
-  --color-info: #175cd3;
-  --color-info-bg: #eff8ff;
-  --color-info-line: #b2ddff;
-  --color-lock: #5925dc;
-  --color-lock-bg: #f4f3ff;
-  --color-lock-line: #d9d6fe;
+  --color-pass: #1a7f37;
+  --color-pass-bg: #e6f4ea;
+  --color-fail: #cf222e;
+  --color-fail-bg: #fdecea;
+  --color-review: #8a5a00;
+  --color-review-bg: #fdf3d7;
+  --color-review-icon: #bf8700;
+  --color-neutral: #57606a;
+  --color-neutral-bg: #f0f0f2;
+  --color-info: #0b5cad;
+  --color-info-bg: #e8f1fb;
 
-  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
-  --shadow-pop: 0 12px 32px -8px rgba(16, 24, 40, 0.18), 0 4px 8px -4px rgba(16, 24, 40, 0.08);
+  --text-display: 2.5rem;
+  --text-display--line-height: 2.75rem;
+  --text-display--letter-spacing: -0.025em;
+  --text-display--font-weight: 600;
+  --text-title: 1.75rem;
+  --text-title--line-height: 2.125rem;
+  --text-title--letter-spacing: -0.02em;
+  --text-title--font-weight: 600;
+  --text-heading: 1.25rem;
+  --text-heading--line-height: 1.625rem;
+  --text-heading--letter-spacing: -0.01em;
+  --text-heading--font-weight: 600;
+  --text-body: 1.0625rem;
+  --text-body--line-height: 1.625rem;
+  --text-small: 0.9375rem;
+  --text-small--line-height: 1.375rem;
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.125rem;
 
-  --animate-pulse-ring: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  @keyframes pulse-ring {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(53, 56, 205, 0.35); }
-    50% { box-shadow: 0 0 0 6px rgba(53, 56, 205, 0); }
-  }
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-tag: 6px;
+
+  --shadow-overlay: 0 20px 48px -12px rgb(0 0 0 / 0.22), 0 4px 12px -4px rgb(0 0 0 / 0.08);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @layer base {
   html {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    font-feature-settings: "cv11", "ss01";
+    text-rendering: optimizeLegibility;
   }
   body {
-    @apply bg-canvas text-ink;
+    @apply bg-page text-body text-ink;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
   }
   ::selection {
-    background: var(--color-brand-100);
+    background: #cfe3fb;
+    color: var(--color-ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-action);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  a {
+    text-underline-offset: 3px;
+  }
+  input,
+  textarea,
+  select {
+    caret-color: var(--color-action);
+  }
+  * {
+    scrollbar-color: var(--color-line-2) transparent;
   }
 }
 
 @utility tabular {
   font-variant-numeric: tabular-nums;
-}
-
-@utility bg-grid {
-  background-image:
-    linear-gradient(to right, rgba(16, 24, 40, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(16, 24, 40, 0.05) 1px, transparent 1px);
-  background-size: 32px 32px;
 }

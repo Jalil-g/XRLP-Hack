@@ -2,31 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { Role } from "@/lib/types";
+import type { Role } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 const LINKS: { href: string; label: string; roles?: Role[] }[] = [
-  { href: "/", label: "Marketplace" },
+  { href: "/", label: "Projects" },
   { href: "/portfolio", label: "Portfolio", roles: ["investor"] },
   { href: "/builder", label: "Builder", roles: ["builder"] },
-  { href: "/inspector", label: "Inspections", roles: ["inspector"] },
-  { href: "/demo", label: "Demo control" },
+  { href: "/demo", label: "Demo" },
 ];
 
 export function NavLinks({ role }: { role: Role }) {
   const pathname = usePathname();
   return (
-    <nav className="hidden items-center gap-1 md:flex">
+    <nav className="flex items-center gap-6" aria-label="Main">
       {LINKS.filter((l) => !l.roles || l.roles.includes(role)).map((l) => {
         const active = l.href === "/" ? pathname === "/" || pathname.startsWith("/projects") : pathname.startsWith(l.href);
         return (
           <Link
             key={l.href}
             href={l.href}
-            className={cn(
-              "rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors",
-              active ? "bg-subtle text-ink" : "text-muted hover:text-ink",
-            )}
+            aria-current={active ? "page" : undefined}
+            className={cn("text-small transition-colors duration-150", active ? "text-ink" : "text-ink-2 hover:text-ink")}
           >
             {l.label}
           </Link>
