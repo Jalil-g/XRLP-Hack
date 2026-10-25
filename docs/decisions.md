@@ -61,6 +61,16 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] `generateMilestoneCondition` dropped from the public API (only a `@deprecated` re-export so `scripts/demo.ts` compiles); tests/spikes use `packages/xrpl/test/support/conditions.ts`. Remove the deprecated export once demo.ts and the G-owned spikes switch. (Jalil's agent, XRPL-06)
 - [10-25] Batch atomic close: devnet rippled 3.4.1 rejects LoanSet (all Lending/SAV types) as a Batch inner tx with `temINVALID_INNER_BATCH` until `LendingProtocolV1_2`. So `closeLoanAtomic` defaults to mode "escrows": countersigned LoanSet, then one `tfAllOrNothing` Batch of every milestone EscrowCreate from the SPV (2 txs, SPV liquid ~2 ledgers). Mode "full" (platform outer, LoanSet + escrows, SPV BatchSigner) is implemented and offline-tested for when V1_2 lands. Not wired into `closeLoanAndCreateEscrows` yet (api.ts owned elsewhere). See protocol-notes §2d (Jalil's agent, XRPL-13)
 
+## Inspector lane (Roro's agent, challenge freely)
+
+- [10-24] `apps/inspector` uses the `@xrlp/shared` v2 schemas; only the read models shared defines as TS interfaces (`ProjectDetail`,
+  `InspectorTask`, snapshots) get local zod schemas in `lib/types.ts`, typed against those interfaces so drift fails typecheck.
+- [10-24] Inspector app data access is **client-side** (polling, in-browser signing later); in http mode the browser calls same-origin
+  `/api/*` and `next.config.ts` rewrites to `CORE_URL`. Responses are checked against the schemas and drift is logged, not thrown.
+- [10-24] Mock-mode parties use **real classic addresses** derived from public entropy `sha256("drawproof/mock/<label>")[0..16]`
+  (never funded, not devnet wallets) so INS-04 can sign as a mock inspector without committing any seed.
+- [10-24] Route 10 multipart fields `report` / `photos` (repeated) / `signedTxBlob` — same as core's CORE-04 handler.
+
 ## Open
 
 - Product name.
