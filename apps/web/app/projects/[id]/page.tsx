@@ -10,12 +10,14 @@ import { InvestDialog } from "@/components/project/invest-dialog";
 import { MilestoneTabs } from "@/components/project/milestone-tabs";
 import { MoneyMap } from "@/components/project/money-map";
 import { SovTable } from "@/components/project/sov-table";
+import { Button } from "@/components/ui/button";
 import { PageHeader, Properties, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { LOCKED_MILESTONE_V2 } from "@xrlp/shared";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
 import { PROJECT_STATUS, VAULT_PHASE, focusMilestone, namer, roleNamer } from "@/lib/display";
+import { investmentAvailability } from "@/lib/investment";
 import { getSession } from "@/lib/session";
 import { formatAmount, formatBps, formatDate, fromCents, toCents } from "@/lib/utils";
 
@@ -54,6 +56,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const status = PROJECT_STATUS[p.status];
   const checks = (selected && d.checks[selected.id]) ?? { required: [], optional: [], outcome: "pending" as const };
   const audits = (selected && d.audits[selected.id]) ?? [];
+  const investment = investmentAvailability(p.status, d.vault?.phase, d.vault?.subscriptionDate);
 
   return (
     <div className="space-y-10">
@@ -69,16 +72,18 @@ export default async function ProjectPage({ params, searchParams }: Props) {
           meta={<Tag tone={status.tone}>{status.label}</Tag>}
           description={`${builder.name} · ${p.siteAddress}`}
           action={
-            p.status === "funding" && session.investor ? (
-              <InvestDialog
-                projectId={p.id}
-                projectName={p.name}
-                remaining={fromCents(toCents(p.terms.principal) - raised)}
-                rateBps={p.terms.interestRateBps}
-                investor={session.investor}
-                redemptionDate={d.vault?.redemptionDate}
-              />
-            ) : undefined
+            p.status === "funding" && session.investor
+              ? investment.available
+                ? <InvestDialog
+                    projectId={p.id}
+                    projectName={p.name}
+                    remaining={fromCents(toCents(p.terms.principal) - raised)}
+                    rateBps={p.terms.interestRateBps}
+                    investor={session.investor}
+                    redemptionDate={d.vault?.redemptionDate}
+                  />
+                : <Button size="lg" disabled title={investment.reason}>{investment.label}</Button>
+              : undefined
           }
         />
       </div>

@@ -16,14 +16,17 @@ import {
   BatchNotAppliedError,
   batchOutcome,
   classifyInnerLookup,
+  closeLoanAtomic,
   closePartialError,
   createEscrowsAtomic,
+  isInnerLoanSetUnsupported,
   escrowsFromBatch,
   innerTxHash,
   isUncertainSubmitFailure,
   type AtomicEscrow,
   type AtomicMilestone,
   type BatchResult,
+  type CloseLoanAtomicDeps,
   type InnerLookup,
   type SubmitBatchParams,
 } from "../src/batch.ts";
@@ -281,6 +284,98 @@ test("partial-close classification: unknown outcomes are in flight until LastLed
   const hook = closePartialError({ loanId: "L", loanSetTx: "AB".repeat(32), created: [], failure: new Error("onTx hook"), context: ctx, uncertain: false });
   assert.equal(hook.context?.uncertain, undefined);
   assert.deepEqual(hook.pending, ["m1", "m2", "m3"]);
+});
+
+// ---------------------------------------------------------------- closeLoanAtomic: full / auto fallback (XRPL-13)
+
+// What devnet rippled 3.4.1 answers (again on 2026-10-25 ~06:05 UTC, §2d) to a Batch with an inner LoanSet.
+const innerLoanSetRefused = () => new XrplTxError("Batch", "temINVALID_INNER_BATCH", undefined, { detail: "Malformed: Invalid inner batch transaction." });
+
+function atomicHarness(fullOutcome: () => Promise<BatchResult>) {
+  const calls: { batches: SubmitBatchParams[]; loanSets: unknown[] } = { batches: [], loanSets: [] };
+  const deps: CloseLoanAtomicDeps = {
+    ledgerTime: async () => Math.min(...recordedMilestones.map((m) => m.cancelAfter)) - 3600,
+    loanSet: async (p) => {
+      calls.loanSets.push(p);
+      return { loanId: RECORDED_LOAN, tx: { hash: RECORDED_LOANSET, explorerUrl: explorerTxUrl(RECORDED_LOANSET), result: "tesSUCCESS", ledgerIndex: 6391571, tx: {}, meta: {} } };
+    },
+    submitBatch: async (p) => {
+      calls.batches.push(p);
+      return p.inners[0]!.TransactionType === "LoanSet" ? fullOutcome() : batchResultFrom(applied);
+    },
+  };
+  const milestones = (n: number): AtomicMilestone[] =>
+    Array.from({ length: n }, (_, i) => (i < recordedMilestones.length ? recordedMilestones[i]! : { ...recordedMilestones[0]!, milestoneId: `m${i + 1}`, condition: testConditionPair().condition }));
+  const params = (n = recordedMilestones.length, mode?: "full" | "escrows" | "auto") => ({
+    loan: { brokerOwner: quorum[0]!, loanBrokerId: "AB".repeat(32), borrower: SPV, principal: "990", interestRate: 10_000, paymentTotal: 2, paymentIntervalS: 120 },
+    builder: BUILDER,
+    issuer: ISSUER,
+    milestones: milestones(n),
+    spvSigners: quorum,
+    ...(mode ? { mode } : {}),
+    deps,
+  });
+  return { calls, params };
+}
+
+test("closeLoanAtomic auto: inner LoanSet refused (temINVALID_INNER_BATCH, nothing on ledger) → falls back to LoanSet + one escrow Batch", async () => {
+  assert.ok(isInnerLoanSetUnsupported(innerLoanSetRefused()));
+  const { calls, params } = atomicHarness(async () => {
+    throw innerLoanSetRefused();
+  });
+  const r = await closeLoanAtomic(params(3, "auto"));
+  // 1st: the full close (platform outer, LoanSet first, SPV approves via BatchSigners). 2nd: the SPV's escrow Batch.
+  assert.equal(calls.batches.length, 2);
+  assert.equal(calls.batches[0]!.account, quorum[0]!.classicAddress);
+  assert.deepEqual(calls.batches[0]!.inners.map((t) => t.TransactionType), ["LoanSet", "EscrowCreate", "EscrowCreate", "EscrowCreate"]);
+  assert.deepEqual(Object.keys(calls.batches[0]!.batchSigners ?? {}), [SPV]);
+  assert.equal(calls.batches[1]!.account, SPV);
+  assert.deepEqual(calls.batches[1]!.inners.map((t) => t.TransactionType), ["EscrowCreate", "EscrowCreate", "EscrowCreate"]);
+  assert.equal(calls.loanSets.length, 1, "the fallback LoanSet is the countersigned standalone one");
+  assert.deepEqual((calls.loanSets[0] as { borrowerSig: unknown }).borrowerSig, { multisig: quorum });
+  assert.equal(r.mode, "escrows");
+  assert.deepEqual(r.fallback && { from: r.fallback.from, engineResult: r.fallback.engineResult }, { from: "full", engineResult: "temINVALID_INNER_BATCH" });
+  assert.equal(r.loanId, RECORDED_LOAN);
+  assert.equal(r.loanSetTx.hash, RECORDED_LOANSET);
+  assert.deepEqual(r.escrows.map((e) => e.milestoneId), ["m1", "m2", "m3"]);
+});
+
+test("closeLoanAtomic auto: any other failure is rethrown (no fallback LoanSet); 1 milestone can't fall back; 8 go straight to escrows", async () => {
+  // A different refusal, an on-ledger rollback or a network error is not "this network can't batch LoanSet".
+  for (const err of [new XrplTxError("Batch", "tefPAST_SEQ"), new XrplTxError("Batch", "inner_failed", "AA".repeat(32)), new Error("socket hang up")]) {
+    const { calls, params } = atomicHarness(async () => {
+      throw err;
+    });
+    await assert.rejects(closeLoanAtomic(params(3, "auto")), (e: unknown) => e === err);
+    assert.equal(calls.loanSets.length, 0, String(err));
+    assert.equal(calls.batches.length, 1, String(err));
+  }
+  const one = atomicHarness(async () => {
+    throw innerLoanSetRefused();
+  });
+  await assert.rejects(closeLoanAtomic(one.params(1, "auto")), (e: unknown) => isInnerLoanSetUnsupported(e));
+  assert.equal(one.calls.loanSets.length, 0);
+
+  const eight = atomicHarness(async () => assert.fail("8 milestones leave no inner slot for LoanSet"));
+  // The recorded 3-escrow Batch doesn't match 8 milestones, so the result may throw: only the routing matters here.
+  await closeLoanAtomic(eight.params(8, "auto")).catch(() => undefined);
+  assert.equal(eight.calls.batches[0]!.account, SPV);
+  assert.equal(eight.calls.batches[0]!.inners.length, 8);
+  assert.equal(eight.calls.loanSets.length, 1);
+});
+
+test('closeLoanAtomic: default mode stays "escrows" (no full attempt); explicit "full" surfaces the refusal', async () => {
+  const d = atomicHarness(async () => assert.fail("default must not try the full close"));
+  const r = await closeLoanAtomic(d.params());
+  assert.equal(r.mode, "escrows");
+  assert.equal(r.fallback, undefined);
+  assert.deepEqual(d.calls.batches.map((b) => b.account), [SPV]);
+
+  const f = atomicHarness(async () => {
+    throw innerLoanSetRefused();
+  });
+  await assert.rejects(closeLoanAtomic(f.params(3, "full")), /temINVALID_INNER_BATCH/);
+  assert.equal(f.calls.loanSets.length, 0);
 });
 
 // ---------------------------------------------------------------- ledger parsers (recorded SPV history)

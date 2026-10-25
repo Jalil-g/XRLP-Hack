@@ -10,12 +10,15 @@ import { UploadedEvidenceMeta } from "./adapters/evidence-meta.ts";
 import { CoreVerifierAdapter } from "./adapters/verifier.ts";
 import type { ReleaseServicePort } from "./api-surface.ts";
 import { FakeClock, systemClock, type Clock } from "./clock.ts";
+import type { AttestAutofill } from "./demo/prestage-import.ts";
+import { prestageSeedOptions } from "./demo/prestage-seed.ts";
 import { DEMO_ADDRESSES, demoCancelAfter, seedDemo, SEED_BACKDATE_MS } from "./demo/scenario.ts";
 import { FakeLedger } from "./fakes/fake-ledger.ts";
 import { FakeVerifier } from "./fakes/fake-verifier.ts";
 import { releaseKeyFromEnv } from "./env.ts";
 import { FileStore, resolveDataDir } from "./file-store.ts";
 import { FilePreimageVault, MemoryPreimageVault, ReleaseService } from "./release-service.ts";
+import { DomainError } from "./errors.ts";
 import { CoreService, type CoreServiceOptions } from "./service.ts";
 import { MemoryStore, type Store } from "./store.ts";
 
@@ -35,6 +38,8 @@ export interface CreateCoreOptions extends Partial<CoreServiceOptions> {
   inMemory?: boolean;
   dataDir?: string;
   env?: Record<string, string | undefined>;
+  /** Devnet prestage seed: offline Fee/Sequence/LastLedgerSequence for the inspector-signed audits (tests). Default: devnet. */
+  prestageAutofill?: AttestAutofill;
 }
 
 type Env = Record<string, string | undefined>;
@@ -93,8 +98,9 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const devnet = !opts.ledger && env.LEDGER_MODE === "devnet" ? devnetConfigFromEnv(env) : undefined;
   const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir, devnet);
   const verifier = opts.verifier ?? verifierFromEnv(env, clock, store, dataDir, !!devnet);
-  const release =
-    opts.release ?? new ReleaseService({ ledger, vault: dataDir ? new FilePreimageVault(dataDir, releaseKeyFromEnv(env)) : new MemoryPreimageVault(), now: () => clock.now() });
+  // Hoisted so the CORE-07 prestage import writes into the ReleaseService's own vault (same instance).
+  const vault = dataDir ? new FilePreimageVault(dataDir, releaseKeyFromEnv(env)) : new MemoryPreimageVault();
+  const release = opts.release ?? new ReleaseService({ ledger, vault, now: () => clock.now() });
 
   // Route 21 seeding (fake ledger with files only): replay the demo story on a back-dated clock through a twin core
   // that shares this store, the fake ledger's state file and the preimage vault.
@@ -104,12 +110,30 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
     (devnet
       ? () => seedDevnetParticipants(service, devnet.identities, (line) => console.log(`[core] ${line}`))
       : canSeed
-      ? async () => {
+      ? async (name) => {
+          if (name !== "maple-st") throw new DomainError("VALIDATION", `Seed "${name}" needs LEDGER_MODE=devnet (fake mode seeds "maple-st")`);
           const twinClock = new FakeClock(new Date(clock.now().getTime() - SEED_BACKDATE_MS));
           const twin = createCore({ dataDir, env, store, clock: twinClock, cancelAfterFor: demoCancelAfter, seed: async () => {}, resetLedger: () => {} });
           await seedDemo(twin.service, twinClock);
         }
       : undefined);
+  // CORE-07: devnet route 21 loads the XRPL prestage (A/B/C) into this store and the release service's vault.
+  const prestage =
+    !opts.seed && !opts.release && (env.LEDGER_MODE ?? "fake") === "devnet"
+      ? prestageSeedOptions({
+          env,
+          dataDir: dataDir ?? resolveDataDir(env),
+          store,
+          vault,
+          ledger,
+          service: () => service,
+          other: seed,
+          walletsPlatform: devnet?.identities.platform,
+          // Project A's prestaged audits are signed by the assigned inspector's key (an injected ledger: only if WALLETS_FILE is set).
+          walletsFile: devnet?.walletsFile ?? (env.WALLETS_FILE ? (isAbsolute(env.WALLETS_FILE) ? env.WALLETS_FILE : resolve(XRPL_REPO_ROOT, env.WALLETS_FILE)) : undefined),
+          ...(opts.prestageAutofill ? { autofill: opts.prestageAutofill } : {}),
+        })
+      : {};
 
   const ids = devnet?.identities;
   const cancelAfterFor = cancelAfterFromEnv(env);
@@ -117,6 +141,7 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
     platformAddress: ids?.platform ?? DEMO_ADDRESSES.platform,
     aiAgentAddress: ids?.aiAgent ?? DEMO_ADDRESSES.aiAgent,
     releaseServiceAddress: ids?.releaseService ?? DEMO_ADDRESSES.releaseService,
+    ...prestage,
     ...(cancelAfterFor ? { cancelAfterFor } : {}),
     // The ledger's cover minimum is CoverRateMinimum (10%) of principal + interest, not of principal; 11% of principal is
     // the headroom xrpl's defaultCoverDeposit uses (covers interest up to 10% of principal). Proper fix: service.ts cover on owed.
@@ -127,7 +152,7 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
     verifier,
     release,
     clock,
-    seed,
+    seed: prestage.seed ?? seed,
     resetLedger: opts.resetLedger ?? (ledger instanceof FakeLedger ? () => ledger.reset() : undefined),
   });
   return { service, store, ledger, verifier, release, clock, dataDir };
