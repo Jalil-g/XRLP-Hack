@@ -5,7 +5,7 @@ import type { Evidence, VerifyMilestoneInput } from "@xrlp/shared";
 import { CoreVerifierAdapter } from "../src/adapters/verifier.ts";
 import { DAY_MS, FakeClock } from "../src/clock.ts";
 import { demoPhoto } from "../src/demo/fixtures.ts";
-import { DEMO, demoCancelAfter, invoice, mapleInput, photos, registerParticipants, toFunded } from "../src/demo/scenario.ts";
+import { DEMO, auditBody, demoCancelAfter, invoice, mapleInput, photos, registerParticipants, toFunded } from "../src/demo/scenario.ts";
 import { createCore } from "../src/factory.ts";
 import { FakeLedger } from "../src/fakes/fake-ledger.ts";
 import { MemoryStore } from "../src/store.ts";
@@ -40,6 +40,31 @@ describe("verdict reasons (fake verifier)", () => {
     assert.match(fresh.reason, /oneday\.jpg taken 1 day before this escrow existed/);
     assert.match(fresh.reason, /days\.jpg taken 3 days before this escrow existed/);
     assert.doesNotMatch(fresh.reason, /\b0 days\b/);
+  });
+});
+
+describe("audit vs evidence (fake verifier)", () => {
+  it("inspector marks a line not done: checklist fails and the audit-vs-evidence row says they disagree, not 'agrees'", async () => {
+    const clock = new FakeClock(T0);
+    const svc = createCore({ inMemory: true, clock, ledger: new FakeLedger({ clock, salt: "behind" }), cancelAfterFor: demoCancelAfter }).service;
+    await registerParticipants(svc);
+    const { project, inspectors } = await toFunded(svc, mapleInput(new Date(Date.parse(T0) + 2 * DAY_MS)), ["50000", "40000", "30000"]);
+    clock.set(new Date(Date.parse(T0) + 2 * DAY_MS + HOUR));
+    const closed = (await svc.closeLoan(project.id, { actor: svc.platformAddress })).project;
+    const m1 = closed.milestones[0]!;
+    clock.advance(HOUR);
+    const ev = [...photos(DEMO.maple.siteGeo, "slab", 2, clock.now(), "slab", 30), invoice("i.pdf", m1.amount)];
+    await svc.submitEvidence(project.id, m1.id, ev);
+    const body = auditBody(closed, m1.id, inspectors[0]!, ev, "Anchor bolts not set yet.");
+    body.report.checklist = body.report.checklist.map((c) => ({ ...c, status: "not_done" as never }));
+    await svc.submitAudit(project.id, m1.id, body);
+    const { verdict, release } = await svc.runChecks(project.id, m1.id);
+    const row = (id: string) => verdict.checks.find((c) => c.check === id)!;
+    assert.equal(row("audit_checklist_complete").result, "fail");
+    assert.equal(row("audit_matches_evidence").result, "warn");
+    assert.match(row("audit_matches_evidence").reason, /Inspector marked 1 of 1 item not done/);
+    assert.doesNotMatch(row("audit_matches_evidence").reason, /agrees/);
+    assert.equal(release, undefined, "nothing released");
   });
 });
 
