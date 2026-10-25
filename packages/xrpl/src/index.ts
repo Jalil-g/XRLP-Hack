@@ -55,3 +55,9 @@ export type { AttestationPayload } from "./attest.ts";
 export { credentialStatus } from "./credentials.ts";
 export type { CredentialType } from "./credentials.ts";
 export { toChainEvent } from "./events.ts";
+
+// Submission hardening (XRPL-12): per-account lock, retries, typed errors → API ErrorCode
+export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErrorCode } from "./client.ts";
+export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
+export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
+export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
