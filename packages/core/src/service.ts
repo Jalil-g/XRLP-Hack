@@ -1383,7 +1383,8 @@ export class CoreService implements CoreApi {
         { v: 1, kind: "audit", milestoneId: `${id}:site-visit`, hash, decision: siteVisitOutcome(answers), reason: `site-visit signed-for ${report.inspector}` },
         "attest site visit",
       );
-      const visit: InspectorSiteVisit = { projectId: id, inspector: report.inspector, answers, photos, notes, txHash: tx.hash, at };
+      // Unsigned: the inspector field is the caller's claim (route 10 audits are inspector-signed; this route can't be yet).
+      const visit: InspectorSiteVisit = { projectId: id, inspector: report.inspector, answers, photos, notes, txHash: tx.hash, at, signedByInspector: false };
       const events = this.evs([tx], { projectId: id, kind: "audit_attested", actor: report.inspector });
       return this.store.write((db) => {
         const meta = this.meta(db, id);

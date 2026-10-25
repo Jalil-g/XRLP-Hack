@@ -29,6 +29,8 @@ export interface InspectorSiteVisit {
   notes: string;
   txHash?: string;
   at: string;
+  /** false = core attested it with the platform key; nothing proves the named inspector filed it. Weigh it accordingly. */
+  signedByInspector?: boolean;
 }
 
 /** Notes trimmed, empty notes dropped (the app's buildSiteVisit does the same). */

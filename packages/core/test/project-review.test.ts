@@ -65,6 +65,7 @@ describe("route 24: inspector pre-construction site visit", () => {
     assert.equal(visit.photos.length, 1);
     assert.equal(visit.photos[0]!.sha256, PHOTO.sha256);
     assert.ok(visit.txHash && visit.at);
+    assert.equal(visit.signedByInspector, false, "the response says it is not inspector-signed");
     assert.deepEqual(events.map((e) => [e.kind, e.actor, e.milestoneId]), [["audit_attested", tom, undefined]]);
     // apps/inspector/lib/site-visit.ts siteVisitHash, written out
     const expected = await sha256Hex(
