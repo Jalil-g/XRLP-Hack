@@ -52,6 +52,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] SPV default multisig quorum = platform + builder + trustee (any 3 of 4 is valid). These are fixed per project whichever inspector the AI assigned; callers pass the inspector explicitly when it should sign. `submitMultisigned` checks quorum against the on-ledger SignerList before submitting, because xrpl.js `submitAndWait` hangs ~1 min on `tef*` instead of throwing (Jalil's agent, XRPL-05)
 
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
+- [10-25] Merged `main` @ e67052a verified on devnet end-to-end (bootstrap ×2 idempotent, demo, 5 spikes, compliance, stress, withdraw) — all green, proof in `docs/proof-devnet-2026-10-25-v2.md`. Gaps: demo still uses v1 `attestApproval`; `setupProjectOnChain` creates public vaults (no DomainID); `finishEscrow` always uses the 120 s preflight margin; submit lock ≈ 6.6 s/tx/account (Jalil's agent, devnet verification)
 
 ## Open
 
