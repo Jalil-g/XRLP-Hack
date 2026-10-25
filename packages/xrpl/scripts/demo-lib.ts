@@ -95,7 +95,8 @@ export class TxLog {
   /** Markdown table (paste-able into a PR). */
   table(title = "tx table"): string {
     const lines = [`### ${title}`, "", "| # | beat | step | type | result | explorer |", "|---|---|---|---|---|---|"];
-    this.rows.forEach((r, i) => lines.push(`| ${i + 1} | ${r.beat} | ${r.step} | ${r.type} | ${r.expected ? `**${r.result}** (expected)` : r.result} | ${r.url} |`));
+    const short = (b: string) => (b.split(":")[0] ?? b).slice(0, 28);
+    this.rows.forEach((r, i) => lines.push(`| ${i + 1} | ${short(r.beat)} | ${r.step} | ${r.type} | ${r.expected ? `**${r.result}** (expected)` : r.result} | ${r.url} |`));
     return lines.join("\n");
   }
 }
