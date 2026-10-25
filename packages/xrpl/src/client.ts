@@ -1,15 +1,30 @@
 // Connection + submit helpers. One shared Client per process.
 // Submission is hardened (XRPL-12): per-account lock, LastLedgerSequence always set, bounded retries. See submit.ts.
+// Opt-in pipelined mode (XRPL-17, XRPL_PIPELINE=1 or setSubmitMode): up to `window` txs per account in flight at once.
 import https from "node:https";
 import { Client, type SubmittableTransaction, type Wallet } from "xrpl";
 import { explorerTxUrl } from "@xrlp/shared";
 import { assertDevnetNetworkId, config } from "./config.ts";
 import { XrplTxError } from "./errors.ts";
-import { assertLlsMargin, describeBlob, submitReliably, withAccountLock, type LedgerIo, type Lookup, type ResignMode, type RetryPolicy, type ValidatedTx } from "./submit.ts";
+import {
+  assertLlsMargin,
+  describeBlob,
+  submitPipelined,
+  submitReliably,
+  usePipeline,
+  withAccountLock,
+  type Lookup,
+  type PipelineIo,
+  type PipelinePolicy,
+  type ResignMode,
+  type ValidatedTx,
+} from "./submit.ts";
 
 export { XrplTxError, toErrorCode } from "./errors.ts";
 export type { ApiErrorCode, XrplTxErrorOptions } from "./errors.ts";
 export { withAccountLock } from "./submit.ts";
+export { setSubmitMode, getSubmitMode, resetSubmitMode, pipelineState, DEFAULT_PIPELINE_WINDOW } from "./submit.ts";
+export type { SubmitMode, SubmitModeName, PipelineEvent, PipelineState } from "./submit.ts";
 
 export interface TxResult {
   hash: string;
@@ -29,7 +44,7 @@ export interface TxResult {
  */
 export const DEFAULT_LLS_MARGIN = assertLlsMargin(process.env.XRPL_LLS_MARGIN ? Number(process.env.XRPL_LLS_MARGIN) : 20, "XRPL_LLS_MARGIN");
 
-export interface SubmitOptions extends RetryPolicy {
+export interface SubmitOptions extends PipelinePolicy {
   /** LastLedgerSequence = validated index + margin. Default DEFAULT_LLS_MARGIN. Ignored if the tx sets LastLedgerSequence. */
   lastLedgerMargin?: number;
   /** Multisig: number of signers, so autofill charges the right Fee. */
@@ -94,7 +109,7 @@ export async function reconnect(): Promise<Client> {
 const rpcError = (e: unknown) => (e as { data?: { error?: string; searched_all?: boolean } })?.data;
 
 /** The real `LedgerIo` for submit.ts: shared client, re-fetched per call so a reconnect is picked up. */
-export const realLedgerIo: LedgerIo = {
+export const realLedgerIo: PipelineIo = {
   async submit(blob) {
     const client = await getClient();
     const res = await client.request({ command: "submit", tx_blob: blob });
@@ -119,6 +134,13 @@ export const realLedgerIo: LedgerIo = {
   async validatedLedgerIndex() {
     return (await getClient()).getLedgerIndex();
   },
+  async nextSequence(account) {
+    // Open ledger (our earlier txs applied provisionally) plus anything queued behind them.
+    const res = await (await getClient()).request({ command: "account_info", account, ledger_index: "current", queue: true });
+    const seq = res.result.account_data.Sequence;
+    const high = res.result.queue_data?.highest_sequence;
+    return high !== undefined && high + 1 > seq ? high + 1 : seq;
+  },
   async reconnect() {
     await reconnect();
   },
@@ -140,10 +162,21 @@ function toResult(r: ValidatedTx): TxResult {
   };
 }
 
-/** Optional retry log: XRPL_SUBMIT_LOG=1 prints every retry decision. */
+/** Optional retry log: XRPL_SUBMIT_LOG=1 prints every retry decision (and, pipelined, every dirty/resync). */
 function withLog(opts: SubmitOptions): SubmitOptions {
-  if (opts.onRetry || !process.env.XRPL_SUBMIT_LOG) return opts;
-  return { ...opts, onRetry: (e) => console.warn(`  ↻ retry #${e.attempt} ${e.reason} → ${e.action} (${explorerTxUrl(e.hash)})`) };
+  if (!process.env.XRPL_SUBMIT_LOG) return opts;
+  return {
+    ...opts,
+    onRetry: opts.onRetry ?? ((e) => console.warn(`  ↻ retry #${e.attempt} ${e.reason} → ${e.action} (${explorerTxUrl(e.hash)})`)),
+    onPipeline:
+      opts.onPipeline ??
+      ((e) =>
+        console.warn(
+          e.kind === "dirty"
+            ? `  ⚠ pipeline ${e.account}: ${e.reason}${e.sequence !== undefined ? ` at Seq ${e.sequence}` : ""}${e.hash ? ` (${explorerTxUrl(e.hash)})` : ""} → draining`
+            : `  ⟳ pipeline ${e.account}: resync (${e.reason}) → next Seq ${e.nextSequence ?? "?"}, re-signing ${e.resign}`,
+        )),
+  };
 }
 
 /**
@@ -151,6 +184,7 @@ function withLog(opts: SubmitOptions): SubmitOptions {
  * Locked per `Account` (re-entrant). Retries only by resubmitting the same blob; if the tx needs re-preparing
  * (expired LastLedgerSequence, sequence taken) it throws with `retriable: true`. To make autofill→sign→submitBlob
  * race-free against other submits from the same account, wrap the whole thing in `withAccountLock(account, …)`.
+ * Pipelined mode: the blob keeps its own Sequence and is submitted once the account's in-flight window has drained.
  */
 export async function submitBlob(txBlob: string, txType = "tx", opts: SubmitOptions = {}): Promise<TxResult> {
   const first = describeBlob(txBlob, txType);
@@ -161,6 +195,8 @@ export async function submitBlob(txBlob: string, txType = "tx", opts: SubmitOpti
  * Autofill (LastLedgerSequence = validated + margin), sign with `sign`, submit, wait — holding the `account` lock
  * the whole time, re-preparing on transient failures. Use for multisig: prepare with `SigningPubKey: ""`,
  * `signersCount`, and a `sign` that combines the signers' blobs.
+ * Pipelined mode (XRPL-17): the lock covers only autofill (at the account's local next Sequence) → sign → submit,
+ * and the wait for validation runs next to up to `window - 1` other txs of the account (see submit.ts R1-R6).
  */
 export async function submitWithSigner<T extends SubmittableTransaction>(
   account: string,
@@ -169,6 +205,22 @@ export async function submitWithSigner<T extends SubmittableTransaction>(
   opts: SubmitOptions = {},
 ): Promise<TxResult> {
   const margin = assertLlsMargin(opts.lastLedgerMargin ?? DEFAULT_LLS_MARGIN);
+  if (usePipeline(account, tx)) {
+    let first = true;
+    const prepare = async (sequence: number) => {
+      const client = await getClient();
+      const own = first ? tx.LastLedgerSequence : undefined; // a caller's LastLedgerSequence (e.g. preflight's): first blob only
+      first = false;
+      // The mutex is held meanwhile: Fee (autofill) and the validated index in parallel, one round trip.
+      const [validated, prepared] = await Promise.all([
+        client.getLedgerIndex(),
+        client.autofill({ ...tx, Account: account, Sequence: sequence, LastLedgerSequence: own ?? 0 }, opts.signersCount),
+      ]);
+      prepared.LastLedgerSequence = own ?? validated + margin;
+      return { ...describeBlob(sign(prepared), tx.TransactionType), minLedger: validated + 1 };
+    };
+    return toResult(await submitPipelined({ account, txType: tx.TransactionType, prepare }, realLedgerIo, withLog(opts)));
+  }
   return withAccountLock(account, async () => {
     let lastSeq: number | undefined;
     const prepare = async (mode: "first" | ResignMode) => {
