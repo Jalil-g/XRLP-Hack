@@ -7,11 +7,28 @@
 //  - A NEW blob is only built when the previous one provably cannot apply:
 //      tel* (not applied, not relayed) or LastLedgerSequence passed with no hit in a fully-searched range
 //        → re-sign with the SAME Sequence (mutually exclusive with the old blob, so never a double-apply);
-//      tefPAST_SEQ on a blob that never reached the ledger → re-sign with a fresh Sequence.
+//      tefPAST_SEQ on a blob that never reached the ledger → re-sign with a fresh Sequence, but only once every
+//        other blob of this intent that may have reached a server is settled (validated or provably expired).
 //  - tec* / tem* / other tef* are final; never retried.
+//  - `retriable: true` only when no blob of the intent can still apply. Anything else whose outcome isn't known is
+//    `unknown_outcome` / `connection_lost` (non-retriable): the caller must look the hash up, not re-run.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ConnectionError, decode, hashes } from "xrpl";
-import { XrplTxError } from "./errors.ts";
+import { redactedCause, redactSecrets, XrplTxError } from "./errors.ts";
+
+/**
+ * Largest LastLedgerSequence margin (ledgers) the engine accepts. "Provably not applied" is a ranged `tx` lookup from the
+ * first ledger the tx could land in to its LastLedgerSequence, and rippled searches at most 1000 ledgers per lookup.
+ */
+export const MAX_LLS_MARGIN = 500;
+
+/** Throws unless `margin` is an integer in 1..MAX_LLS_MARGIN (`what` names the setting). Returns it. */
+export function assertLlsMargin(margin: unknown, what = "lastLedgerMargin"): number {
+  if (typeof margin !== "number" || !Number.isInteger(margin) || margin < 1 || margin > MAX_LLS_MARGIN) {
+    throw new Error(`${what} must be an integer in 1..${MAX_LLS_MARGIN} ledgers, got ${JSON.stringify(margin)}`);
+  }
+  return margin;
+}
 
 // ── Per-account async mutex ────────────────────────────────────────────────────────────────
 
@@ -148,6 +165,10 @@ export type ValidatedTx = Record<string, unknown> & { hash?: string };
 
 const MAX_CONN_ERRORS = 5;
 const MAX_INCOMPLETE_HISTORY_POLLS = 10;
+/** `tooBusy`-style answers to a `tx` lookup tolerated while waiting for a result (polled through, then unknown_outcome). */
+const MAX_BUSY_POLLS = 20;
+/** Widest `tx` range rippled searches in one lookup. */
+const MAX_LOOKUP_SPAN = 999;
 
 function finalResult(r: Record<string, unknown>): string {
   const meta = r.meta as { TransactionResult?: string } | undefined;
@@ -156,7 +177,11 @@ function finalResult(r: Record<string, unknown>): string {
 
 /**
  * Submit `first`, wait for validation, retry transient failures. Returns the validated tx on tesSUCCESS.
- * Throws `XrplTxError` otherwise; `retriable` is true only when nothing was applied and a fresh attempt may work.
+ * Throws `XrplTxError` otherwise; `retriable` is true only when NO blob of this intent can still apply (every one was
+ * refused before reaching a ledger, or provably expired), so re-preparing from scratch is safe. A failure whose outcome is
+ * unknown is `connection_lost` / `unknown_outcome` (non-retriable, with the hash to look up).
+ * Every blob that may have reached a server stays tracked until it validates or provably expires; a fresh Sequence is
+ * only signed, and a retriable or definite failure only thrown, once all of them are settled (security review H1/H2).
  * Without `resign` (pre-signed blobs) only same-blob resubmits are possible; anything needing a new blob throws retriable.
  */
 export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: RetryPolicy & { resign?: Resign } = {}): Promise<ValidatedTx> {
@@ -165,14 +190,21 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
   const backoff0 = opts.backoffMs ?? 500;
   const maxWaitMs = opts.maxWaitMs ?? 120_000;
   let cur = first;
-  /** Hashes that may have reached a server (submit returned pending, or the socket died mid-submit). */
-  const maybeSent = new Set<string>();
+  /**
+   * Blobs of this intent that may have reached a server (submit answered pending, or the socket died mid-submit) and are
+   * not yet settled. They all share one Sequence (same-Sequence re-signs), so at most one of them can apply.
+   */
+  const live = new Map<string, SignedBlob>();
   /** First ledger each hash could have landed in (validated index + 1 at its first submit). */
   const firstLedger = new Map<string, number>();
   let connErrors = 0;
 
   const fail = (code: string, retriable: boolean, opt: { hash?: string; detail?: string; cause?: unknown } = {}) =>
-    new XrplTxError(cur.txType, code, opt.hash, { retriable, ...(opt.detail ? { detail: opt.detail } : {}), ...(opt.cause !== undefined ? { cause: opt.cause } : {}) });
+    new XrplTxError(cur.txType, redactSecrets(code), opt.hash, {
+      retriable,
+      ...(opt.detail ? { detail: opt.detail } : {}),
+      ...(opt.cause !== undefined ? { cause: redactedCause(opt.cause) } : {}),
+    });
 
   const onConnError = async (e: unknown) => {
     if (++connErrors > MAX_CONN_ERRORS) throw fail("connection_lost", false, { hash: cur.hash, detail: "outcome unknown; check the hash", cause: e });
@@ -183,46 +215,74 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
   const waitFinal = async (blob: SignedBlob, minLedger: number): Promise<ValidatedTx | "expired"> => {
     const started = Date.now();
     let incomplete = 0;
+    let busy = 0;
     for (;;) {
       try {
         const v = await io.validatedLedgerIndex();
         const lls = blob.lastLedgerSequence;
         const closedOut = lls !== undefined && v >= lls;
-        const range = closedOut ? { min: Math.max(minLedger, lls - 999), max: lls } : undefined;
+        const range = closedOut ? { min: Math.max(minLedger, lls - MAX_LOOKUP_SPAN), max: lls } : undefined;
         const lk = await io.lookup(blob.hash, range);
         if (lk.status === "validated") return lk.result;
         if (closedOut && lk.status === "missing") {
-          if (lk.searchedAll) return "expired";
+          // Proof only if the searched range starts where the tx could first have landed (L1: margins > 999 ledgers).
+          if (lk.searchedAll && range!.min <= minLedger) return "expired";
           if (++incomplete > MAX_INCOMPLETE_HISTORY_POLLS)
             throw fail("unknown_outcome", false, { hash: blob.hash, detail: "server history incomplete; check the hash" });
         }
         if (lls === undefined && Date.now() - started > maxWaitMs)
           throw fail("unknown_outcome", false, { hash: blob.hash, detail: "no LastLedgerSequence; gave up waiting" });
       } catch (e) {
-        if (e instanceof XrplTxError || !isConnectionError(e)) throw e;
-        await onConnError(e);
+        if (e instanceof XrplTxError) throw e;
+        if (isConnectionError(e)) await onConnError(e);
+        else if (!(isTransientRpcError(e) && ++busy <= MAX_BUSY_POLLS))
+          throw fail("unknown_outcome", false, { hash: blob.hash, detail: "could not look the tx up; check the hash", cause: e });
       }
       await io.sleep(pollMs);
     }
   };
 
+  const waitFor = (b: SignedBlob) => waitFinal(b, Math.min(firstLedger.get(b.hash) ?? 1, b.lastLedgerSequence ?? Infinity));
+
+  /**
+   * Wait until every live blob (except `skip`) has validated or provably expired. A validated one decides the intent:
+   * tesSUCCESS is returned, tec* thrown (final). undefined = none of them applied, and none can any more.
+   */
+  const settle = async (skip?: string): Promise<ValidatedTx | undefined> => {
+    for (const b of [...live.values()]) {
+      if (b.hash === skip) continue;
+      const out = await waitFor(b);
+      live.delete(b.hash);
+      if (out === "expired") continue;
+      const res = finalResult(out);
+      if (res === "tesSUCCESS") return out;
+      throw fail(res, false, { hash: String(out.hash ?? b.hash) });
+    }
+    return undefined;
+  };
+
   for (let attempt = 1; ; attempt++) {
     let prelim: string;
     let detail: string | undefined;
+    let sending = false;
     try {
       const minLedger = (await io.validatedLedgerIndex()) + 1;
       if (!firstLedger.has(cur.hash)) firstLedger.set(cur.hash, minLedger);
+      sending = true; // from here on the blob may reach a server
       const r = await io.submit(cur.blob);
       prelim = r.engineResult;
       detail = r.message;
     } catch (e) {
       if (isConnectionError(e)) {
-        maybeSent.add(cur.hash);
+        if (sending) live.set(cur.hash, cur);
         await onConnError(e);
         prelim = "connection_lost";
       } else if (isTransientRpcError(e)) {
         prelim = String((e as { data: { error: string } }).data.error);
       } else {
+        // Refused by the RPC layer. An earlier attempt of this intent may still apply: settle it before saying "failed".
+        const won = await settle();
+        if (won) return won;
         throw fail(String((e as { data?: { error?: string } })?.data?.error ?? (e instanceof Error ? e.message : e)), false, { cause: e });
       }
     }
@@ -231,22 +291,30 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
     const cls: PreliminaryClass | "conn" | "busy" =
       prelim === "connection_lost" ? "conn" : isTransientRpcError({ data: { error: prelim } }) ? "busy" : classifyPreliminary(prelim);
 
-    if (cls === "fatal") throw fail(prelim, false, detail ? { detail } : {});
+    if (cls === "fatal") {
+      const won = await settle(); // this blob was refused; an earlier one may still apply
+      if (won) return won;
+      throw fail(prelim, false, detail ? { detail } : {});
+    }
 
-    if (cls === "pending" || (cls === "past_seq" && maybeSent.has(cur.hash))) {
+    if (cls === "pending" || (cls === "past_seq" && live.has(cur.hash))) {
       // Possibly applied: only the ledger can tell. Never build a new blob until this one is provably dead.
-      if (cls === "pending") maybeSent.add(cur.hash);
-      const out = await waitFinal(cur, Math.min(firstLedger.get(cur.hash) ?? 1, cur.lastLedgerSequence ?? Infinity));
+      live.set(cur.hash, cur);
+      const out = await waitFor(cur);
+      live.delete(cur.hash);
       if (out !== "expired") {
         const res = finalResult(out);
         if (res === "tesSUCCESS") return out;
         throw fail(res, false, { hash: String(out.hash ?? cur.hash) });
       }
-      maybeSent.delete(cur.hash);
       prelim = "tefMAX_LEDGER";
       next = "same_seq";
     } else if (cls === "past_seq") {
-      next = "new_seq"; // never reached a ledger and its Sequence is gone → cannot apply
+      // This blob never reached a ledger and its Sequence is gone: taken by an earlier blob of this intent (then that one
+      // decides) or by another tx. Only a fresh Sequence can go on, and only once no earlier blob can still apply.
+      const won = await settle();
+      if (won) return won;
+      next = "new_seq";
     } else if (cls === "expired") {
       next = "same_seq";
     } else if (cls === "conn") {
@@ -255,11 +323,26 @@ export async function submitReliably(first: SignedBlob, io: LedgerIo, opts: Retr
       next = opts.resign ? "same_seq" : "resubmit_same_blob"; // resubmit/busy: fresh Fee if we can re-sign
     }
 
-    if (attempt >= maxAttempts) throw fail(prelim, true, { detail: `gave up after ${attempt} attempts` });
-    if (next !== "resubmit_same_blob" && !opts.resign) throw fail(prelim, true, { detail: "pre-signed blob must be re-prepared" });
+    if (attempt >= maxAttempts || (next !== "resubmit_same_blob" && !opts.resign)) {
+      // Giving up is only "retriable" once nothing of this intent can still apply; settle() waits that out.
+      const won = await settle();
+      if (won) return won;
+      const why = attempt >= maxAttempts ? `gave up after ${attempt} attempts` : "pre-signed blob must be re-prepared";
+      // After settle() nothing can apply: a lost connection is no longer an unknown outcome, so don't report it as one.
+      if (prelim === "connection_lost") throw fail("not_applied", true, { detail: `connection lost; every attempt refused or provably expired; ${why}` });
+      throw fail(prelim, true, { detail: why });
+    }
 
     opts.onRetry?.({ attempt, reason: prelim, hash: cur.hash, action: next });
     await io.sleep(Math.min(backoff0 * 2 ** (attempt - 1), 4000));
-    if (next !== "resubmit_same_blob") cur = await opts.resign!(next);
+    if (next !== "resubmit_same_blob") {
+      try {
+        cur = await opts.resign!(next);
+      } catch (e) {
+        if (!live.size) throw e;
+        const pending = [...live.keys()];
+        throw fail("unknown_outcome", false, { hash: pending[pending.length - 1]!, detail: `re-sign failed while ${pending.join(", ")} may still apply; check the hash`, cause: e });
+      }
+    }
   }
 }

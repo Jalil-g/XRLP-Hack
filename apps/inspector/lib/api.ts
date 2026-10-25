@@ -108,6 +108,14 @@ export const api = {
     return http(InspectorTask.array(), `/api/inspectors/${enc(address)}/queue`);
   },
 
+  /** Discover assigned projects via route 18 (including needs:none), then read their audits/checks via route 2. */
+  async getAuditHistory(address: string): Promise<ProjectDetail[]> {
+    const tasks = await api.getQueue(address);
+    const projectIds = [...new Set(tasks.map((task) => task.projectId))];
+    // Reject a partial refresh: usePoll retains the last complete snapshot and displays the error.
+    return Promise.all(projectIds.map((id) => api.getProject(id)));
+  },
+
   /** Route 2 — full project read model (checks panel outcome, audits, attestations, events). */
   getProject(projectId: string): Promise<ProjectDetail> {
     if (API_MODE === "mock") return viaMock(() => mock.getProject(projectId));

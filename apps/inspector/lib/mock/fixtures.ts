@@ -31,6 +31,7 @@ export const ADDR = {
   aiAgent: "rwcWJkMTyWqLRj6dqUpQMZgf5dDXRGTXjK",
   spvMaple: "rUZUn8u5cooZRFHbggU5vgUz86M23TSTX6",
   spvRhinebeck: "rwfhBgNc5XoDHwVD3qCXdxQLTTMnPNPwrx",
+  spvOak: "rnur37euctYjuRs52dyC541D3ddncrmtDz",
   ava: "rUC6rripwu9bpa5onzxmxLJ3v5tk8N8mKw",
   northbridge: "rn3kA6BZEE4QuJSUbibXQ8vi3S4p4mU71W",
   marco: "rnUYpEnLKEcxGUBdZBRUvqBgYFjqHqCtwW",
@@ -148,11 +149,22 @@ const ELM_SOV: SovLine[] = [
   { code: "07-310", title: "Roofing & dry-in", amount: "90000.00", trade: "roofing", evidence: [photo(3, "Roof + windows")], visualCriteria: ["roof covering installed", "windows installed"] },
 ];
 
+// The builder's previous job, completed in Sep 2026: Dana audited its framing, the suite passed, the escrow released.
+// Its framing photo IMG_0412 is the one the builder later reuses on Maple M2 (demo beat 4).
+const OAK_SOV: SovLine[] = [
+  { code: "06-100", title: "Wall framing", amount: "28000.00", trade: "framing", evidence: [photo(2, "All exterior walls framed"), invoice("Lumber package invoice")], visualCriteria: ["wall framing on all sides"] },
+  { code: "06-170", title: "Roof trusses", amount: "12000.00", trade: "framing", evidence: [photo(1, "Trusses set and braced")], visualCriteria: ["trusses set", "temporary bracing"] },
+];
+
 // ---------------------------------------------------------------- projects
 
 // Same site as packages/verifier/fixtures/scenarios.ts (GEO.mapleSite, radius 120): the demo photos are geotagged there.
 const MAPLE_GEO = { lat: 40.6795, lng: -73.962, radiusM: 120 };
 const RHINEBECK_GEO = { lat: 41.9268, lng: -73.9124, radiusM: 80 };
+// Same site as packages/verifier/fixtures/scenarios.ts (GEO.oakSite): the reused framing photo is geotagged here.
+const OAK_GEO = { lat: 40.6502, lng: -73.9497, radiusM: 100 };
+/** EXIF GPS of IMG_0412 — on the Oak Ave site, 3.4 km from Maple St, wherever the builder uploads it. */
+const IMG_0412_GPS = { lat: 40.6502, lng: -73.9497 };
 
 const escrow = (owner: string, seq: number, seed: string) => ({
   owner,
@@ -198,6 +210,33 @@ export const PROJECTS: Project[] = [
     chain: { spv: ADDR.spvRhinebeck, vaultId: fakeHash("vault:rhinebeck"), loanBrokerId: fakeHash("broker:rhinebeck"), loanId: fakeHash("loan:rhinebeck") },
   },
   {
+    id: "oak-ave-rowhouse",
+    name: "Oak Ave Rowhouse",
+    type: "residential_renovation",
+    builderId: "hudson-valley-builders",
+    siteAddress: "212 Oak Ave, Brooklyn, NY 11226",
+    siteGeo: OAK_GEO,
+    description: "Rear extension and re-framing of a 1920s rowhouse. Completed and repaid Oct 2026.",
+    terms: { principal: "40000.00", interestRateBps: 1000, termDays: 120, paymentIntervalDays: 30, fundingDeadline: "2026-08-25T23:59:00Z" },
+    status: "completed",
+    sov: OAK_SOV,
+    milestones: [
+      {
+        id: "oak-ave-rowhouse:m1",
+        templateKey: "framing",
+        index: 0,
+        title: "Framing",
+        amount: "40000.00",
+        sovCodes: ["06-100", "06-170"],
+        requiredInspectors: 1,
+        status: "released",
+        cancelAfter: "2026-11-30T23:59:00Z",
+        escrow: { ...escrow(ADDR.spvOak, 5, "oak:m1"), createdAt: "2026-09-02T14:00:00Z", finishTx: fakeHash("escrow-finish:oak:m1") },
+      },
+    ],
+    chain: { spv: ADDR.spvOak, vaultId: fakeHash("vault:oak"), loanBrokerId: fakeHash("broker:oak"), loanId: fakeHash("loan:oak") },
+  },
+  {
     id: "elm-ct-fourplex",
     name: "Elm Ct Fourplex",
     type: "residential_new",
@@ -218,6 +257,7 @@ export const ASSIGNMENTS: Record<string, string[]> = {
   "maple-st-duplex": [ADDR.dana],
   "rhinebeck-farmhouse": [ADDR.marcus],
   "elm-ct-fourplex": [ADDR.dana],
+  "oak-ave-rowhouse": [ADDR.dana],
 };
 
 // ---------------------------------------------------------------- builder evidence
@@ -256,6 +296,7 @@ function docEv(milestoneId: string, kind: "invoice" | "document", filename: stri
 const M1_UP = "2026-10-24T17:05:00Z";
 const M2_UP = "2026-10-24T17:20:00Z";
 const RB_UP = "2026-10-22T13:10:00Z";
+const OAK_UP = "2026-09-14T18:00:00Z";
 
 export const EVIDENCE: Record<string, Evidence[]> = {
   "maple-st-duplex:m1": [
@@ -268,7 +309,7 @@ export const EVIDENCE: Record<string, Evidence[]> = {
   "maple-st-duplex:m2": [
     photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-10-24T16:41:00Z", M2_UP, 0),
     // The fraud beat: a framing photo reused from the builder's Oak Ave job, taken 41 days before this escrow existed.
-    photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-09-13T15:22:00Z", M2_UP, 1, { filename: "IMG_0412.jpg", perceptualHash: "phash:oak-ave-framing-0412" }),
+    photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-09-13T15:22:00Z", M2_UP, 1, { filename: "IMG_0412.jpg", perceptualHash: "phash:oak-ave-framing-0412", gps: IMG_0412_GPS }),
     photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-10-24T16:47:00Z", M2_UP, 2),
     photoEv("maple-st-duplex:m2", "framing", MAPLE_GEO, "2026-10-24T16:52:00Z", M2_UP, 3),
     docEv("maple-st-duplex:m2", "invoice", "atlantic-lumber-INV-2291.pdf", ["Atlantic Lumber Supply", "Framing package, duplex", "Trusses × 28", "Total: 44,210.00 RLUSD"], M2_UP, "44210.00"),
@@ -280,11 +321,19 @@ export const EVIDENCE: Record<string, Evidence[]> = {
     photoEv("rhinebeck-farmhouse:m1", "rough_in", RHINEBECK_GEO, "2026-10-22T12:44:00Z", RB_UP, 3),
     docEv("rhinebeck-farmhouse:m1", "invoice", "mill-rd-electric-INV-118.pdf", ["Mill Rd Electric", "Rough-in, 2 floors", "Total: 8,720.00 RLUSD"], RB_UP, "8720.00"),
   ],
+  "oak-ave-rowhouse:m1": [
+    photoEv("oak-ave-rowhouse:m1", "framing", OAK_GEO, "2026-09-13T15:22:00Z", OAK_UP, 0, { filename: "IMG_0412.jpg", perceptualHash: "phash:oak-ave-framing-0412", gps: IMG_0412_GPS }),
+    photoEv("oak-ave-rowhouse:m1", "framing", OAK_GEO, "2026-09-13T15:30:00Z", OAK_UP, 1),
+    photoEv("oak-ave-rowhouse:m1", "framing", OAK_GEO, "2026-09-13T15:41:00Z", OAK_UP, 2),
+    docEv("oak-ave-rowhouse:m1", "invoice", "atlantic-lumber-INV-1874.pdf", ["Atlantic Lumber Supply", "Framing package, rowhouse extension", "Total: 27,450.00 RLUSD"], OAK_UP, "27450.00"),
+  ],
 };
 
 // ---------------------------------------------------------------- audits, checks, attestations
 
 const RB_AUDIT_AT = "2026-10-22T15:30:00Z";
+const OAK_AUDIT_AT = "2026-09-15T14:20:00Z";
+const OAK_VERDICT_AT = "2026-09-15T14:26:00Z";
 
 export const AUDITS: Record<string, InspectorAudit[]> = {
   "rhinebeck-farmhouse:m1": [
@@ -303,6 +352,21 @@ export const AUDITS: Record<string, InspectorAudit[]> = {
       at: RB_AUDIT_AT,
     },
   ],
+  "oak-ave-rowhouse:m1": [
+    {
+      milestoneId: "oak-ave-rowhouse:m1",
+      inspector: ADDR.dana,
+      evidenceBundleHash: "5d2db945a9e8b72e28b904b0d39d1b865490034752ca4c58f16d56bbfe80a090",
+      checklist: [
+        { sovCode: "06-100", status: "done", note: "Exterior walls plumb, headers per plan." },
+        { sovCode: "06-170", status: "done" },
+      ],
+      photos: [photoEv("oak-ave-rowhouse:m1:audit-1", "framing", OAK_GEO, "2026-09-15T13:58:00Z", OAK_AUDIT_AT, 1)],
+      notes: "Framing complete per SoV. Hurricane ties installed.",
+      txHash: fakeHash("audit:oak:m1"),
+      at: OAK_AUDIT_AT,
+    },
+  ],
 };
 
 const pending = (): ChecksStatus => ({ required: [], optional: [], outcome: "pending" });
@@ -317,6 +381,19 @@ const RB_CHECKS = [
   { check: "audit_checklist_complete", result: "pass" as const, reason: "3 of 3 SoV lines covered", evidenceIds: [] },
   { check: "audit_matches_evidence", result: "fail" as const, reason: "Audit marks 26-100 rough electrical done; builder photos show no conductors pulled at 2 of 3 boxes", evidenceIds: ["rhinebeck-farmhouse:m1:photo-2", "rhinebeck-farmhouse:m1:photo-3"] },
   { check: "stage_visually_consistent", result: "warn" as const, reason: "Plumbing rough-in visible; electrical rough-in partially visible", evidenceIds: [] },
+  { check: "document_consistency", result: "pass" as const, reason: "Invoice party and address match the project", evidenceIds: [] },
+];
+
+const OAK_CHECKS = [
+  { check: "required_evidence_present", result: "pass" as const, reason: "3 photos, 1 invoice (SoV 06-100, 06-170)", evidenceIds: [] },
+  { check: "gps_within_site", result: "pass" as const, reason: "All photo GPS within 18 m of site (geofence 100 m)", evidenceIds: [] },
+  { check: "photo_fresh", result: "pass" as const, reason: "All photos taken after the escrow was created", evidenceIds: [] },
+  { check: "no_duplicate_photo", result: "pass" as const, reason: "No match across 188 indexed photos", evidenceIds: [] },
+  { check: "invoice_matches_budget", result: "pass" as const, reason: "Lumber invoice 27,450.00 vs SoV 06-100 28,000.00 (−2.0%)", evidenceIds: [] },
+  { check: "inspector_audit_present", result: "pass" as const, reason: "Audit attested by assigned inspector rDFTQY…RgVN", evidenceIds: [] },
+  { check: "audit_checklist_complete", result: "pass" as const, reason: "2 of 2 SoV lines marked done", evidenceIds: [] },
+  { check: "audit_matches_evidence", result: "pass" as const, reason: "Inspector checklist agrees with builder photos on walls and trusses", evidenceIds: [] },
+  { check: "stage_visually_consistent", result: "pass" as const, reason: "Wall framing and braced trusses visible in builder and inspector photos", evidenceIds: [] },
   { check: "document_consistency", result: "pass" as const, reason: "Invoice party and address match the project", evidenceIds: [] },
 ];
 
@@ -340,6 +417,21 @@ export const CHECKS: Record<string, ChecksStatus> = {
     },
   },
   "rhinebeck-farmhouse:m2": pending(),
+  "oak-ave-rowhouse:m1": {
+    required: OAK_CHECKS,
+    optional: [],
+    outcome: "pass",
+    verdict: {
+      milestoneId: "oak-ave-rowhouse:m1",
+      decision: "pass",
+      confidence: 0.94,
+      summary: "All required checks pass; inspector audit consistent with builder evidence.",
+      checks: OAK_CHECKS,
+      policy: { projectType: "residential_renovation", riskTier: "low", requiredInspectors: 1 },
+      model: "mock",
+      createdAt: OAK_VERDICT_AT,
+    },
+  },
 };
 
 /** Milestones whose failed suite needs a fresh audit (route 18 `needs: "re_audit"`). */
@@ -349,6 +441,10 @@ export const ATTESTATIONS: Record<string, Attestation[]> = {
   "rhinebeck-farmhouse:m1": [
     { milestoneId: "rhinebeck-farmhouse:m1", role: "inspector", signer: ADDR.marcus, decision: "approve", notes: "Rough-in complete per SoV.", txHash: fakeHash("audit:rhinebeck:m1:v1"), at: RB_AUDIT_AT },
     { milestoneId: "rhinebeck-farmhouse:m1", role: "ai_agent", signer: ADDR.aiAgent, decision: "reject", notes: "audit_matches_evidence failed", txHash: fakeHash("verdict:rhinebeck:m1"), at: "2026-10-22T16:02:00Z" },
+  ],
+  "oak-ave-rowhouse:m1": [
+    { milestoneId: "oak-ave-rowhouse:m1", role: "inspector", signer: ADDR.dana, decision: "approve", notes: "Framing complete per SoV.", txHash: fakeHash("audit:oak:m1"), at: OAK_AUDIT_AT },
+    { milestoneId: "oak-ave-rowhouse:m1", role: "ai_agent", signer: ADDR.aiAgent, decision: "approve", notes: "All required checks pass", txHash: fakeHash("verdict:oak:m1"), at: OAK_VERDICT_AT },
   ],
 };
 
@@ -430,7 +526,11 @@ const setup = (projectId: string, spv: string, builder: string, start: string, c
 export const EVENTS: ChainEvent[] = [
   ...setup("maple-st-duplex", ADDR.spvMaple, ADDR.hvb, "2026-10-20T13:30:00Z", "2026-10-24T15:00:00Z", INVESTMENTS.slice(0, 3), 3),
   ...setup("rhinebeck-farmhouse", ADDR.spvRhinebeck, ADDR.catskill, "2026-10-05T10:00:00Z", "2026-10-11T12:00:00Z", INVESTMENTS.slice(3), 2),
-  chainEvent({ projectId: "rhinebeck-farmhouse", milestoneId: "rhinebeck-farmhouse:m1", kind: "audit_attested", actor: ADDR.marcus, at: RB_AUDIT_AT }),
-  chainEvent({ projectId: "rhinebeck-farmhouse", milestoneId: "rhinebeck-farmhouse:m1", kind: "verdict_attested", actor: ADDR.aiAgent, at: "2026-10-22T16:02:00Z" }),
+  // Attestation events carry the same tx hashes as the audits / attestations they record.
+  chainEvent({ projectId: "rhinebeck-farmhouse", milestoneId: "rhinebeck-farmhouse:m1", kind: "audit_attested", actor: ADDR.marcus, at: RB_AUDIT_AT, txHash: fakeHash("audit:rhinebeck:m1:v1") }),
+  chainEvent({ projectId: "rhinebeck-farmhouse", milestoneId: "rhinebeck-farmhouse:m1", kind: "verdict_attested", actor: ADDR.aiAgent, at: "2026-10-22T16:02:00Z", txHash: fakeHash("verdict:rhinebeck:m1") }),
+  chainEvent({ projectId: "oak-ave-rowhouse", milestoneId: "oak-ave-rowhouse:m1", kind: "audit_attested", actor: ADDR.dana, at: OAK_AUDIT_AT, txHash: fakeHash("audit:oak:m1") }),
+  chainEvent({ projectId: "oak-ave-rowhouse", milestoneId: "oak-ave-rowhouse:m1", kind: "verdict_attested", actor: ADDR.aiAgent, at: OAK_VERDICT_AT, txHash: fakeHash("verdict:oak:m1") }),
+  chainEvent({ projectId: "oak-ave-rowhouse", milestoneId: "oak-ave-rowhouse:m1", kind: "escrow_finished", amount: "40000.00", at: "2026-09-15T14:27:00Z", txHash: fakeHash("escrow-finish:oak:m1") }),
   chainEvent({ projectId: "elm-ct-fourplex", kind: "verification_fee_paid", actor: ADDR.catskill, amount: "250.00", at: "2026-10-24T11:00:00Z" }),
 ];

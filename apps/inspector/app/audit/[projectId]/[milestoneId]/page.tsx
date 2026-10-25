@@ -381,7 +381,10 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
               <Row label="Signed by">core, on your behalf (no key loaded in this browser)</Row>
             )}
           </dl>
-          <div>
+          <div className="flex flex-wrap justify-center gap-2">
+            <Link href="/history" className={buttonClass("primary")}>
+              View audit history
+            </Link>
             <Link href="/" className={buttonClass("secondary")}>
               Back to queue
             </Link>

@@ -68,6 +68,18 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] `XrplLedgerAdapter` (shared `LedgerPort`, `packages/xrpl/src/adapter.ts`): phase gates are **pre-checked on ledger time** (close before SubscriptionDate, withdraw before RedemptionDate, cancel before CancelAfter → `TooSoonError`, nothing submitted, no fee burnt); `not_found`/`validation` ride on `XrplLedgerError.apiCode` because shared `LedgerError.code` only has 3 values (asked on #53); SPV multisig signers are chosen from the **on-ledger SignerList** among keys in the wallet store (builder/platform/trustee first); vaults are private (platform KYC_INVESTOR domain) with non-transferable shares; `issueCredential` returns `[]` when already accepted. On merge with XRPL-06/07 (M3 integration): close inputs are validated only by `planLoanClose` (the adapter's own copy was dropped), repay mode/amount only by `planLoanPayment` (checked before the builder's Payment, so a refused LoanPay never strands it), error mapping is built on errors.ts `toLedgerError`/`toErrorCode` (`toAdapterError`; `CloseValidationError`/`LoanPayAmountError` → `validation`, `CloseLoanPartialError` passes through as `ledger_error`), and `preflightFinish` uses the same LLS margin as `finishEscrow` (60 ledgers, ≥ 300 s before CancelAfter; `finishMargins` option) so a preflight ok is not refused by the finish (Jalil's agent, XRPL-10)
 - [10-25] Loan default (`src/default.ts`): `defaultLoan` / `impairLoan` / `unimpairLoan` = `LoanManage` by the platform (broker owner). A pure guard (`checkLoanManage`) mirrors rippled 3.4.1's checks in its order, and it runs on one validated ledger under the platform account lock, so nothing is submitted that the ledger would refuse. Devnet has fixCleanup3_4_0, so both boundaries are exclusive: default only when ledger time > `NextPaymentDueDate + GracePeriod`, impair only when > `NextPaymentDueDate`. A timing refusal throws `LoanManageTooSoonError`, a shared `TooSoonError` that adds `allowedAfter` for the keeper's retry; anything else throws `LoanManageRefusedError` (`ledger_error`). `defaultLoan` is idempotent: on an already-defaulted loan it returns the original tx via `Loan.PreviousTxnID` and submits nothing. The `loan_default` amount is DefaultAmount. Impair/unimpair emit **no** ChainEvent: shared has no impairment kind, and `loan_default` would claim a default that hasn't happened (`loan_impaired` proposed on #53, with `LedgerPort.defaultLoan`). (Jalil's agent, XRPL-15)
 - [10-25] Devnet vaults are **cash basis** (`Vault.LEVersion 1`, LendingProtocolV1_1; the patch is reserved as XLS-66.1.1 and unpublished). A default writes off `PrincipalOutstanding` only, `DebtTotal` is principal only, and with our 10% / 100% rates **DefaultCovered = 10% of DebtTotal at default time**. Devnet run: 1000 defaulted, cover returned 100 (= `expectedDefaultCovered`), vault loss 900, share price 1 → 0.1; the leftover cover (10.000043) stays with the platform. With 600 repaid first: 400.00019 defaulted, cover 40.000019025767 (rounded up at LoanScale, = expected), share price 1 → 0.64. The stall path holds: refunds are repaid first, then the cover pays, then investors absorb the rest. Note that repaying first also shrinks the cover the default can draw. Protocol-notes §3c (Jalil's agent, XRPL-15)
+- [10-25] **xrpl security review** (`docs/reviews/xrpl-security-review-2026-10-25.md`), calls made while fixing it: (1) the retry
+  engine tracks every blob of an intent that may have reached a server and settles them before a fresh-Sequence re-sign or
+  any give-up; `retriable: true` now strictly means "nothing can still apply", an unknown outcome is non-retriable
+  `connection_lost` / `unknown_outcome`. (2) `finishEscrow` signs one blob per preflight and submits it pre-signed (never
+  re-signed by the engine); `unsafe_release` from a finish means the fulfillment never left the process, a refusal after a
+  submit is `preflight_refused_after_submit`. (3) Mainnet guard = URL/label denylist + `server_info.network_id === 2` on
+  connect (`XRPL_NETWORK_ID` for another custom net, never 0/1). (4) Adapter keys are bound to roles per input
+  (`SIGNING_ROLES`); aiAgent / releaseService / issuer can't be SPV signers. (5) Before LoanSet the escrow destination must
+  exist, be on the SPV's signer list and not be another role's key; the multisig path refuses an SPV whose master key is
+  still enabled. (6) `resumeEscrowCreation({ project, ... })` requires `builderAddress` and waits one LLS margin by default.
+  (7) In-repo `WALLETS_FILE` / `DATA_DIR` must be git-ignored; the wallet store is written atomically, 0600. (8) Validation
+  errors never echo a would-be condition. Deferred with reasons in the review doc; core items in the linked issue. (Jalil's agent, security review)
 
 ## Inspector lane (Roro's agent, challenge freely)
 
@@ -121,6 +133,12 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   inspector's previous report, and whether the builder evidence bundle changed; the checklist starts empty (no copied answers).
   Core's CORE-03 branch currently appends re-audits and keeps the old verdict: flagged on #53.
 
+- [10-25] INS-05 history discovers assigned projects through route 18 (including `needs: none`) and reads audits, latest checks,
+  and release transactions from route 2, polling every 5s. Results are explicitly **latest per milestone**, not attributed to an
+  individual audit revision: the contract has no audit-to-verdict reference. A verdict older than a report is labelled as awaiting
+  a new run. Only reports returned by core are shown; superseded reports removed by core cannot be reconstructed. No contract change.
+  Added a completed Oak Ave mock project for Dana's pass/release history and aligned the reused Maple M2 photo's GPS with Oak Ave. (Roro's agent)
+
 ## Pitch review (Jalil's agent, PITCH-09)
 
 - [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected
@@ -137,6 +155,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
+
 
 ## Open
 
