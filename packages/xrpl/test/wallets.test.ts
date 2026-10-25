@@ -1,6 +1,10 @@
 // Offline: wallet-file migration + RLUSD plan (no devnet).
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { config } from "../src/config.ts";
 import {
   credentialPlan,
   DEFAULT_PLATFORM_RLUSD,
@@ -9,6 +13,8 @@ import {
   platformRlusdFor,
   RLUSD_HOLDERS,
   rlusdTopUpPlan,
+  loadWalletFile,
+  saveWalletFile,
   WALLET_ROLES,
   type StoredWallet,
   type WalletFile,
@@ -128,4 +134,20 @@ test("platform RLUSD budget: default covers 3 concurrent demo projects (prestage
   assert.ok(platformRlusdFor([demo("70000"), demo("70000"), demo("70000")]) > DEFAULT_PLATFORM_RLUSD);
   assert.equal(platformRlusdFor([]), 0);
   assert.equal(rlusdTopUpPlan().find((t) => t.role === "platform")!.target, DEFAULT_PLATFORM_RLUSD);
+});
+
+test("M7: saveWalletFile writes atomically, owner-only (0600 even over an existing 0644 file), no temp file left", () => {
+  const dir = mkdtempSync(join(tmpdir(), "xrlp-wallets-"));
+  const prev = config.walletsFile;
+  config.walletsFile = join(dir, "wallets.json");
+  try {
+    writeFileSync(config.walletsFile, "{}", { mode: 0o644 });
+    const file = migrateWalletFile(undefined, { network: "devnet" }).file;
+    saveWalletFile(file);
+    assert.equal(statSync(config.walletsFile).mode & 0o777, 0o600);
+    assert.deepEqual(loadWalletFile(), file);
+    assert.deepEqual(readdirSync(dir), ["wallets.json"], "temp file renamed away");
+  } finally {
+    config.walletsFile = prev;
+  }
 });

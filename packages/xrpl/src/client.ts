@@ -3,9 +3,9 @@
 import https from "node:https";
 import { Client, type SubmittableTransaction, type Wallet } from "xrpl";
 import { explorerTxUrl } from "@xrlp/shared";
-import { config } from "./config.ts";
+import { assertDevnetNetworkId, config } from "./config.ts";
 import { XrplTxError } from "./errors.ts";
-import { describeBlob, submitReliably, withAccountLock, type LedgerIo, type Lookup, type ResignMode, type RetryPolicy, type ValidatedTx } from "./submit.ts";
+import { assertLlsMargin, describeBlob, submitReliably, withAccountLock, type LedgerIo, type Lookup, type ResignMode, type RetryPolicy, type ValidatedTx } from "./submit.ts";
 
 export { XrplTxError, toErrorCode } from "./errors.ts";
 export type { ApiErrorCode, XrplTxErrorOptions } from "./errors.ts";
@@ -24,9 +24,10 @@ export interface TxResult {
 
 /**
  * Ledgers between "now" (latest validated) and a tx's LastLedgerSequence. xrpl.js autofill uses 20 (~60-80s on devnet).
- * Override per call with `{ lastLedgerMargin }` (e.g. 60+ for EscrowFinish) or globally with XRPL_LLS_MARGIN.
+ * Override per call with `{ lastLedgerMargin }` (e.g. 60+ for EscrowFinish) or globally with XRPL_LLS_MARGIN
+ * (an integer in 1..MAX_LLS_MARGIN = 500; anything else refuses to load, see submit.ts assertLlsMargin).
  */
-export const DEFAULT_LLS_MARGIN = Number(process.env.XRPL_LLS_MARGIN ?? 20);
+export const DEFAULT_LLS_MARGIN = assertLlsMargin(process.env.XRPL_LLS_MARGIN ? Number(process.env.XRPL_LLS_MARGIN) : 20, "XRPL_LLS_MARGIN");
 
 export interface SubmitOptions extends RetryPolicy {
   /** LastLedgerSequence = validated index + margin. Default DEFAULT_LLS_MARGIN. Ignored if the tx sets LastLedgerSequence. */
@@ -54,6 +55,14 @@ export async function getClient(): Promise<Client> {
     const agent = proxyAgent();
     const client = new Client(config.wsUrl, { connectionTimeout: 20_000, ...(agent ? { agent } : {}) } as never);
     await client.connect();
+    // Mainnet guard, positive half (security review M1): the server must say it is devnet, whatever the URL looks like.
+    try {
+      const reported = client.networkID ?? ((await client.request({ command: "server_info" })).result.info as { network_id?: number }).network_id;
+      assertDevnetNetworkId(reported);
+    } catch (e) {
+      await client.disconnect().catch(() => undefined);
+      throw e;
+    }
     shared = client;
     return client;
   })();
@@ -159,7 +168,7 @@ export async function submitWithSigner<T extends SubmittableTransaction>(
   sign: (prepared: T) => string,
   opts: SubmitOptions = {},
 ): Promise<TxResult> {
-  const margin = opts.lastLedgerMargin ?? DEFAULT_LLS_MARGIN;
+  const margin = assertLlsMargin(opts.lastLedgerMargin ?? DEFAULT_LLS_MARGIN);
   return withAccountLock(account, async () => {
     let lastSeq: number | undefined;
     const prepare = async (mode: "first" | ResignMode) => {
