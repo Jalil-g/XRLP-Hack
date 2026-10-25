@@ -639,3 +639,25 @@ test("a Batch that rolls back during resume → a new CloseLoanPartialError; res
   assert.deepEqual(done.resumed.created, ["m2", "m3"]);
   assert.equal(s.w.batches.length, 2);
 });
+
+test("M8: resume { project } form: builderAddress required and checked; waits one LLS margin for an in-flight tx unless told not to", async () => {
+  const s = freshScenario();
+  const m1 = await s.m1;
+  const created: CreatedEscrowRef[] = [{ milestoneId: "m1", owner: s.spv, offerSequence: m1.offerSequence, condition: s.planned[0]!.condition, cancelAfter: iso(s.NOW + 1_200), createTx: m1.tx.hash }];
+  const input = { project: projectOf(s.spv, s.planned), loanId: s.loanId, created, pending: ["m2", "m3"], conditions: s.planned.map((e) => e.condition) };
+  const refusal = (re: RegExp) => (e: unknown) => e instanceof CloseValidationError && re.test(e.message);
+  await assert.rejects(resumeEscrowCreation(input, { spvSigners: quorum, issuer: s.issuer, deps: s.deps }), refusal(/builderAddress is required/));
+  await assert.rejects(resumeEscrowCreation(input, { spvSigners: quorum, builderAddress: s.spv, issuer: s.issuer, deps: s.deps }), refusal(/is the SPV itself/));
+  await assert.rejects(resumeEscrowCreation(input, { spvSigners: quorum, builderAddress: s.issuer, issuer: s.issuer, deps: s.deps }), refusal(/is the RLUSD issuer/));
+  await assert.rejects(resumeEscrowCreation(input, { spvSigners: quorum, builderAddress: "rNotAnAddress", issuer: s.issuer, deps: s.deps }), refusal(/not a classic XRPL address/));
+  assert.equal(s.w.batches.length + s.w.singles.length + s.w.sleeps, 0, "refused before waiting or submitting");
+
+  const waits: number[] = [];
+  const r = await resumeEscrowCreation(input, { spvSigners: quorum, builderAddress: s.builder, issuer: s.issuer, onWait: (n) => waits.push(n), deps: s.deps });
+  assert.ok(s.w.sleeps >= 4 && waits.length === s.w.sleeps, `waited one LastLedgerSequence margin before reading the ledger (${s.w.sleeps} sleeps)`);
+  assert.deepEqual(r.resumed.created, ["m2", "m3"]);
+  const sleeps = s.w.sleeps;
+  const again = await resumeEscrowCreation(input, { spvSigners: quorum, builderAddress: s.builder, issuer: s.issuer, waitForInFlight: false, deps: s.deps });
+  assert.equal(s.w.sleeps, sleeps, "waitForInFlight: false skips the wait");
+  assert.deepEqual(again.resumed.submitted, []);
+});
