@@ -10,7 +10,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { AttestMemo, LedgerPort, Milestone, Project, TxResult } from "@xrlp/shared";
+import { LedgerError, explorerTxUrl, type AttestMemo, type LedgerPort, type Milestone, type Project, type TxResult } from "@xrlp/shared";
 import type { ReleaseServicePort } from "./api-surface.ts";
 import { conditionFromFulfillment } from "./conditions.ts";
 import { DomainError } from "./errors.ts";
@@ -125,6 +125,7 @@ async function writeAtomic(path: string, content: string): Promise<void> {
 }
 
 const fulfillmentOf = (preimage: Buffer) => `A0228020${preimage.toString("hex")}`.toUpperCase();
+const AMBIGUOUS_FINISH_RESULTS = new Set(["connection_lost", "unknown_outcome"]);
 
 export interface ReleaseServiceOptions {
   ledger: LedgerPort;
@@ -209,10 +210,53 @@ export class ReleaseService implements ReleaseServicePort {
           fulfillment: fulfillmentOf(entry.preimage),
         });
       } catch (e) {
-        // The fulfillment may now be public (tec results are recorded) while the escrow is still open.
+        const err = e as { code?: string; txResult?: string; txHash?: string; message?: string };
+        const tx = { txResult: err.txResult, txHash: err.txHash };
+
+        // The adapter guarantees `unsafe_release` means preflight refused before the fulfillment left
+        // the process. Preserve the key so the operator can fix the safety condition and retry.
+        if (e instanceof LedgerError && e.code === "unsafe_release") {
+          throw new DomainError(
+            "UNSAFE_RELEASE",
+            `EscrowFinish was refused before submission; release key preserved: ${err.message ?? String(e)}`,
+            e,
+            tx,
+          );
+        }
+
+        // A transport/lookup failure can hide a successful finish. Re-read the escrow before declaring
+        // failure: if it is gone, the fixed destination received the funds and the release must advance.
+        if (err.txResult && AMBIGUOUS_FINISH_RESULTS.has(err.txResult)) {
+          let after: Awaited<ReturnType<LedgerPort["getEscrow"]>> | undefined;
+          try {
+            after = await this.ledger.getEscrow(escrow.owner, escrow.offerSequence);
+          } catch {
+            // Reconciliation itself is uncertain. Fall through to the conservative exposed-key path.
+          }
+          if (after === null) {
+            entry.releasedAt = this.now().toISOString();
+            await this.vault.save(entries);
+            if (err.txHash) {
+              finish = {
+                hash: err.txHash,
+                explorerUrl: explorerTxUrl(err.txHash),
+                result: "reconciled_escrow_consumed",
+                kind: "escrow_finished",
+              };
+              return [attest, finish];
+            }
+            throw new DomainError(
+              "LEDGER_ERROR",
+              "Escrow disappeared after an ambiguous finish, but no transaction hash was returned; the key is marked released and the operator must reconcile the ledger event",
+              e,
+              tx,
+            );
+          }
+        }
+
+        // The fulfillment may now be public while the escrow remains open, or reconciliation failed.
         entry.exposedAt = this.now().toISOString();
         await this.vault.save(entries);
-        const err = e as { txResult?: string; txHash?: string; message?: string };
         throw new DomainError("LEDGER_ERROR", `EscrowFinish failed after preflight; release key marked exposed: ${err.message ?? String(e)}`, e, {
           txResult: err.txResult,
           txHash: err.txHash,

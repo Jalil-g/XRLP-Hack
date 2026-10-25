@@ -3,7 +3,7 @@ import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { Empty, PageHeader } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { VAULT_PHASE } from "@/lib/display";
 import { getSession } from "@/lib/session";
 import { formatAmount, formatDate, fromCents, toCents } from "@/lib/utils";
@@ -14,7 +14,12 @@ export const metadata = { title: "Portfolio" };
 export default async function PortfolioPage() {
   const session = await getSession();
   const investor = session.investor;
-  if (!investor) return <Empty title="No investor accounts">Core did not return any demo investors.</Empty>;
+  if (!investor && session.directoryUnavailable) throw new ApiError("unreachable", "The account directory could not be loaded", 503);
+  if (!investor) return (
+    <Empty title="No investor accounts" action={<Link href="/" className="text-small text-link hover:underline">Browse verified projects</Link>}>
+      No investor accounts are configured. Ask the operator to set up an account before investing.
+    </Empty>
+  );
   const positions = await api.portfolio(investor.address);
   const total = positions.reduce((a, p) => a + toCents(p.value), 0);
 
@@ -42,7 +47,8 @@ export default async function PortfolioPage() {
           Pick a verified project on the <Link href="/" className="text-link hover:underline">Projects</Link> page and invest.
         </Empty>
       ) : (
-        <table className="w-full border-collapse text-left">
+        <div className="overflow-x-auto" role="region" aria-label="Portfolio positions table" tabIndex={0}>
+        <table className="w-full min-w-[660px] border-collapse text-left">
           <thead>
             <tr className="border-y border-line bg-band text-caption text-ink-2">
               <th className="px-4 py-2.5 font-medium">Project</th>
@@ -67,7 +73,7 @@ export default async function PortfolioPage() {
                 </td>
                 <td className="px-4 py-4 text-right">
                   {pos.phase === "redemption" ? (
-                    <ActionButton size="sm" variant="secondary" action={{ kind: "withdraw", projectId: pos.projectId, investor: investor.address, amount: pos.value }}>
+                    <ActionButton size="sm" variant="secondary" context={pos.projectName} action={{ kind: "withdraw", projectId: pos.projectId, investor: investor.address, amount: pos.value }}>
                       Withdraw {formatAmount(pos.value)}
                     </ActionButton>
                   ) : (
@@ -78,6 +84,7 @@ export default async function PortfolioPage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

@@ -4,6 +4,8 @@
 // http responses are checked against the 05-api schemas: a mismatch logs a warning (contract drift) but does not throw.
 import type { z } from "zod";
 import * as mock from "./mock/backend.ts";
+import { ADDR } from "./mock/fixtures.ts";
+import { SubmitSiteVisitResult, type InspectorSiteVisit } from "./site-visit.ts";
 import {
   ErrorBody,
   Inspector,
@@ -143,6 +145,24 @@ export const api = {
     if (input.signedTxBlob) form.set(AUDIT_FORM_FIELDS.signedTxBlob, input.signedTxBlob);
     const path = `/api/projects/${enc(input.projectId)}/milestones/${enc(input.milestoneId)}/audit`;
     return http(SubmitAuditResult, path, { method: "POST", body: form });
+  },
+
+  /**
+   * INS-06 — file a pre-construction site visit. TODO(#53): proposed route, not in 05-api; core answers 404 until it adopts
+   * the contract. Multipart like route 10: `report` (JSON InspectorSiteVisit), `photos`, optional `signedTxBlob`.
+   */
+  submitSiteVisit(input: { projectId: string; report: InspectorSiteVisit; photos: Blob[]; signedTxBlob?: string }): Promise<SubmitSiteVisitResult> {
+    if (API_MODE === "mock") return viaMock(() => mock.submitSiteVisit(input));
+    const form = new FormData();
+    form.set("report", JSON.stringify(input.report));
+    input.photos.forEach((p, i) => form.append("photos", p, input.report.photos[i]?.filename ?? `site-${i + 1}.jpg`));
+    if (input.signedTxBlob) form.set("signedTxBlob", input.signedTxBlob);
+    return http(SubmitSiteVisitResult, `/api/projects/${enc(input.projectId)}/site-visit`, { method: "POST", body: form });
+  },
+
+  /** Recipient of the site-visit attestation (TODO(#53): the platform account; core does not publish it yet, so http = unsigned). */
+  siteVisitAttestationTarget(): string | null {
+    return API_MODE === "mock" ? ADDR.platform : null;
   },
 
   /** Where to load an evidence / audit file: core's `/api/files/:fileId`, or the fixture's data: URL in mock mode. */

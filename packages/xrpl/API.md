@@ -16,6 +16,7 @@ pnpm --filter @xrlp/xrpl spike:close-batch  # XRPL-13b devnet proof: escrows in 
 pnpm --filter @xrlp/xrpl compliance     # XRPL-08 devnet proof: credentials x3, domain, private vault, fee, attestations
 pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
 pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one account, all tesSUCCESS
+pnpm --filter @xrlp/xrpl stress --pipeline  # XRPL-17 devnet: same burst locked vs pipelined (speedup); --multisig --foreign --held --window=N
 pnpm --filter @xrlp/xrpl spike:release  # XRPL-07 devnet proof: finish, wrong fulfillment, repay, cancel+refund, withdraw (~7 min)
 pnpm --filter @xrlp/xrpl adapter:e2e    # XRPL-10 devnet: XrplLedgerAdapter through the whole LedgerPort flow (~7 min)
 pnpm --filter @xrlp/xrpl spike:fail-hard  # security review H1b devnet proof: a held terPRE_SEQ tx applies later unless fail_hard (~1 min)
@@ -108,6 +109,87 @@ from one account → **20/20 `tesSUCCESS`**, Sequences 6390192..6390211 contiguo
 Same burst via raw xrpl.js `autofill`+`submitAndWait` (`STRESS_BASELINE=1`) → 1 `tesSUCCESS`, **19 `tefPAST_SEQ`**.
 First/last: https://devnet.xrpl.org/transactions/93F70A01CAA36E7A6B318B61B31C52313AD8B8C7BFAF484C6804BFA1A29CD79F ·
 https://devnet.xrpl.org/transactions/AB03F78A5862CCC25B601DB65368FBEF1D839A7914D743D0F6282DD52ADA2EBC
+
+### Pipelined mode (XRPL-17, opt-in)
+
+Off by default; everything above is unchanged. Turn it on with `XRPL_PIPELINE=1` (window `XRPL_PIPELINE_WINDOW`, default
+5, max 10) or `setSubmitMode("pipelined", { window })`; `setSubmitMode("locked")` / `resetSubmitMode()` switch back.
+Txs already in flight finish the way they started.
+
+- **What changes.** `signAndSubmit` / `submitWithSigner` / `submitMultisigned` hold the account lock only across
+  autofill → sign → submit. `Sequence` comes from a local per-account counter (read from `account_info` current +
+  `queue`, re-read whenever the account goes idle), and up to `window` txs per account wait for validation at the same
+  time. Same `TxResult`, same `XrplTxError`s, `LastLedgerSequence` always set (`lastLedgerMargin` per call). Multisig
+  (`SigningPubKey ""`) is just another `sign` callback.
+- **What keeps locked semantics.** Explicit `withAccountLock` sections (`loanSet`, `submitBatch` / every Batch,
+  `closeLoanAndCreateEscrows`, `resumeEscrowCreation`), every `submitBlob` (pre-signed blobs keep their own Sequence; a
+  conflict surfaces as their error, e.g. `tefPAST_SEQ` with `retriable: true`), and txs that set `Sequence` /
+  `TicketSequence`. Such a section first waits for the account's in-flight txs to settle; the counter is re-read after.
+  So those call sites did not change.
+- **Rules** (`src/submit.ts` R1–R6; each one has a test in `test/pipeline.test.ts`, plus a randomized test of drops,
+  tem/tel, disconnects, foreign writers, delays and tec that checks nothing ever applies twice: 75 runs by default,
+  `CHAOS_SEEDS=2000` soaks 6 000, which passed):
+  - The counter only advances when the server took the blob. A `tem`/`tef`/`tel` at submit leaves no gap: the next tx
+    reuses that Sequence.
+  - `tec*` (Sequence consumed, later txs unaffected) and `tem*` are final, never retried.
+  - Same-Sequence re-signs (`tel*`, expiry at submit) are always safe. A tx gets a **different** Sequence only after
+    every blob it may have sent is provably dead. A `tel*` blob counts as sent: rippled may hold and retry it until
+    its `LastLedgerSequence` (xrpl.org: tel results are provisional).
+  - **"Provably dead" comes from account state, not from `tx`.** rippled answers `tx` for any blob it has seen with
+    `validated: false` (never `txnNotFound` + `searched_all`) for as long as it stays cached, so that proof never fires
+    (devnet, protocol notes §0a). Once the validated ledger reaches the blobs' LastLedgerSequence L: the account's
+    Sequence in ledger L ≤ S → none applied. If it's > S, `account_tx` names the tx that used S: ours → that's the
+    result; another → ours are dead. If neither is known yet, wait (bounded), then `unknown_outcome`.
+  - `tefPAST_SEQ` (another writer used our Sequence), `terPRE_SEQ` (a gap before us), or a tx that died unapplied
+    (later txs stall behind it) marks the account **dirty**. Nothing new is issued, every in-flight tx settles, the
+    counter is re-read, and only the dead txs are re-signed, in their original order.
+  - `unknown_outcome` / `connection_lost` while a blob may be out: never re-signed, and the account resyncs first.
+    Once nothing of the tx can apply, a lost connection is `not_applied` with `retriable: true` (as in `submitReliably`).
+  - `tooBusy` lookups are polled through; any other lookup error → `unknown_outcome`. Error causes are redacted
+    (security review M3). A throwing `onRetry` / `onPipeline` callback can't break the engine.
+- **Where it helps.** Concurrent submits from one account: core serving several requests the platform signs,
+  `Promise.all` of independent txs. A chain of awaited txs (prestage, the CLI demo) still waits about one ledger per tx.
+  That wait is validation, not the lock (timings below).
+- `XRPL_SUBMIT_LOG=1` also prints `⚠ pipeline … → draining` and `⟳ … resync` lines. `pipelineState(account)` shows the
+  counter and the in-flight / parked txs.
+
+**Devnet proof** (`pnpm --filter @xrlp/xrpl stress --pipeline`, 2026-10-25, fresh faucet wallets, window 5): 20 parallel
+RLUSD `Payment`s from one account, the same burst locked and then pipelined:
+
+| run | locked | pipelined | speedup | ledgers used, pipelined vs locked |
+|---|---|---|---|---|
+| 1: 4 round trips under the lock, 1 s polls | 93.9 s | 24.6 s | 3.8× | 7 vs 20 (spread over 28) |
+| 2: Fee and validated index fetched in parallel | 103.5 s | 26.0 s | 4.0× | 6 vs 20 (over 31) |
+| 3: one shared validated-ledger watcher | 108.1 s | **21.8 s** | **5.0×** | 6 consecutive vs 20 (over 33) |
+| 4 (final code: account-state proof, tel* tracked) | 107.8 s | 27.3 s | 3.9× | 7 consecutive vs 20 (over 32) |
+
+Every burst: 20/20 `tesSUCCESS`, contiguous distinct Sequences, 0 retries. Devnet closes a ledger every ~3.2–3.3 s, and
+locked mode needs ~1.6 ledgers per tx. Runs 3 and 4 differ only by devnet timing (how refills straddle a close, plus
+start-up), not by ledgers used per tx. Run 3 pipelined first/last:
+https://devnet.xrpl.org/transactions/505E5C878A7A8F90D2163CC106D5ADB947F23160DFC7ED8CC3AE21D8CB597B69 ·
+https://devnet.xrpl.org/transactions/35609C7199A951971CCEDF8376D80100D2EA477504A18D95B12CAE9A2CA52647
+
+`stress --pipeline-only --foreign --multisig` (`XRPL_SUBMIT_LOG=1`): a raw Payment from the same account took the
+pipeline's next Sequence, 6395951
+(https://devnet.xrpl.org/transactions/9B7AFC1C84824A4D0939ED5E7E61C918D6DA51BFBEB94C607583B9B8340162AE). Our next submit
+got `tefPAST_SEQ` (nothing applied) → dirty → resync to 6395952 → 5 txs re-signed
+(https://devnet.xrpl.org/transactions/42DD30CFAE74F620DF31FAC7208C6AE57E24551DF9A8F85EC438FD0E19BCE3F8) → 20/20 in
+21.3 s. 20 pipelined **multisig** Payments (2-of-3 SignerList, `SigningPubKey ""`) → 20/20 in 23.0 s:
+https://devnet.xrpl.org/transactions/DEF7CBB8D06E80329EFCB7FFD04DBA300132B5456DC3B3C0D042F25C57E4C0A0 ·
+https://devnet.xrpl.org/transactions/F61816F839639197F68DDCCCEA7FB1ABEB9A41090DDD7A9E50919705146616C2
+
+`stress --held`: one pipelined Payment whose first blob was signed a Sequence ahead (a stale counter) → `terPRE_SEQ`,
+held by the server. Past its LastLedgerSequence (6397098) `tx` still answered "not validated", while the account's
+Sequence in that ledger, 6397084 ≤ 6397085, proved it dead → resync → re-signed at 6397084 → `tesSUCCESS` in 21.7 s
+(https://devnet.xrpl.org/transactions/66E83AFF9AC1DBDCF8E69E845CDF3DC8C849CFE9D8E19A823A5D1772A3BD58F5), and
+`txWithSequence` named that same tx.
+
+**Prestage** (`prestage --only A`, same wallets, back to back): locked 123 s · `XRPL_PIPELINE=1` 123 s · locked 132 s.
+No gain, as expected: the script awaits each of its ~20 txs and waits ~30 s for the vault's SubscriptionDate. The
+pipelined run still went end to end with every step green: multisig SPV txs, the countersigned `LoanSet`
+(https://devnet.xrpl.org/transactions/A4DEEE8736BD262EC5979591CCDC3660297EEF2903AE394619DAFC50CAEEE929) and the escrow
+Batch (https://devnet.xrpl.org/transactions/45C65FF7280A468B61412D6FE9E1715C0C3B192E8F50627A34D0BB3448926DF0) through
+their exclusive lock sections.
 
 ## High-level API (what `@xrlp/core` calls)
 
@@ -556,7 +638,7 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 |---|---|
 | `config.ts` | env (`XRPL_WS_URL`, `XRPL_FAUCET_HOST`, `WALLETS_FILE`, `DATA_DIR`), RLUSD hex code. Mainnet guard: a non-devnet URL/label denylist at load, and on every connect `server_info.network_id` must be devnet's **2** (`XRPL_NETWORK_ID` for another custom network ≥ 2; 0/1 never). `WALLETS_FILE` / `DATA_DIR` inside the repo must be git-ignored (under `.data/`, or named `wallets.json`), else the package refuses to load |
 | `client.ts` | shared `Client` (+`reconnect`), `signAndSubmit`, `submitWithSigner`, `submitBlob`, `withAccountLock`, `ledgerTime`, `waitForLedgerTimeAfter`, `createdNodeId` |
-| `submit.ts` | retry engine: per-account lock, result classification, `submitReliably` (network-free, see Submission semantics) |
+| `submit.ts` | retry engine: per-account lock, result classification, `submitReliably`; XRPL-17 opt-in pipelined engine `submitPipelined` / `setSubmitMode` (network-free, see Submission semantics) |
 | `errors.ts` | `XrplTxError`, `toErrorCode` → shared `ErrorCode`, `toLedgerError` / `withLedgerErrors` → shared `LedgerError` |
 | `wallets.ts` | wallet store (`WALLETS_FILE`; written atomically, 0600), roles, pure `migrateWalletFile` / `rlusdTopUpPlan`, faucet funding, role resolution |
 | `rlusd.ts` | issuer flags, trust lines, issue/pay, balances |

@@ -4,7 +4,7 @@ import { ArrowRight, CalendarClock, Camera, FileText, History, MapPin, Receipt }
 import { Badge, type Tone } from "@/components/ui/badge";
 import { SectionLabel } from "@/components/ui/card";
 import { buttonClass } from "@/components/ui/button";
-import { auditHref, evidenceStatus, taskAmount, type EvidenceKindStatus } from "@/lib/queue";
+import { evidenceStatus, taskHref, taskAmount, type EvidenceKindStatus } from "@/lib/queue";
 import type { InspectorTask, TaskNeeds } from "@/lib/types";
 import { cn, formatDateTime, formatRlusd } from "@/lib/utils";
 
@@ -34,18 +34,18 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const m = task.milestone;
   const expiry = m?.cancelAfter ? expiryLabel(m.cancelAfter, now) : null;
   const mine = task.priorAudits.length;
-  const href = auditHref(task);
+  const href = taskHref(task);
   const title = m ? `M${m.index + 1} · ${m.title}` : "Site visit before verification";
 
   return (
-    <li className={cn("px-5 py-4 transition-colors duration-1000", fresh && "bg-brand-50")}>
+    <li className={cn("py-5 transition-colors duration-150", fresh && "bg-brand-50")}>
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1">
           <SectionLabel className="flex items-center gap-2">
             {task.projectName}
             {fresh && <Badge tone="brand">New</Badge>}
           </SectionLabel>
-          <p className="mt-0.5 text-[15px] font-semibold">
+          <p className="mt-0.5 text-small font-semibold">
             {href ? (
               <Link href={href} className="hover:text-brand hover:underline">
                 {title}
@@ -55,14 +55,14 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
             )}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="tabular text-sm font-medium text-ink-2">{formatRlusd(taskAmount(task))}</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="tabular text-small font-medium text-ink-2">{formatRlusd(taskAmount(task))}</span>
           <Badge tone={NEEDS[task.needs].tone} dot>
             {NEEDS[task.needs].label}
           </Badge>
           {href && (
-            <Link href={href} className={buttonClass("brand", "sm")}>
-              {task.needs === "re_audit" ? "Re-audit" : "Audit"} <ArrowRight className="size-3.5" />
+            <Link href={href} className={buttonClass("secondary", "sm")}>
+              {task.needs === "re_audit" ? "Re-audit" : task.needs === "pre_visit" ? "Visit site" : "Audit"} <ArrowRight className="size-3.5" />
             </Link>
           )}
         </div>
@@ -70,13 +70,13 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
 
       <ul className="mt-2 flex flex-wrap gap-1.5">
         {task.sov.map((l) => (
-          <li key={l.code} className="rounded-md bg-subtle px-2 py-0.5 text-xs text-ink-2">
+          <li key={l.code} className="rounded-md bg-subtle px-2 py-0.5 text-caption text-ink-2">
             <span className="font-mono text-faint">{l.code}</span> {l.title} <span className="tabular text-faint">· {formatRlusd(l.amount)}</span>
           </li>
         ))}
       </ul>
 
-      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted">
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-caption text-muted">
         {m && (
           <span className="flex items-center gap-2">
             <span className="text-faint">Builder evidence</span>

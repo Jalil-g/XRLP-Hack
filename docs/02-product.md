@@ -77,4 +77,4 @@ run. See `docs/04-demo-script.md` and `docs/08-pitch-storyline.md`.
   the builder or let it return. If we can send it anywhere else, we lost the plot.
 - An AI that "approves construction quality" alone. The suite requires a licensed inspector's signed audit as an input.
 - A demo that is a slide deck. Every step is a real devnet transaction with an explorer link.
-- Hiding what the ledger enforces vs. what the platform runs. Slide 6 ("Who can move the money?") says it plainly.
+- Hiding what the ledger enforces vs. what the platform runs. Slide 3 explains responsibilities; the canonical storyline and Q&A detail the trust boundary.

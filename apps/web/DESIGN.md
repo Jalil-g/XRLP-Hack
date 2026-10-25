@@ -1,7 +1,7 @@
 # Design
 
 Drawproof web. Bar: Apple's and Notion's web design, played straight (user decision 2026-10-24). Operate surfaces:
-familiar controls, quiet chrome, exact type. Color is reserved for state. Tokens live in `app/globals.css`.
+familiar controls, quiet chrome, exact type. Color is reserved for state. Canonical tokens and base styles live in `../styles/drawproof.css`, imported by both apps. App-specific layouts remain in `app/globals.css`.
 
 ## Type
 
@@ -49,7 +49,7 @@ Blue means "you can act". Green / red / amber mean a verdict and always come wit
 
 ## Components
 
-- `Button`: primary (action blue fill), secondary (band fill, ink text), quiet (text only). 36px / 44px. One primary per screen.
+- `Button`: primary (action blue fill), secondary (band fill, ink text), quiet (text only). 44px primary controls; compact controls are 36px on desktop and 44px on mobile. One primary per screen.
 - `Tag`: Notion-style soft chip, 13px medium, tinted background + dark text, no border, no dot.
 - `ChecksPanel` (`components/checks/`): GitHub checks. `OutcomeBanner` (Released / Failed / Needs review / Ready / Waiting / Expired) → `AuditRow` (inspector's signed audit, always first) → `CheckRow`s (failures first; flagged photos inline) → `VerdictRow` (decision, confidence, attestation). Review every state at `/dev/checks`.
 - `TxLink`: mono short hash + ↗ to devnet explorer; in mock mode plain text with "mock" title, never a link.
@@ -64,3 +64,11 @@ No page-load choreography, no pulsing dots.
 
 Gradients, glass/blur, glowing dots, hero metric tiles, icon-plus-heading card grids, eyebrow labels, colored side borders,
 emoji, decorative icons, dark mode for the projector.
+
+## Shared shell and guided actions
+
+Both apps use a solid 56px desktop header, matching navigation and environment labels, and a compact account menu for role/identity/projector controls. Mobile navigation moves to a second row. Both layouts include a keyboard skip link and 16px mobile gutters.
+
+Deposits, verification payments, repayments, and withdrawals show a review before submission. Evidence uploads use choose → review → submit; inspector audits and site visits use edit → review → sign → receipt. Back preserves the draft. Do not bypass the inspector's evidence-version checks or imply audit submission released funds.
+
+Checks stack status, explanation, and proof on mobile. Wide Schedule of Values tables scroll within labeled keyboard-focusable regions. Respect reduced motion. The demo control room leads with the 100-second recording flow; extended engineering checks are disclosed separately.

@@ -1,5 +1,19 @@
 # Decisions log
 
+## Shared frontend polish — 2026-10-25
+
+- User authorized a consistent Apple/Notion-style polish of both `apps/web` and `apps/inspector`. Both consume `apps/styles/drawproof.css`; inspector compatibility aliases preserve existing component APIs. No domain contracts or signing algorithms change.
+- Match the white canvas, system type, restrained blue actions, status labels, solid header, account menu, responsive gutters, focus states, and reduced motion. App-specific data access stays separate.
+- Require a review before deposits, other payments, audit signatures, and site-visit signatures. Evidence uploads use a short choose/review/submit sequence. Preserve drafts on Back, prevent repeated submission, and retain inspector evidence-version validation.
+- The demo control room follows the primary 100-second recording story. Ledger-condition rejection and stall/refund tools remain available under an extended walkthrough disclosure, outside the timed pitch.
+
+## Adopted presentation decision — 2026-10-25
+
+User confirmed one three-minute total slot, Apple/Notion simplicity, guided flows with review before signing/paying, and a prerecorded demo. The authoritative plan is [08-pitch-storyline.md](08-pitch-storyline.md): six slides, 8/22/15/15/100/10 seconds, 170 seconds content plus 10 seconds reserve. The demo shows one release and one failed hold. Slide 3 states AI/inspector/XRPL responsibilities; slide 6 closes with fees, one construction-lending pilot ask, and thanks.
+
+Use [deck guide](ideas/pitch-3min-style-guide.md), [Claude PowerPoint prompts](ideas/pitch-3min-claude-prompts.md), [recording script](04-demo-script.md), and [shared frontend direction](ideas/shared-frontend-style.md). Finished deck/video remain to be produced. Historical entries below retain their context; old eight-slide numbering, live-stage beats, and the 3:00 + 2:00 assumption are superseded.
+
+
 Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 ## Decided (team)
@@ -28,7 +42,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] **Release = milestone test suite.** Like a GitHub release: a licensed inspector audits the site and files a signed report; the AI runs
   the suite (deterministic checks + judgement) over builder evidence + inspector audit; all required checks pass → the platform's release
   service finishes the escrow. Inspectors do **not** hold a release key. `needs_human` → platform operator decides with a signed reason. (Jalil)
-- [10-24] **Preimages are held by core's release service** (unique per escrow, encrypted at rest), disclosed on slide 6. Ledger enforces
+- [10-24] **Preimages are held by core's release service** (unique per escrow, encrypted at rest), disclosed on slide 3 and in Q&A. Ledger enforces
   destination + expiry; the suite + on-chain attestations make release timing auditable. Smart Escrows (XLS-100) = roadmap. (Jalil)
 - [10-24] **Per-project verification fee** paid by the builder in RLUSD on-chain; AI-first verification of builder identity, project feasibility
   and builder capability; inspectors only when the AI escalates (`needs_human` → pre-construction site visit). `VERIFIED_BUILDER` on first pass. (Jalil)
@@ -81,6 +95,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   still enabled. (6) `resumeEscrowCreation({ project, ... })` requires `builderAddress` and waits one LLS margin by default.
   (7) In-repo `WALLETS_FILE` / `DATA_DIR` must be git-ignored; the wallet store is written atomically, 0600. (8) Validation
   errors never echo a would-be condition. Deferred with reasons in the review doc; core items in the linked issue. (Jalil's agent, security review)
+- [10-25] **Pipelined submission (XRPL-17) is opt-in**: `XRPL_PIPELINE=1` or `setSubmitMode("pipelined", { window })`, window 5 (max 10 = rippled's per-account TxQ cap); the default stays XRPL-12's lock-through-validation. Pipelined, the account lock covers only autofill → sign → submit, `Sequence` comes from a local counter (advanced only when the server took the blob), and up to 5 txs per account wait for validation together. `tefPAST_SEQ` / `terPRE_SEQ` / a tx that died unapplied → stop issuing, let every in-flight tx settle, re-read the Sequence, re-sign only the provably dead txs (never one that may still apply); tec/tem are never retried. **"Dead" is proven from account state** (Sequence at the LastLedgerSequence ledger ≤ S, or `account_tx` shows another tx used S), not from `tx` + `searched_all`: devnet answers `validated: false` forever for a blob it has seen (protocol notes §0a). A `tel*` blob counts as sent, because rippled may hold and retry it. Explicit `withAccountLock` sections, `submitBlob` (pre-signed), Batch and own-`Sequence` txs keep locked semantics (they first wait for the window to drain), so loan.ts / batch.ts / api.ts did not change. Devnet: 20 Payments from one account ~108 s locked → 22–27 s pipelined (3.9–5.0×, 6–7 consecutive ledgers); multisig, a foreign writer stealing a Sequence, and a held blob proven dead are each 20/20 or 1/1. Prestage and the CLI demo don't get faster: each step awaits the previous one, and ~1 ledger per tx is validation (`prestage --only A`: 123 s locked, 123 s pipelined, 132 s locked). So it pays off for concurrent same-account submits (core serving several platform-signed requests), and flipping it on is core's call. Why opt-in: a new concurrency engine should not silently change the demo path. **Open (locked mode, unchanged here):** `submitReliably` still proves death via `searched_all`, so it can wait forever on a seen-but-never-validated blob, and it doesn't track `tel*` blobs; same fix as the pipelined engine, see #166 (Jalil's agent, XRPL-17)
 
 ## Inspector presentation controls (INS-08)
 
@@ -148,6 +163,28 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   individual audit revision: the contract has no audit-to-verdict reference. A verdict older than a report is labelled as awaiting
   a new run. Only reports returned by core are shown; superseded reports removed by core cannot be reconstructed. No contract change.
   Added a completed Oak Ave mock project for Dana's pass/release history and aligned the reused Maple M2 photo's GPS with Oak Ave. (Roro's agent)
+- [10-25] INS-06 site visit built **mock-only against the area:inspector proposal on #53** (no answer yet), every piece marked
+  TODO(#53): `InspectorSiteVisit` (3 questions yes/no/unable_to_confirm + note, photos, notes), `POST /api/projects/:id/site-visit`
+  (multipart like route 10), attestation = 1-drop Payment inspector → **platform** (no SPV before lock-terms) with memo
+  `{v:1, kind:"site_visit", projectId, hash}` built in the app (not attest-signer: not an XRPL-08 kind). Hash = canonical JSON like
+  `auditHash`. http mode posts to the proposed route and shows "core does not support site visits yet" on 404. Draft PR.
+
+## Web action feedback (WEB-12)
+
+- Every shared API error code has presentation copy and a recovery step. Transport
+  and ledger failures tell users to inspect the current state before repeating a
+  write: a failed response does not prove the preceding transaction never landed.
+- Passing checks alone is not a release confirmation. Action toasts distinguish
+  confirmed release/refund from pending results; keeper messages describe recorded
+  updates rather than promising every expired escrow has already been repaid.
+- The demo page hides missing-project 404s only; service errors reach the normal
+  error boundary. Web tests use the workspace's existing tsx runner, now declared
+  as a web development dependency, with no new top-level tool.
+- Projector mode is an opt-in layout control: 20px root text and stronger secondary
+  contrast, without changing identity or actions. It survives client navigation,
+  resets on a hard reload, and keeps tables in labeled keyboard-scrollable regions.
+- Account-directory requests retain an explicit unavailable flag. A failed lookup
+  warns in the header and cannot become a "no investor accounts" empty state.
 
 ## Pitch review (Jalil's agent, PITCH-09)
 
@@ -162,7 +199,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] New disclosure in `docs/pitch-qa.md` Q2: the platform, as vault owner = loan broker, picks the `LoanSet` borrower, and nothing
   on-ledger binds a vault to its project account. The answer is visibility (SPV + signer list exist from lock-terms, any other counterparty is
   public at once) until a broker co-signed by the trustee exists. Proposed slide-6 row on #72, not applied. (Jalil's agent, PITCH-09)
-- [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
+- [10-25, SUPERSEDED by adopted presentation decision above] Timing assumed a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
 

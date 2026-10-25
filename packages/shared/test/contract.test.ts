@@ -126,3 +126,12 @@ test("ledger errors carry a code and are catchable by base class", () => {
   assert.equal(e.txResult, "tecTOO_SOON");
   assert.equal(new LedgerError("unsafe_release", "no trust line").code, "unsafe_release");
 });
+
+test("v2.1 (#133): new event kinds parse; ledger error codes not_found / validation", () => {
+  for (const kind of ["release_attested", "loan_impaired", "builder_payment"] as const) {
+    const ev = ChainEvent.parse({ projectId: "p1", kind, txHash: "CD".repeat(32), explorerUrl: "https://devnet.xrpl.org/transactions/" + "CD".repeat(32), at: NOW });
+    assert.equal(ev.kind, kind);
+  }
+  assert.equal(new LedgerError("not_found", "no loan").code, "not_found");
+  assert.equal(new LedgerError("validation", "below one periodic payment").code, "validation");
+});
