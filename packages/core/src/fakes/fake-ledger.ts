@@ -39,6 +39,8 @@ export interface FakeLedgerOptions {
   noTrustLine?: XrplAddress[];
   /** Account the fake treats as the platform (actor on platform-signed txs). */
   platformAddress?: XrplAddress;
+  /** Per-project SPV address (default: a fake, non-checksummed one). Tests that sign attestations to the SPV need a valid one. */
+  spvAddress?: (projectId: string) => XrplAddress;
 }
 
 interface VaultState {
@@ -96,6 +98,7 @@ export class FakeLedger implements LedgerPort {
   private readonly stateFile?: string;
   private readonly noTrustLine: Set<string>;
   readonly platformAddress: XrplAddress;
+  private readonly spvAddress?: (projectId: string) => XrplAddress;
   private s: FakeLedgerState;
 
   constructor(opts: FakeLedgerOptions = {}) {
@@ -105,6 +108,7 @@ export class FakeLedger implements LedgerPort {
     this.stateFile = opts.stateFile;
     this.noTrustLine = new Set(opts.noTrustLine ?? []);
     this.platformAddress = opts.platformAddress ?? fakeAddress("platform");
+    this.spvAddress = opts.spvAddress;
     this.s = this.stateFile && existsSync(this.stateFile) ? (JSON.parse(readFileSync(this.stateFile, "utf8")) as FakeLedgerState) : emptyState();
   }
 
@@ -202,7 +206,7 @@ export class FakeLedger implements LedgerPort {
     const { project, subscriptionDate, redemptionDate, coverDeposit } = p;
     if (new Date(subscriptionDate) >= new Date(redemptionDate)) this.fail("temMALFORMED", "SubscriptionDate must be before RedemptionDate");
     if (this.s.vaults.some((v) => v.projectId === project.id)) this.fail("tecDUPLICATE", `vault for ${project.id} exists`);
-    const spv = fakeAddress(`spv:${project.id}:${this.salt}`);
+    const spv = this.spvAddress?.(project.id) ?? fakeAddress(`spv:${project.id}:${this.salt}`);
     const vaultId = fakeHash(`vault:${project.id}:${this.salt}`);
     const loanBrokerId = fakeHash(`broker:${project.id}:${this.salt}`);
     const shareMptIssuanceId = fakeHash(`mpt:${project.id}:${this.salt}`).slice(0, 48);

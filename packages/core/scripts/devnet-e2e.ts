@@ -1,15 +1,19 @@
-// CORE-05 · Devnet HTTP e2e: the docs/04 demo flow driven over core's HTTP API (routes 1–23), nothing in-process.
+// CORE-05 · Devnet HTTP e2e: the docs/04 demo flow driven over core's HTTP API (routes 1–25), nothing in-process.
 //
 //   WALLETS_FILE=.data/wallets.core05.json pnpm --filter @xrlp/xrpl bootstrap
-//   LEDGER_MODE=devnet CORE_VERIFIER=verifier VERIFIER_MODE=mock WALLETS_FILE=.data/wallets.core05.json DATA_DIR=/tmp/core05 \
+//   LEDGER_MODE=devnet VERIFIER_MODE=mock WALLETS_FILE=.data/wallets.core05.json DATA_DIR=/tmp/core05 \
 //     DEMO_CANCEL_AFTER_S=1500,1800,420 pnpm --filter @xrlp/core serve
+// (core's devnet mock verifier: metadata read from the uploaded bytes. CORE_VERIFIER=verifier rejects the demo builder at
+//  step 5 today: @xrlp/verifier's MOCK registry does not list its license / policy.)
 //   WALLETS_FILE=.data/wallets.core05.json pnpm --filter @xrlp/core e2e:devnet      # CORE_URL (default http://localhost:4000)
 //
-// Flow: reset+seed (devnet parties) -> project -> fee -> verify -> lock-terms -> KYC -> invest x2 -> close too early (409) ->
+// Flow: reset+seed (devnet parties) -> project -> fee -> verify (needs_human -> route 25 operator approve) -> lock-terms -> KYC -> invest x2 -> close too early (409) ->
 // wait SubscriptionDate -> close -> M1 evidence + audit -> run-checks pass -> release; M2 with a reused photo -> fail, held;
 // try-steal M2 -> tecCRYPTOCONDITION_ERROR; withdraw before RedemptionDate (409); wait M3 CancelAfter -> cancel -> refund; events.
 // Evidence: the verifier's Maple St fixture photos with their EXIF capture time restamped to "now" (same byte length, GPS kept)
 // + generated text invoice/inspection docs naming the builder and site, so the verifier mock can honestly pass.
+// Audits (route 10) are signed with the assigned inspector's key from WALLETS_FILE, as the inspector app signs them: a devnet
+// core refuses unsigned audits (#173). The seed is read in-process by core's `walletAuditSigner` and never printed.
 // Prints a markdown table of every step with explorer links; writes the raw rows to $E2E_OUT (default $DATA_DIR/core05-e2e.json).
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -17,6 +21,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MILESTONE_TEMPLATES, type ChainEvent, type CreateProjectInput, type Project, type ProjectDetail, type SovLine } from "@xrlp/shared";
 import type { DevnetIdentities } from "../src/adapters/devnet-identities.ts";
+import type { AuditBlobSigner } from "../src/demo/prestage-import.ts";
 
 const FIXTURES = fileURLToPath(new URL("../../verifier/fixtures/evidence/maple-st/", import.meta.url));
 
@@ -39,6 +44,9 @@ export interface FlowOptions {
   /** Principal per milestone (3 milestones). Small so a bootstrapped wallet set survives many runs. 6 payments (30 d / 5 d) keep
    *  one milestone >= one periodic payment: an escrow refund LoanPay below that is refused (tecINSUFFICIENT_PAYMENT). */
   milestoneAmount?: string;
+  /** The assigned inspector's audit signer (route 10 `signedTxBlob`). Required by a devnet core (#173); without it audits
+   *  go unsigned, which only a fake-ledger core accepts. */
+  auditSigner?: (inspector: string) => Promise<AuditBlobSigner>;
   log?: (line: string) => void;
 }
 
@@ -120,16 +128,22 @@ export async function runDevnetFlow(o: FlowOptions): Promise<Row[]> {
     }
     return f;
   };
-  const auditForm = (report: unknown) => {
+  let signAudit: AuditBlobSigner | undefined;
+  let spv = "";
+  type Report = { inspector: string; evidenceBundleHash: string; checklist: { sovCode: string; status: "done" }[]; notes: string };
+  // No inspector photos: the attestation commits to the report and an empty photo set (attest-signer `auditHash`).
+  const auditForm = async (mid: string, report: Report) => {
     const f = new FormData();
     f.append("report", JSON.stringify(report));
+    if (signAudit) f.append("signedTxBlob", await signAudit({ ...report, milestoneId: mid, photos: [] }, spv));
     return f;
   };
+  const audited = (j: any) => `${j.milestone.status}, ${signAudit ? "signed by" : "unsigned, platform-attested for"} ${j.audit.inspector}`;
   const doc = (kind: "invoice" | "document", filename: string, lines: string[]): Upload => ({ kind, filename, mime: "text/plain", bytes: Buffer.from(lines.join("\n") + "\n") });
 
   // 21: clean store + devnet parties (builder, panel, KYC'd investors) from WALLETS_FILE
   await call("reset + seed devnet parties", "POST", "/api/admin/demo/reset", { seed: "participants" });
-  const builders = await call<{ id: string; address: string; name: string }[]>("builders", "GET", "/api/builders", undefined, [200], (j) => `${j.length} builder(s)`);
+  const builders = await call<{ id: string; address: string; name: string; licenseNumber: string; insurancePolicy: string }[]>("builders", "GET", "/api/builders", undefined, [200], (j) => `${j.length} builder(s)`);
   const builder = builders.find((b) => b.address === o.ids.builder.address);
   if (!builder) throw new Error(`builder ${o.ids.builder.address} not registered by the devnet seed`);
   await call("inspector panel", "GET", "/api/inspectors", undefined, [200], (j) => `${j.length} verified: ${j.map((i: any) => i.address).join(", ")}`);
@@ -146,22 +160,30 @@ export async function runDevnetFlow(o: FlowOptions): Promise<Row[]> {
     description: "Devnet HTTP e2e (CORE-05): 3 milestones.",
     terms: { principal, interestRateBps: 1000, termDays: 30, paymentIntervalDays: 5, fundingDeadline: new Date(created.getTime() + (o.subscriptionS ?? 240) * 1000).toISOString() },
     sov: sov(amount),
+    // Fields the @xrlp/verifier project review reads (license / policy numbers match the builder record).
     documents: [
-      { kind: "license", filename: "contractor-license.pdf", fields: { status: "active" } },
-      { kind: "insurance", filename: "gl-certificate.pdf", fields: { status: "active" } },
-      { kind: "entity", filename: "llc-good-standing.pdf" },
-      { kind: "permit", filename: "building-permit.pdf" },
+      { kind: "license", filename: "contractor-license.pdf", fields: { status: "active", licenseNumber: builder.licenseNumber, holder: builder.name, expires: "2027-12-31" } },
+      { kind: "insurance", filename: "gl-certificate.pdf", fields: { status: "active", policyNumber: builder.insurancePolicy, insured: builder.name, generalLiability: "2,000,000", expires: "2027-12-31" } },
+      { kind: "entity", filename: "llc-good-standing.pdf", fields: { legalName: builder.name } },
+      { kind: "permit", filename: "building-permit.pdf", fields: { status: "approved" } },
+      { kind: "plans", filename: "stamped-plans.pdf", fields: { status: "approved" } },
     ],
   };
   const project = await call<Project>("3 create project", "POST", "/api/projects", input, [200], (j) => `${j.id} principal ${principal}, SubscriptionDate ${input.terms.fundingDeadline}`);
   const P = `/api/projects/${project.id}`;
   await call("4 verification fee", "POST", `${P}/verification-fee`, { builder: builder.address }, [200], (j) => `status ${j.project.status}`);
   const v = await call("5 verify project", "POST", `${P}/verify-project`, undefined, [200], (j) => `${j.verification.decision} -> ${j.project.status}`);
-  if (v.project.status !== "verified") throw new Error(`verification ${v.verification.decision}: ${v.verification.summary}`);
+  if (v.verification.decision === "needs_human") {
+    // 25: the AI escalated; the platform operator approves with an attested reason.
+    const d = await call("25 operator approves project (needs_human)", "POST", `${P}/decision`, { actor: o.ids.platform, decision: "approve", reason: "CORE-05 e2e: documents reviewed by the operator." }, [200], (j) => j.project.status);
+    if (d.project.status !== "verified") throw new Error(`operator approve left ${d.project.status}`);
+  } else if (v.project.status !== "verified") throw new Error(`verification ${v.verification.decision}: ${v.verification.summary}`);
 
   // 6
   const locked = await call("6 lock terms (vault + broker + cover + SPV)", "POST", `${P}/lock-terms`, { actor: o.ids.platform }, [200], (j) => `vault ${j.project.chain.vaultId?.slice(0, 12)}…, SPV ${j.project.chain.spv}, inspector ${j.assignment.inspectors.join(",")}`);
   const inspector: string = locked.assignment.inspectors[0];
+  spv = locked.project.chain.spv;
+  signAudit = await o.auditSigner?.(inspector);
 
   // 19 + 7
   await call("19 KYC investor1", "POST", `/api/investors/${inv1!.address}/kyc`, undefined, [200], (j) => (j.events.length ? `${j.events.length} tx` : "already accepted on-ledger"));
@@ -204,7 +226,7 @@ export async function runDevnetFlow(o: FlowOptions): Promise<Row[]> {
   ];
   await call("9 M1 evidence", "POST", `${P}/milestones/${m1!.id}/evidence`, evidenceForm(m1Files), [200], (j) => `${j.evidence.length} files, ${j.milestone.status}`);
   const bundle = (files: Upload[]) => sha256(files.map((f) => sha256(f.bytes)).sort().join("\n"));
-  await call("10 M1 audit (assigned inspector)", "POST", `${P}/milestones/${m1!.id}/audit`, auditForm({ inspector, evidenceBundleHash: bundle(m1Files), checklist: [{ sovCode: "foundation", status: "done" }], notes: "Slab cured, anchor bolts set, no framing yet." }), [200], (j) => j.milestone.status);
+  await call("10 M1 audit (assigned inspector)", "POST", `${P}/milestones/${m1!.id}/audit`, await auditForm(m1!.id, { inspector, evidenceBundleHash: bundle(m1Files), checklist: [{ sovCode: "foundation", status: "done" }], notes: "Slab cured, anchor bolts set, no framing yet." }), [200], audited);
   const r1 = await call("11 M1 run checks", "POST", `${P}/milestones/${m1!.id}/run-checks`, undefined, [200], (j) => `${j.verdict.decision}${j.release ? " -> released" : ""}`);
   if (r1.verdict.decision !== "pass" || !r1.release) throw new Error(`M1 expected pass + release: ${JSON.stringify(r1.verdict.checks.filter((c: any) => c.result !== "pass"))}`);
 
@@ -216,7 +238,7 @@ export async function runDevnetFlow(o: FlowOptions): Promise<Row[]> {
     doc("invoice", "invoice-lumber.txt", ["BROOKLYN LUMBER & SUPPLY", "Invoice No: BLS-E2E", `Date: ${day}`, `Bill To: ${builder.name}`, `Deliver To: ${SITE.address}`, "Framing lumber package + trusses", `TOTAL: $${amount}.00`]),
   ];
   await call("9 M2 evidence (IMG_2231.jpg = reused M1 photo)", "POST", `${P}/milestones/${m2!.id}/evidence`, evidenceForm(m2Files), [200], (j) => `${j.evidence.length} files`);
-  await call("10 M2 audit", "POST", `${P}/milestones/${m2!.id}/audit`, auditForm({ inspector, evidenceBundleHash: bundle(m2Files), checklist: [{ sovCode: "framing", status: "done" }], notes: "Walls framed; sheathing started." }), [200], (j) => j.milestone.status);
+  await call("10 M2 audit", "POST", `${P}/milestones/${m2!.id}/audit`, await auditForm(m2!.id, { inspector, evidenceBundleHash: bundle(m2Files), checklist: [{ sovCode: "framing", status: "done" }], notes: "Walls framed; sheathing started." }), [200], audited);
   const r2 = await call("11 M2 run checks (fraud)", "POST", `${P}/milestones/${m2!.id}/run-checks`, undefined, [200], (j) => `${j.verdict.decision}: ${j.verdict.checks.filter((c: any) => c.result === "fail").map((c: any) => c.check).join(", ")}${j.release ? " -> RELEASED (bug)" : ", no release"}`);
   if (r2.verdict.decision !== "fail" || r2.release || !r2.verdict.checks.some((c: any) => c.check === "no_duplicate_photo" && c.result === "fail"))
     throw new Error(`M2 expected fail on no_duplicate_photo, no release: ${JSON.stringify(r2.verdict.checks)}`);
@@ -261,6 +283,8 @@ export function markdownTable(rows: Row[]): string {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const { loadDevnetIdentities } = await import("../src/adapters/devnet-identities.ts");
   const { devnetConfigFromEnv } = await import("../src/factory.ts");
+  const { walletAuditSigner } = await import("../src/demo/prestage-import.ts");
+  const { disconnect } = await import("@xrlp/xrpl");
   const { walletsFile } = devnetConfigFromEnv(process.env);
   const ids = loadDevnetIdentities(walletsFile);
   const base = (process.env.CORE_URL ?? "http://localhost:4000").replace(/\/$/, "");
@@ -277,8 +301,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       }
     },
     ...(process.env.E2E_SUBSCRIPTION_S ? { subscriptionS: Number(process.env.E2E_SUBSCRIPTION_S) } : {}),
+    // Autofills on devnet (Fee / Sequence / LastLedgerSequence) through @xrlp/xrpl's shared client.
+    auditSigner: (inspector) => walletAuditSigner(walletsFile, inspector),
     log: (l) => console.log(l),
-  });
+  }).finally(() => disconnect());
   const out = process.env.E2E_OUT ?? join(process.env.DATA_DIR ?? ".data", "core05-e2e.json");
   writeFileSync(out, JSON.stringify(rows, null, 2));
   console.log(`\n${markdownTable(rows)}\n\nrows -> ${out}`);
