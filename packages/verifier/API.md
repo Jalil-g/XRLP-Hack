@@ -95,7 +95,9 @@ releasePolicyFor(project, milestone, riskTier?) returns shared ReleasePolicy. Th
 high. Minimum confidence is 0.7/0.8/0.9 (+0.05 for high-value draws). At 50,000 RLUSD or high risk,
 two independent audits are required. SoV evidence kinds determine document/invoice optionality;
 unknown context retains conservative gates. The legacy policyFor(project, builder, milestone)
-additionally provides detail thresholds and notes.
+additionally provides detail thresholds and notes. The adapter's two-argument policyFor uses the
+risk from this process's verifyProject, else options.riskTier, else "medium" (never a silent "high"
+from a process-local cache miss); verifyMilestone still enforces the builder's own riskTier.
 
 The milestone runner combines caller policy with the baseline; callers can tighten but cannot
 remove mandatory checks or lower thresholds. Any required failure fails. Missing, skipped, warning

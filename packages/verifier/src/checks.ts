@@ -219,6 +219,7 @@ export function checkInvoiceMatchesBudget(
   items: LoadedEvidence[],
   policy: VerificationPolicy,
   llmTotals: InvoiceTotals = {},
+  prior: PriorEvidence[] = [],
 ): CheckOutcome {
   const c = "invoice_matches_budget";
   const invoices = items.filter((l) => l.evidence.kind === "invoice");
@@ -227,6 +228,29 @@ export function checkInvoiceMatchesBudget(
     return requiresInvoice
       ? outcome(c, "fail", "Template requires invoices but none were submitted.")
       : outcome(c, "skipped", "No invoices required for this milestone.");
+  }
+  // An invoice may back only one draw: the same file twice in this bundle, or one already submitted for another
+  // milestone/project, would inflate the total (prior from this same milestone = resubmission, ignored).
+  const reused: string[] = [];
+  const reusedIds = new Set<string>();
+  const others = prior.filter((p) => !(p.projectId === ctx.project.id && p.milestoneId === ctx.milestone.id));
+  const textKey = (l: LoadedEvidence) => l.text?.replace(/\s+/g, " ").trim().toLowerCase() || undefined;
+  for (const [i, inv] of invoices.entries()) {
+    for (const other of invoices.slice(i + 1)) {
+      const same = (inv.sha256 && inv.sha256 === other.sha256) || (textKey(inv) && textKey(inv) === textKey(other));
+      if (same) {
+        reused.push(`${name(inv)} and ${name(other)} are the same invoice`);
+        reusedIds.add(inv.evidence.id).add(other.evidence.id);
+      }
+    }
+    const old = inv.sha256 ? others.find((p) => p.evidence.sha256 === inv.sha256) : undefined;
+    if (old) {
+      reused.push(`${name(inv)} was already submitted as ${old.evidence.filename} (${old.projectId === "unknown" ? "another milestone" : `project ${old.projectName ?? old.projectId}, milestone "${old.milestoneId}"`})`);
+      reusedIds.add(inv.evidence.id);
+    }
+  }
+  if (reused.length) {
+    return outcome(c, "fail", `${listJoin(dedupe(reused))}; an invoice can back only one draw.`, [...reusedIds]);
   }
   const unread: LoadedEvidence[] = [];
   let total = 0n;
