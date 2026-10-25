@@ -2,6 +2,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { LedgerError } from "@xrlp/shared";
+import { toAdapterError } from "../../xrpl/src/adapter-map.ts";
+import { XrplTxError } from "../../xrpl/src/errors.ts";
+import { ledgerErrorCode } from "../src/errors.ts";
 import type { KeeperTickResult } from "../src/api-surface.ts";
 import { DAY_MS, FakeClock } from "../src/clock.ts";
 import { demoCancelAfter, mapleInput, registerParticipants, toFunded } from "../src/demo/scenario.ts";
@@ -20,14 +23,14 @@ async function m1Expired() {
   const repay = ledger.repayLoan.bind(ledger);
   ledger.cancelEscrow = async (a) => (calls.cancel++, cancel(a));
   ledger.repayLoan = async (a) => (calls.repay++, repay(a));
-  const svc = createCore({ inMemory: true, clock, ledger, cancelAfterFor: demoCancelAfter }).service;
+  const { service: svc, store } = createCore({ inMemory: true, clock, ledger, cancelAfterFor: demoCancelAfter });
   await registerParticipants(svc);
   const { project } = await toFunded(svc, mapleInput(new Date(Date.parse(T0) + 2 * DAY_MS)), ["50000", "40000", "30000"]);
   clock.set(new Date(Date.parse(T0) + 2 * DAY_MS + 3_600_000));
   const closed = (await svc.closeLoan(project.id, { actor: svc.platformAddress })).project;
   const m1 = closed.milestones[0]!;
   clock.set(new Date(Date.parse(m1.cancelAfter!) + 1000));
-  return { clock, ledger, calls, repay, svc, project: closed, m1 };
+  return { clock, ledger, calls, repay, svc, store, project: closed, m1 };
 }
 
 const status = async (svc: Awaited<ReturnType<typeof m1Expired>>["svc"], pid: string, mid: string) =>
@@ -69,6 +72,35 @@ describe("keeperTick (CORE-06)", () => {
     assert.equal(calls.cancel, 2, "ours hit tecNO_TARGET, then the ledger read showed the escrow gone");
     assert.equal(await status(svc, project.id, m1.id), "refunded");
   });
+
+  it("real tecNO_TARGET mapping reconciles an out-of-band cancel before refunding", async () => {
+    const { ledger, calls, svc, project, m1 } = await m1Expired();
+    await ledger.cancelEscrow(m1.escrow!);
+    const error = toAdapterError(new XrplTxError("EscrowCancel", "tecNO_TARGET"));
+    assert.equal(ledgerErrorCode(error), "NOT_FOUND");
+    ledger.cancelEscrow = async () => { throw error; };
+    const result = await svc.cancelExpired(project.id, m1.id);
+    assert.deepEqual(result.events.map((e) => e.kind), ["loan_payment"]);
+    assert.equal(result.milestone.status, "refunded");
+    assert.equal(result.milestone.escrow!.cancelTx, undefined, "do not invent a cancel receipt");
+    assert.equal(calls.repay, 1);
+  });
+
+  for (const situation of ["present", "unknown", "verified", "other-not-found"] as const) {
+    it(`real missing-escrow mapping does not refund when ${situation}`, async () => {
+      const { ledger, calls, svc, store, project, m1 } = await m1Expired();
+      if (situation === "verified") {
+        await store.write((db) => { db.projects.find((p) => p.id === project.id)!.milestones[0]!.status = "verified"; });
+      }
+      if (situation === "unknown") ledger.getEscrow = async () => { throw new Error("read unavailable"); };
+      if (situation === "verified" || situation === "other-not-found") ledger.getEscrow = async () => null;
+      const result = situation === "other-not-found" ? "tecNO_DST" : "tecNO_TARGET";
+      ledger.cancelEscrow = async () => { throw toAdapterError(new XrplTxError("EscrowCancel", result)); };
+      await assert.rejects(svc.cancelExpired(project.id, m1.id));
+      assert.equal(calls.repay, 0);
+      assert.equal(await status(svc, project.id, m1.id), situation === "verified" ? "verified" : "escrowed");
+    });
+  }
 
   it("cancel itself fails with the escrow still open: reported as a cancel issue, nothing committed", async () => {
     const { ledger, svc, project, m1 } = await m1Expired();

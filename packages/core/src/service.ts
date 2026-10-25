@@ -934,7 +934,11 @@ export class CoreService implements CoreApi {
     try {
       return await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner, offerSequence }));
     } catch (e) {
-      if (!(e instanceof DomainError) || e.code !== "LEDGER_ERROR") throw e;
+      if (!(e instanceof DomainError)) throw e;
+      // The devnet adapter maps this exact missing-escrow result to NOT_FOUND.
+      // Other not-found errors (account, destination, RPC, etc.) do not establish an absent escrow.
+      const missingEscrow = e.code === "NOT_FOUND" && e.txResult === "tecNO_TARGET";
+      if (e.code !== "LEDGER_ERROR" && !missingEscrow) throw e;
       const onLedger = await this.ledger.getEscrow(owner, offerSequence).catch(() => undefined);
       if (onLedger !== null) throw e; // still there (or unknown): the cancel really failed
       if (m.status === "verified")
