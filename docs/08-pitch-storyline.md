@@ -10,7 +10,7 @@ Adopted 2026-10-25 from the team's pitch discussion. **This is the presentation 
 - [Deck style guide](ideas/pitch-3min-style-guide.md): Apple/Notion simplicity, typography, colors, layouts, and copy boundaries.
 - [Claude in PowerPoint prompts](ideas/pitch-3min-claude-prompts.md): master prompt, six slide prompts, speaker notes, video cues, and consistency pass. Paste the master first.
 - [100-second recording script](04-demo-script.md): the primary demo, preparation, and extended engineering reference.
-- [Business and technical background](07-pitch.md), [judge Q&A and owners](pitch-qa.md), [source research](01-problem.md).
+- [Business and technical background](07-pitch.md), [mandatory judge FAQ](judge-faq.md), [extended Q&A and owners](pitch-qa.md), [source research](01-problem.md).
 - [Submission manifest](submission/README.md): final asset status and submission links.
 
 The prompts and specifications are available. **The finished PowerPoint deck and prerecorded video are not yet produced in this documentation change.** Do not invent asset paths or describe the prompts as a finished deck.

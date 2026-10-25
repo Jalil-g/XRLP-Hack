@@ -54,6 +54,8 @@ funding-portal status, which is exactly what CrowdStreet was sued over."* Also: 
 
 ## Judge Q&A (the hardest 16; ~20 s each; concede fast, then the mechanism)
 
+For the five mandatory stage questions, use the shorter, implementation-checked answers in `docs/judge-faq.md`.
+
 **1. "The AI releases the money. Isn't the AI your oracle?"**
 The AI runs a *published* test suite, most of which is deterministic: GPS vs site, timestamps vs escrow, duplicate-photo hashes, invoice
 vs Schedule of Values, and a licensed inspector's **signed audit** that must exist and match. The AI's judgement checks sit on top and can
