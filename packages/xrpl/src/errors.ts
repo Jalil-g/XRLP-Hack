@@ -1,17 +1,9 @@
-// Typed ledger errors + mapping to the HTTP ErrorCode of docs/05-api.md §1. Pure (no network).
-import { explorerTxUrl } from "@xrlp/shared";
+// Typed ledger errors + mapping to the shared HTTP `ErrorCode` (docs/05-api.md §1) and the shared LedgerPort
+// `LedgerError` / `TooSoonError`. Pure (no network).
+import { explorerTxUrl, LedgerError, TooSoonError, type ErrorCode } from "@xrlp/shared";
 
-/** docs/05-api.md §1 `ErrorCode` (not in @xrlp/shared yet). */
-export type ApiErrorCode =
-  | "not_found"
-  | "invalid_state"
-  | "validation"
-  | "checks_failed"
-  | "needs_human"
-  | "too_soon"
-  | "ledger_error"
-  | "verifier_error"
-  | "unsafe_release";
+/** @deprecated Use `ErrorCode` from `@xrlp/shared` (same union). */
+export type ApiErrorCode = ErrorCode;
 
 export interface XrplTxErrorOptions {
   /** True when the same intent may succeed if re-prepared and resubmitted (nothing was applied on-ledger). */
@@ -48,9 +40,21 @@ export class XrplTxError extends Error {
 }
 
 const NOT_FOUND_RESULTS = new Set(["tecNO_ENTRY", "tecNO_TARGET", "tecNO_DST", "tecOBJECT_NOT_FOUND", "tecNO_LINE"]);
+const NOT_FOUND_RPC = new Set(["entryNotFound", "actNotFound", "txnNotFound", "objectNotFound"]);
 
-/** Map any error from this package to the API `ErrorCode`. Default `ledger_error`. */
-export function toErrorCode(e: unknown): ApiErrorCode {
+/**
+ * A pre-reveal refusal from this package (`UnsafeReleaseError`, a refused `PreflightResult`, or an
+ * `unsafeReleaseError()` body), detected by shape so errors.ts doesn't import preflight.ts (import cycle via client.ts).
+ */
+function isUnsafeRelease(e: unknown): boolean {
+  const o = e as { code?: unknown; ok?: unknown; error?: { code?: unknown } } | null;
+  return !!o && typeof o === "object" && (o.code === "unsafe_release" || o.error?.code === "unsafe_release");
+}
+
+/** Map any error from this package to the shared `ErrorCode`. Default `ledger_error`. */
+export function toErrorCode(e: unknown): ErrorCode {
+  if (e instanceof LedgerError) return e.code;
+  if (isUnsafeRelease(e)) return "unsafe_release";
   if (e instanceof XrplTxError) {
     const r = e.engineResult;
     if (r === "tecTOO_SOON") return "too_soon";
@@ -59,6 +63,42 @@ export function toErrorCode(e: unknown): ApiErrorCode {
     return "ledger_error";
   }
   const rpc = (e as { data?: { error?: string } })?.data?.error;
-  if (rpc === "entryNotFound" || rpc === "actNotFound" || rpc === "txnNotFound" || rpc === "objectNotFound") return "not_found";
+  if (rpc && NOT_FOUND_RPC.has(rpc)) return "not_found";
   return "ledger_error";
+}
+
+/**
+ * Convert anything this package throws into the shared LedgerPort error (what the adapter must throw):
+ *  - a `LedgerError` (incl. `TooSoonError` and preflight's `UnsafeReleaseError`) is returned as is;
+ *  - `XrplTxError` tecTOO_SOON → `TooSoonError`; any other XrplTxError → `LedgerError("ledger_error")`,
+ *    both carrying `txResult` (engine result) and `txHash` (when the tx reached a ledger);
+ *  - a refused preflight (`PreflightResult` / `unsafeReleaseError()` body) → `LedgerError("unsafe_release")`;
+ *  - anything else → `LedgerError("ledger_error")` with the original message.
+ * The original error is kept as `cause`. Not-found / validation results stay `ledger_error` here (LedgerError has no
+ * such codes); use `toErrorCode(e.cause)` if you need the finer HTTP code.
+ */
+export function toLedgerError(e: unknown): LedgerError {
+  if (e instanceof LedgerError) return e;
+  let out: LedgerError;
+  if (e instanceof XrplTxError) {
+    const opts = { txResult: e.engineResult, ...(e.hash ? { txHash: e.hash } : {}) };
+    out = e.engineResult === "tecTOO_SOON" ? new TooSoonError(e.message, opts) : new LedgerError("ledger_error", e.message, opts);
+  } else if (isUnsafeRelease(e)) {
+    const o = e as { message?: unknown; error?: { message?: unknown } };
+    const msg = typeof o.message === "string" ? o.message : typeof o.error?.message === "string" ? o.error.message : "pre-reveal safety refused the finish";
+    out = new LedgerError("unsafe_release", msg);
+  } else {
+    out = new LedgerError("ledger_error", e instanceof Error ? e.message : String(e));
+  }
+  out.cause = e;
+  return out;
+}
+
+/** Run `fn`, rethrowing any failure as a shared `LedgerError` (see `toLedgerError`). For LedgerPort adapter methods. */
+export async function withLedgerErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    throw toLedgerError(e);
+  }
 }

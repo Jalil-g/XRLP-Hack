@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import { Wallet } from "xrpl";
 import { config } from "./config.ts";
 import { getClient, isNotFound } from "./client.ts";
+import type { CredentialType } from "./credentials.ts";
+import { defaultCoverDeposit, expectedInterest, fromMicro, loanScheduleFromTerms, toMicro } from "./lending-math.ts";
 
 /** Demo roles (Direction v2). See docs/03-architecture.md "Accounts". */
 export const WALLET_ROLES = [
@@ -136,12 +138,68 @@ export interface RlusdTarget {
   target: number;
 }
 
+/**
+ * Default platform RLUSD target: first-loss cover for several concurrent projects. Cover ≈ 11% of principal
+ * (defaultCoverDeposit: 10% of principal + interest, +10% headroom), so 25 000 = platformRlusdFor() of 3 concurrent
+ * projects (prestage A/B/C) of up to ~68 000 principal each on demo terms (10% APR, 30 days); that is more than the
+ * 150 000 the three investors can fund in total.
+ * Size it for other project sets with platformRlusdFor().
+ */
+export const DEFAULT_PLATFORM_RLUSD = 25_000;
+
+/** Terms the cover is sized from (subset of shared ProjectTerms). */
+export interface CoverSizingTerms {
+  principal: string;
+  interestRateBps: number;
+  termDays: number;
+  paymentIntervalDays: number;
+}
+
+/**
+ * Platform RLUSD needed to post the default first-loss cover (setupProjectOnChain) for every project in `projects` at
+ * once: sum of defaultCoverDeposit, +10% slack, rounded up to a whole 1 000. Fees are paid in XRP, so no RLUSD for them.
+ */
+export function platformRlusdFor(projects: CoverSizingTerms[], opts: { slackBps?: number } = {}): number {
+  let total = 0n;
+  for (const t of projects) {
+    const interest = expectedInterest({ principal: t.principal, interestRate: t.interestRateBps * 10, ...loanScheduleFromTerms(t) });
+    total += toMicro(defaultCoverDeposit({ principal: t.principal, interest }));
+  }
+  const withSlack = total + (total * BigInt(opts.slackBps ?? 1_000)) / 10_000n;
+  return Math.ceil(Number(fromMicro(withSlack)) / 1_000) * 1_000;
+}
+
 /** Who gets minted how much RLUSD by bootstrap (top-up targets, so re-runs mint nothing). */
 export function rlusdTopUpPlan(opts: { investorRlusd?: number; platformRlusd?: number; builderRlusd?: number } = {}): RlusdTarget[] {
   return [
     ...(["investor1", "investor2", "investor3"] as const).map((role) => ({ role, target: opts.investorRlusd ?? 50_000 })),
-    { role: "platform", target: opts.platformRlusd ?? 25_000 },
+    { role: "platform", target: opts.platformRlusd ?? DEFAULT_PLATFORM_RLUSD },
     { role: "builder", target: opts.builderRlusd ?? 1_000 },
+  ];
+}
+
+export interface CredentialGrant {
+  role: WalletRole;
+  type: CredentialType;
+}
+
+/**
+ * Roles that must NOT hold KYC_INVESTOR after bootstrap: investor3 is the demo's "uncredentialed investor" whose
+ * VaultDeposit into the private vault fails with tecNO_AUTH. Bootstrap deletes a stray KYC credential from them.
+ */
+export const NO_KYC_ROLES = ["investor3"] as const satisfies readonly WalletRole[];
+
+/**
+ * Credentials bootstrap issues (platform) and accepts (subject), idempotently: KYC_INVESTOR for investor1/2 (not
+ * investor3), VERIFIED_INSPECTOR for inspector1..3. VERIFIED_BUILDER is earned through project verification, so only
+ * with `preVerifyBuilder` (prestage).
+ */
+export function credentialPlan(opts: { preVerifyBuilder?: boolean } = {}): CredentialGrant[] {
+  return [
+    { role: "investor1", type: "KYC_INVESTOR" },
+    { role: "investor2", type: "KYC_INVESTOR" },
+    ...(["inspector1", "inspector2", "inspector3"] as const).map((role) => ({ role, type: "VERIFIED_INSPECTOR" as const })),
+    ...(opts.preVerifyBuilder ? [{ role: "builder" as const, type: "VERIFIED_BUILDER" as const }] : []),
   ];
 }
 

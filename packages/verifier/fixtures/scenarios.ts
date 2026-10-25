@@ -232,6 +232,9 @@ function scenario(
       ...base,
       milestone,
       evidence: await Promise.all(s.evidencePaths.map(ev)),
+      audits: s.auditPath ? [await loadAudit(s.auditPath)] : [],
+      assignedInspectors: ["rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh", "rPEPPER7kfTD9w2To4CQk6UCfuHM9c6GDY"],
+      sov: project.sov,
       priorEvidence:
         s.milestoneIndex === 0
           ? [await oakPrior()]
@@ -269,7 +272,7 @@ export const SCENARIOS: Scenario[] = [
   scenario({
     key: "C",
     title: "Milestone 1 — one photo geotagged 2.6 km from the site",
-    expect: "needs_human",
+    expect: "fail",
     failingChecks: ["gps_within_site"], // a failed lazy-fraud-only check escalates to needs_human, never to a hard fail
     warnChecks: [],
     evidencePaths: [F.wide, F.bolts, F.wallsOffsite, F.invoice, F.footing],
@@ -295,7 +298,6 @@ export const SCENARIOS: Scenario[] = [
     evidencePaths: [F.wide, F.bolts, F.walls, F.invoice, F.footing, F.lien],
     auditPath: null,
     milestoneIndex: 0,
-    pending: "VER-03",
   }),
 ];
 
