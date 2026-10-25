@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { canonicalJson } from "../hash.ts";
 import { sha256Hex } from "../meta.ts";
+import { resolveProvider } from "../config.ts";
 import { LlmMilestoneOutput, type MilestoneJudgeInput } from "./types.ts";
 
 export function reviewCacheKey(input: MilestoneJudgeInput, model: string, promptVersion: string): string {
@@ -10,7 +11,7 @@ export function reviewCacheKey(input: MilestoneJudgeInput, model: string, prompt
     id: l.evidence.id, filename: l.evidence.filename, kind: l.evidence.kind, mimeType: l.evidence.mimeType,
     sha256: l.bytes ? sha256Hex(l.bytes) : null, meta: l.meta, text: l.text,
   }));
-  return createHash("sha256").update(canonicalJson({ promptVersion, model, ctx: input.ctx, timeline: input.timeline, audits: input.audits ?? [], files })).digest("hex");
+  return createHash("sha256").update(canonicalJson({ provider: resolveProvider(), promptVersion, model, ctx: input.ctx, timeline: input.timeline, audits: input.audits ?? [], files })).digest("hex");
 }
 export async function readReviewCache(directory: string | false, key: string): Promise<{ out: LlmMilestoneOutput; model: string } | undefined> {
   if (!directory) return;
