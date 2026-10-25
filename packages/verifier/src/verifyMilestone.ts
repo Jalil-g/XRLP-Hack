@@ -2,6 +2,7 @@ import { CheckResult, MILESTONE_CHECKS as REQUIRED_SUITE, ReleasePolicy, Verdict
 import {
   checkGpsWithinSite,
   checkInvoiceMatchesBudget,
+  checkLienWaiverPresent,
   checkLienWaivers,
   checkNoDuplicatePhoto,
   checkPhotoFresh,
@@ -69,6 +70,16 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
   policy.thresholds.minLlmConfidence = policy.minConfidence = Math.max(policy.minConfidence, release.minConfidence);
 
   const loaded = await Promise.all(input.evidence.map((ev) => loadEvidence(ev, { files: input.files, dataDir: input.dataDir })));
+  const previousMilestone = project.milestones
+    .filter((candidate) => candidate.index < milestone.index)
+    .sort((a, b) => b.index - a.index)[0];
+  const previousInvoiceRecords = previousMilestone
+    ? prior.filter((record) => record.projectId === project.id
+      && record.milestoneId === previousMilestone.id
+      && record.evidence.kind === "invoice")
+    : [];
+  const previousInvoices = await Promise.all(previousInvoiceRecords.map((record) =>
+    loadEvidence(record.evidence, { files: input.files, dataDir: input.dataDir })));
   const photos = loaded.filter((l) => l.evidence.kind === "photo" && l.bytes);
   const documents = loaded.filter((l) => (l.evidence.kind === "invoice" || l.evidence.kind === "document") && l.bytes);
   const inspectorPhotos = await Promise.all((input.audits ?? []).flatMap((audit) => audit.photos).map((ev) => loadEvidence(ev, { files: input.files, dataDir: input.dataDir })));
@@ -95,7 +106,8 @@ export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts:
     checkPhotoFresh(loaded, timeline, policy),
     checkNoDuplicatePhoto(ctx, loaded, prior, policy),
     checkInvoiceMatchesBudget(ctx, loaded, policy, judgement.invoiceTotals),
-    checkLienWaivers(loaded),
+    checkLienWaiverPresent(loaded, previousInvoices, { previousRequired: !!previousMilestone }),
+    checkLienWaivers(loaded, previousInvoices),
     ...checkInspectorAudits(input, loaded, policy.requiredInspectors),
     judgement.stage,
     judgement.documents,
@@ -128,7 +140,7 @@ interface Decided {
 /** Map check outcomes through the policy: deterministic fails decide; low LLM confidence -> human. */
 export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, release: ReleasePolicy = {
   riskTier: policy.riskTier, requiredChecks: [...REQUIRED_SUITE, "evidence_readable"],
-  optionalChecks: ["lien_waiver_matches_invoices"], minConfidence: policy.minConfidence,
+  optionalChecks: ["lien_waiver_present", "lien_waiver_matches_invoices"], minConfidence: policy.minConfidence,
   requiredAudits: policy.requiredInspectors,
 }): Decided {
   const complete = [...outcomes];

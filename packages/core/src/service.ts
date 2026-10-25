@@ -38,7 +38,7 @@ import { z } from "zod";
 import type { AuditReportInput, CoreApi, DemoParty, EvidenceUpload, KeeperIssue, KeeperTickResult, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
-import { DomainError } from "./errors.ts";
+import { DomainError, ledgerErrorCode } from "./errors.ts";
 import { canonicalJson, fakeAddress, newId, sha256Hex, slugify } from "./ids.ts";
 import { redemptionShares, fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
 import { PLATFORM_SCOPE } from "./ports.ts";
@@ -148,6 +148,8 @@ class KeyedMutex {
 }
 
 const OPEN_PROJECT: readonly ProjectStatus[] = ["escrowed", "repaying", "stalled"];
+/** Investor.kycCredentialTx when the ledger already held an accepted KYC_INVESTOR (no tx this time). */
+export const KYC_ALREADY_ON_LEDGER = "already-accepted";
 
 // ---------- service ----------
 
@@ -190,8 +192,7 @@ export class CoreService implements CoreApi {
     } catch (e) {
       if (e instanceof DomainError) throw e;
       if (e instanceof LedgerError) {
-        const code = e.code === "too_soon" ? "TOO_SOON" : e.code === "unsafe_release" ? "UNSAFE_RELEASE" : "LEDGER_ERROR";
-        throw new DomainError(code, `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
+        throw new DomainError(ledgerErrorCode(e), `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
       }
       throw new DomainError("LEDGER_ERROR", `${what} failed: ${(e as Error).message}`, e);
     }
@@ -311,7 +312,8 @@ export class CoreService implements CoreApi {
     return this.store.write((db) => {
       let inv = db.investors.find((i) => i.address === addr);
       if (!inv) db.investors.push((inv = { address: addr, name: name ?? `Investor ${addr.slice(0, 6)}`, createdAt: this.nowIso() }));
-      inv.kycCredentialTx = txs[0]?.hash;
+      // [] = already issued + accepted on-ledger (devnet adapter: nothing submitted); still KYC'd.
+      inv.kycCredentialTx = txs[0]?.hash ?? inv.kycCredentialTx ?? KYC_ALREADY_ON_LEDGER;
       db.chainEvents.push(...events);
       return { events };
     });
@@ -697,6 +699,9 @@ export class CoreService implements CoreApi {
     id: string,
     mid: string,
     body: { report: AuditReportInput; photos: StoredFile[]; signedTxBlob?: string },
+    /** In-process callers only (never reachable over HTTP): `platformSignedReason` lets a devnet core accept an unsigned
+     *  audit, attested by the platform "signed-for" the inspector, e.g. the CORE-07 prestage import. Logged. */
+    internal?: { platformSignedReason?: string },
   ): Promise<{ milestone: Milestone; audit: InspectorAudit; events: ChainEvent[] }> {
     return this.locks.run(id, async () => {
       const { p, m, round, assigned, bundleHash } = await this.read((db) => {
@@ -744,7 +749,9 @@ export class CoreService implements CoreApi {
           throw new DomainError("VALIDATION", "Signed audit does not match the assigned inspector, project, report and uploaded photos");
         }
       } else if (this.ledger.mode !== "fake") {
-        throw new DomainError("FORBIDDEN", "A signed inspector audit is required outside fake demo mode");
+        const why = internal?.platformSignedReason?.trim();
+        if (!why) throw new DomainError("FORBIDDEN", "A signed inspector audit is required outside fake demo mode");
+        console.warn(`[core] platform-signed audit for ${inspector} on ${id}/${mid} (${this.ledger.mode}): ${why}`);
       }
       // Inspector-app-signed attestation when provided; otherwise core submits it with the demo key (disclosed).
       const tx = body.signedTxBlob
@@ -752,7 +759,7 @@ export class CoreService implements CoreApi {
         : await this.attest(
             "platform",
             p.chain.spv!,
-            { v: 1, kind: "audit", milestoneId: mid, hash: auditHash, reason: `signed-for ${inspector}` },
+            { v: 1, kind: "audit", milestoneId: mid, hash: auditHash, reason: `signed-for ${inspector}${internal?.platformSignedReason ? ` (${internal.platformSignedReason.trim()})` : ""}` },
             "attest audit",
           );
       const audit: InspectorAudit = { ...unsigned, txHash: tx.hash };

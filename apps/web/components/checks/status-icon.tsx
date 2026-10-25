@@ -18,4 +18,4 @@ export function StatusIcon({ state, className }: { state: RowState; className?: 
 }
 
 /** Shared row grid so check, audit and verdict rows align: icon · name · detail · proof. */
-export const ROW_GRID = "grid grid-cols-[18px_250px_minmax(0,1fr)_auto] items-start gap-x-3 px-5 py-2.5";
+export const ROW_GRID = "check-row items-start gap-x-3 gap-y-1 px-4 py-3 sm:px-5";

@@ -1,5 +1,12 @@
 # Decisions log
 
+## Shared frontend polish — 2026-10-25
+
+- User authorized a consistent Apple/Notion-style polish of both `apps/web` and `apps/inspector`. Both consume `apps/styles/drawproof.css`; inspector compatibility aliases preserve existing component APIs. No domain contracts or signing algorithms change.
+- Match the white canvas, system type, restrained blue actions, status labels, solid header, account menu, responsive gutters, focus states, and reduced motion. App-specific data access stays separate.
+- Require a review before deposits, other payments, audit signatures, and site-visit signatures. Evidence uploads use a short choose/review/submit sequence. Preserve drafts on Back, prevent repeated submission, and retain inspector evidence-version validation.
+- The demo control room follows the primary 100-second recording story. Ledger-condition rejection and stall/refund tools remain available under an extended walkthrough disclosure, outside the timed pitch.
+
 ## Adopted presentation decision — 2026-10-25
 
 User confirmed one three-minute total slot, Apple/Notion simplicity, guided flows with review before signing/paying, and a prerecorded demo. The authoritative plan is [08-pitch-storyline.md](08-pitch-storyline.md): six slides, 8/22/15/15/100/10 seconds, 170 seconds content plus 10 seconds reserve. The demo shows one release and one failed hold. Slide 3 states AI/inspector/XRPL responsibilities; slide 6 closes with fees, one construction-lending pilot ask, and thanks.
@@ -87,6 +94,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   still enabled. (6) `resumeEscrowCreation({ project, ... })` requires `builderAddress` and waits one LLS margin by default.
   (7) In-repo `WALLETS_FILE` / `DATA_DIR` must be git-ignored; the wallet store is written atomically, 0600. (8) Validation
   errors never echo a would-be condition. Deferred with reasons in the review doc; core items in the linked issue. (Jalil's agent, security review)
+- [10-25] **Pipelined submission (XRPL-17) is opt-in**: `XRPL_PIPELINE=1` or `setSubmitMode("pipelined", { window })`, window 5 (max 10 = rippled's per-account TxQ cap); the default stays XRPL-12's lock-through-validation. Pipelined, the account lock covers only autofill → sign → submit, `Sequence` comes from a local counter (advanced only when the server took the blob), and up to 5 txs per account wait for validation together. `tefPAST_SEQ` / `terPRE_SEQ` / a tx that died unapplied → stop issuing, let every in-flight tx settle, re-read the Sequence, re-sign only the provably dead txs (never one that may still apply); tec/tem are never retried. **"Dead" is proven from account state** (Sequence at the LastLedgerSequence ledger ≤ S, or `account_tx` shows another tx used S), not from `tx` + `searched_all`: devnet answers `validated: false` forever for a blob it has seen (protocol notes §0a). A `tel*` blob counts as sent, because rippled may hold and retry it. Explicit `withAccountLock` sections, `submitBlob` (pre-signed), Batch and own-`Sequence` txs keep locked semantics (they first wait for the window to drain), so loan.ts / batch.ts / api.ts did not change. Devnet: 20 Payments from one account ~108 s locked → 22–27 s pipelined (3.9–5.0×, 6–7 consecutive ledgers); multisig, a foreign writer stealing a Sequence, and a held blob proven dead are each 20/20 or 1/1. Prestage and the CLI demo don't get faster: each step awaits the previous one, and ~1 ledger per tx is validation (`prestage --only A`: 123 s locked, 123 s pipelined, 132 s locked). So it pays off for concurrent same-account submits (core serving several platform-signed requests), and flipping it on is core's call. Why opt-in: a new concurrency engine should not silently change the demo path. **Open (locked mode, unchanged here):** `submitReliably` still proves death via `searched_all`, so it can wait forever on a seen-but-never-validated blob, and it doesn't track `tel*` blobs; same fix as the pipelined engine, see #166 (Jalil's agent, XRPL-17)
 
 ## Inspector presentation controls (INS-08)
 
@@ -128,6 +136,12 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   blob leaves. No key → the audit is filed unsigned and core signs with the demo key (05-api §1), labelled as such in the UI.
   Seeds are never put in `NEXT_PUBLIC_*` env (they would ship in the JS bundle). Autofill uses `XRPL_WS_URL`, `LastLedgerSequence` +75.
 - [10-25] `@xrlp/attest-signer` tests run with `node --import tsx` (like core/verifier) because the parity test imports `@xrlp/xrpl`.
+- [10-25] CORE-05 (Jalil's agent, in Sean's core lane): `LEDGER_MODE=devnet` → `XrplLedgerAdapter`; core's demo parties map to the
+  `WALLETS_FILE` roles (`packages/core/src/adapters/devnet-identities.ts`), route 21 seed on devnet = participants only.
+  `VERIFIER_MODE=mock` keeps core's `FakeVerifier` (the verifier package's `verifyProject` needs registry/history inputs core does not
+  supply yet), fed with metadata extracted from uploaded bytes on devnet; `VERIFIER_MODE=live` / `CORE_VERIFIER=verifier` → `ClaudeVerifierAdapter`.
+  Devnet cover = 11% of principal (ledger minimum is 10% of principal + interest). A self-addressed attestation (platform → platform,
+  e.g. inspector assignment before an SPV exists) is a memo-only `AccountSet`: a Payment to yourself is `temREDUNDANT`.
 - [10-25] Submission package `docs/submission/` cites only tx hashes already published in our docs or PR bodies: the v2 proof (#126) first,
   then Batch from protocol-notes §2d / §2e, LoanManage from §3c, the CLI demo's batch close from `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`,
   and the platform try-steal / inspector-app signer / adapter private vault from #125 / #128 / #121.

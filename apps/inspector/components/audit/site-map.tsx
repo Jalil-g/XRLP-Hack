@@ -53,7 +53,7 @@ export function SiteMap({ site, pins }: { site: SiteGeo; pins: MapPin[] }) {
           </g>
         ))}
       </svg>
-      <figcaption className="flex flex-wrap gap-3 text-[11px] text-muted">
+      <figcaption className="flex flex-wrap gap-3 text-caption text-muted">
         <span className="flex items-center gap-1">
           <span className="size-2 rounded-full border border-dashed border-brand bg-brand-50" /> Site ({site.radiusM} m)
         </span>

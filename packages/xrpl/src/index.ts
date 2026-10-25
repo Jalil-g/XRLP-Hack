@@ -67,7 +67,7 @@ export type { BatchOutcome, InnerLookup, CreateEscrowsAtomicParams, CreateEscrow
 // Low-level building blocks
 export { getClient, disconnect, ledgerTime, waitForLedgerTimeAfter, signAndSubmit, submitBlob, XrplTxError } from "./client.ts";
 export type { TxResult } from "./client.ts";
-export { config, RLUSD_CURRENCY } from "./config.ts";
+export { assertNotMainnet, config, REPO_ROOT, RLUSD_CURRENCY } from "./config.ts";
 export { loadWallets, resolveWallet, WALLET_ROLES } from "./wallets.ts";
 export { RLUSD_HOLDERS, LEGACY_ROLE_RENAMES, migrateWalletFile, rlusdTopUpPlan } from "./wallets.ts";
 export type { WalletRole, DemoWallets } from "./wallets.ts";
@@ -130,6 +130,8 @@ export {
   decodeAttestMemo,
   decodeAnyAttestation,
   buildAttestTx,
+  buildSelfAttestTx,
+  attestTxFor,
   prepareAttestTx,
   verifyAttestBlob,
 } from "./attest.ts";
@@ -167,6 +169,19 @@ export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErr
 export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
 export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
 export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
+// Pipelined submission (XRPL-17, opt-in: XRPL_PIPELINE=1 or setSubmitMode("pipelined", { window }))
+export {
+  setSubmitMode,
+  getSubmitMode,
+  resetSubmitMode,
+  submitModeFromEnv,
+  usePipeline,
+  pipelineState,
+  submitPipelined,
+  DEFAULT_PIPELINE_WINDOW,
+  MAX_PIPELINE_WINDOW,
+} from "./submit.ts";
+export type { SubmitMode, SubmitModeName, PipelineIo, PipelineEvent, PipelinePolicy, PipelineRequest, PipelineState } from "./submit.ts";
 // Shared v2 alignment (#53): LedgerError conversion for the LedgerPort adapter, shared EscrowSnapshot read,
 // ledger-pinned fetch primitives (used by preflight).
 export { toLedgerError, withLedgerErrors } from "./errors.ts";

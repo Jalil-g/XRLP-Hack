@@ -6,7 +6,7 @@
 //   MemoData = JSON { v:1, kind: "audit"|"verdict"|"decision"|"release", milestoneId, hash, decision?, reason? }.
 // v1 memo (`xrlp/attestation/v1`, AttestationPayload) is still written by api.ts attestApproval and decoded here.
 import { createHash } from "node:crypto";
-import { convertHexToString, convertStringToHex, decode, verifySignature, type Payment, type Wallet } from "xrpl";
+import { convertHexToString, convertStringToHex, decode, verifySignature, type AccountSet, type Payment, type Wallet } from "xrpl";
 import type { AttestMemo } from "@xrlp/shared";
 import { getClient, signAndSubmit, submitBlob, type TxResult } from "./client.ts";
 
@@ -96,9 +96,23 @@ export async function prepareAttestTx(p: { account: string; spv: string; memo: A
   return client.autofill(buildAttestTx(p));
 }
 
+/**
+ * Attestation whose destination is the attester itself (core attests platform-scope records, e.g. the inspector
+ * assignment, as the platform to the platform address before an SPV exists): a 1-drop Payment to yourself is
+ * temREDUNDANT, so the memo rides on a no-op AccountSet instead. Same memo, same signer, still in the account's history.
+ */
+export function buildSelfAttestTx(p: { account: string; memo: AttestMemo }): AccountSet {
+  return { TransactionType: "AccountSet", Account: p.account, Memos: encodeAttestMemo(p.memo) };
+}
+
+/** The attestation tx core's held keys submit: Payment to `spv`, or the self-attest AccountSet when spv == account. */
+export function attestTxFor(p: { account: string; spv: string; memo: AttestMemo }): Payment | AccountSet {
+  return p.spv === p.account ? buildSelfAttestTx(p) : buildAttestTx(p);
+}
+
 /** Sign with a held key and submit. */
 export async function submitAttest(signer: Wallet, spv: string, memo: AttestMemo): Promise<TxResult> {
-  return signAndSubmit(signer, buildAttestTx({ account: signer.classicAddress, spv, memo }));
+  return signAndSubmit(signer, attestTxFor({ account: signer.classicAddress, spv, memo }));
 }
 
 export interface VerifiedAttestBlob {

@@ -102,7 +102,7 @@ export default async function VerificationPage({ params }: Props) {
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-6 rounded-panel bg-band px-6 py-5">
           <p className="max-w-[60ch] text-small text-ink-2">No verification yet. The builder pays the fee, then the AI runs the report.</p>
-          {p.status === "draft" && <ActionButton action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>Pay 250 RLUSD</ActionButton>}
+          {p.status === "draft" && <ActionButton context={p.name} action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>Pay 250 RLUSD</ActionButton>}
           {p.status === "verifying" && <ActionButton action={{ kind: "verifyProject", projectId: p.id }}>Run verification</ActionButton>}
         </div>
       )}

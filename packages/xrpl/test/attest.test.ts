@@ -5,6 +5,7 @@ import { convertStringToHex, decode, encode, hashes, Wallet } from "xrpl";
 import {
   ATTEST_MEMO_TYPE,
   ATTESTATION_MEMO_TYPE,
+  attestTxFor,
   buildAttestTx,
   decodeAnyAttestation,
   decodeAttestMemo,
@@ -88,6 +89,20 @@ test("verifyAttestBlob: accepts a signed attestation, rejects anything else", ()
   // tampered memo after signing -> bad signature
   const tampered = encode({ ...decode(good), Memos: encodeAttestMemo({ ...memo, milestoneId: "m2" }) } as never);
   assert.throws(() => verifyAttestBlob(tampered), /signature/);
+});
+
+test("attestTxFor: Payment to the SPV, memo-only AccountSet when attesting to yourself (Payment to self = temREDUNDANT)", () => {
+  const w = Wallet.generate();
+  const memo: AttestMemo = { v: 1, kind: "decision", milestoneId: "p1:assignment", hash: H, decision: "assign", reason: "rInspector" };
+  const pay = attestTxFor({ account: w.classicAddress, spv: SPV, memo }) as unknown as Record<string, unknown>;
+  assert.deepEqual([pay.TransactionType, pay.Destination, pay.Amount], ["Payment", SPV, "1"]);
+  const self = attestTxFor({ account: w.classicAddress, spv: w.classicAddress, memo }) as unknown as Record<string, unknown>;
+  assert.equal(self.TransactionType, "AccountSet");
+  assert.equal(self.Account, w.classicAddress);
+  for (const k of ["Destination", "Amount", "SetFlag", "ClearFlag", "Flags"]) assert.equal(self[k], undefined, k);
+  assert.deepEqual(decodeAttestMemo(self as never), memo);
+  // signs + encodes as a valid tx
+  assert.equal((decode(signed(w, self)) as { TransactionType: string }).TransactionType, "AccountSet");
 });
 
 test("credential type hex + private vault flags", () => {
