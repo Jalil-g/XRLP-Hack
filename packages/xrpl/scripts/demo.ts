@@ -192,7 +192,7 @@ async function main() {
   const verdictHash = sha256Hex(JSON.stringify(fakeVerdict));
   for (const [role, signer, notes] of [
     ["ai_agent", "aiAgent", "evidence checks passed"],
-    ["inspector", "inspectorA", "site visit OK"],
+    ["inspector", "inspector1", "site visit OK"],
     ["platform", "platform", "policy satisfied"],
   ] as const) {
     const a = await attestApproval({ projectId, spv: setup.spv, milestoneId: m1.id, role, signer, decision: "approve", notes, verdictHash, condition: e1.escrow.condition });
