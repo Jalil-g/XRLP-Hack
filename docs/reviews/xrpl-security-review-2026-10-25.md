@@ -18,6 +18,7 @@ Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regressio
 | H1 | High | Retry engine loses track of a maybe-sent blob after a same-Sequence re-sign, then signs a fresh Sequence → **one intent applies twice** (reproduced offline) | fixed |
 | H2 | High | An unknown outcome (blob maybe in flight) is thrown as `retriable: true` at the attempt limit, and lookup errors escape unlabeled → `finishEscrow` rebuilds a second finish, resume treats it as "definite" | fixed |
 | H3 | High | `finishEscrow` re-signs EscrowFinish **with the real fulfillment inside the retry engine without re-running preflight**, with a fresh 60-ledger LastLedgerSequence | fixed |
+| H1b | High | (2nd pass) rippled **holds** a locally submitted blob whose provisional result is `ter*`/`tel*`/`tef*` and re-applies it later (devnet-proven), so "tel = not applied" was false: a held `telINSUF_FEE_P` blob + a fresh-Sequence re-sign = double apply; a pre-signed blob already applied reported `retriable` | fixed: `fail_hard` on every submit + own-hash lookup on `tefPAST_SEQ` |
 | M1 | Medium | Mainnet guard is a URL denylist: `wss://xrpl.ws`, `wss://s2-clio.ripple.com`, testnet, `XRPL_NETWORK=Mainnet` all pass; no check of the connected network | fixed |
 | M2 | Medium | Condition validation errors echo up to 90 chars of the raw input: a fulfillment or raw preimage passed as a condition is printed in `CloseValidationError` (core returns it over HTTP) | fixed |
 | M3 | Medium | Submit errors keep xrpl.js's raw error as `cause`; its message / `data.request.tx_blob` hold the signed EscrowFinish (fulfillment); core's 5xx handler `console.error`s the whole chain | fixed |
@@ -26,10 +27,13 @@ Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regressio
 | M6 | Medium | Nothing stops the AI / releaseService / issuer key from becoming an SPV signer (`inspectors[0]` from core is only checked for distinctness); quorum selection would pick the AI key if it were listed | fixed |
 | M7 | Medium | Wallet store write is not atomic (core's per-call `loadWallets()` can read a torn file; a crash mid-write truncates every seed) and `mode: 0o600` only applies to new files | fixed (atomic + chmod); cross-process lost update deferred |
 | M8 | Medium | `resumeEscrowCreation({ project, ... })` (the after-restart form) assumes nothing is in flight and defaults the escrow destination to the demo builder | fixed |
+| M9 | Medium | (2nd pass) `waitFinal` can wait forever, holding the account lock: past LastLedgerSequence a cached "known, not validated" answer is neither proof nor counted, and a stalled network never trips a deadline | fixed |
 | L1 | Low | `XRPL_LLS_MARGIN` / `lastLedgerMargin` unvalidated: > ~999 makes the "provably expired" lookup skip the ledgers the tx could be in (→ false expiry → re-sign); `NaN` breaks every tx | fixed |
 | L2 | Low | `WALLETS_FILE` / `DATA_DIR` accept any in-repo path; `.gitignore` only covers `.data/` and files named exactly `wallets.json`, so `WALLETS_FILE=wallets.bri.json` writes seeds to a tracked path of a PUBLIC repo | fixed |
 | L3 | Low | `closeLoanAndCreateEscrows` doesn't check the SPV master key is disabled before LoanSet (multisig path) | fixed |
 | L4 | Low | `setupProjectOnChain` funds + locks a new SPV before checking `subscriptionEndsAt` is in the future | fixed |
+| L10 | Low | (2nd pass) a failed reconnect escapes the engine as a raw error (no engine result, no hash) | fixed |
+| L11 | Low | (2nd pass) `connection_lost` named only the current blob, not an older same-Sequence one that may be the one applying | fixed |
 | L5 | Low | Pre-reveal timing is a heuristic (≤ 5 s/ledger) + inherent TOCTOU between the validated-ledger read and apply (builder DepositAuth / trust-line removal, issuer freeze) | deferred (documented) |
 | L6 | Low | `planLoanClose` allows milestones summing to less than principal; the remainder stays liquid in the SPV | deferred (core enforces sum == principal, `service.ts:433`) |
 | L7 | Low | Adapter `repayLoan({source:"builder"})` is two txs and not idempotent: a retry after a failed/unknown LoanPay pays the builder's RLUSD into the SPV again | issue #149 (core must not blind-retry) |
@@ -60,6 +64,34 @@ Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regressio
   error, and before throwing a "definite" refusal, wait for every live blob of the intent to validate or provably expire;
   a validated one decides the result. Same-Sequence re-signs stay (mutually exclusive by Sequence).
 - **Test:** `test/submit.test.ts` "maybe-sent blob superseded by a same-Sequence re-sign …" (Sequence-aware fake).
+
+### H1b · Held blobs: "tel = not applied" was false without `fail_hard` (independent 2nd review pass)
+
+- **Where:** `src/client.ts:89-92` (`submit` without `fail_hard`), `src/submit.ts:8` (the rule), `:236-249` (`tefPAST_SEQ` → fresh Sequence).
+- **Proof (devnet, `pnpm --filter @xrlp/xrpl spike:fail-hard`, fresh faucet wallets):** a Payment submitted with a Sequence gap
+  answers `terPRE_SEQ`; after the gap is filled it **applies on its own**
+  ([FAD0CB8C…](https://devnet.xrpl.org/transactions/FAD0CB8CA441DDFF9DEACE8D3C077C682CDA4C25FC4877AB201ACD6A361B99CE), validated
+  `tesSUCCESS`): rippled held it and retried it at the next ledgers (`NetworkOPs::apply` holds `ter*`/`tel*`/`tef*` except
+  `tefPAST_SEQ` for local submissions, and LocalTxs re-applies them until LastLedgerSequence). The same with `fail_hard: true`:
+  never applied ([CB12CC69…](https://devnet.xrpl.org/transactions/CB12CC69D93869115EB754F32A9C77E03220EE6E8F55424000A3069576C079A9),
+  "known, not validated").
+- **Scenario:** A answers `telINSUF_FEE_P` (fee escalation) and is held; the same-Sequence re-sign R1 later meets `tefPAST_SEQ`
+  because held A applied; `live` doesn't know A, so a fresh-Sequence R2 is signed and applies too. Pre-signed: A held, applies,
+  resubmit answers `tefPAST_SEQ` → `retriable: true` though A applied (a `finishEscrow` would then rebuild, or report
+  `preflight_refused_after_submit` for a finish that paid the builder).
+- **Fix:** every `submit` carries `fail_hard: true` (`submitRequest`), so a provisional refusal is final at that server, which
+  is what the classification assumes; on `tefPAST_SEQ` the engine first looks up the blob's own hash (an earlier call, or an
+  old server, may have applied it) and waits for / returns it.
+- **Tests:** `test/submit.test.ts` "H1b: …" (fail_hard on the request; `tefPAST_SEQ` on an applied blob → its result).
+
+### M9, L10, L11 · Waits and connection handling (independent 2nd review pass)
+
+- **M9** (`src/submit.ts:183-207`, `waitFinal`): past LastLedgerSequence a "known, not validated" lookup (rippled serves never-included txs
+  from its cache: also seen in the fail_hard proof) is now bounded like incomplete history → `unknown_outcome`; and no new
+  validated ledger for `maxWaitMs` → `unknown_outcome`. The pre-fix engine never returns in either case (its test hangs).
+- **L10** (`src/submit.ts:177-180`, `onConnError`): a reconnect that throws counts as a connection error; past the budget → `connection_lost` with hashes.
+- **L11**: `connection_lost` lists every unsettled hash of the intent (`check A, B1`), not just the current one.
+- **Tests:** `test/submit.test.ts` "finding 2: …", "findings 3+4: …" (the last two also fail on the pre-fix engine).
 
 ### H2 · Unknown outcome reported as `retriable: true` / unlabeled
 
@@ -248,10 +280,14 @@ Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regressio
 
 ## Verification of the fixes (2026-10-25)
 
-- Offline: `pnpm --filter @xrlp/xrpl test` 228/228 (198 before; +30 regression tests across `submit`, `finish` (new),
-  `config` (new), `condition`, `loan-close`, `spv`, `adapter`, `wallets`, `close-batch`). The new H1/H2 engine tests fail
-  on the pre-fix engine and pass on the fixed one. `pnpm -r typecheck`, `pnpm -r test` green.
+- Offline: `pnpm --filter @xrlp/xrpl test` 233/233 (198 before; +35 regression tests across `submit`, `finish` (new),
+  `config` (new), `condition`, `loan-close`, `spv`, `adapter`, `wallets`, `close-batch`). The new engine tests fail (or, for
+  M9, never return) on the pre-fix engine and pass on the fixed one. `pnpm -r typecheck`, `pnpm -r test` green.
+- An independent second reviewer read the engine + finish changes against the invariants and found H1b, M9, L10, L11
+  (fixed above); it confirmed `settle()` can't return the wrong blob's result, the finish lock re-entrancy, invariant 3
+  (every fulfillment-carrying blob is signed right after its own preflight) and the redaction.
 - Devnet (rippled 3.4.1, `network_id` 2 checked live by the new guard):
+  - `spike:fail-hard` (new, fresh faucet wallets): the H1b proof above (held `terPRE_SEQ` tx applies without `fail_hard`, never with it).
   - `spike:escrow` (fresh faucet wallets): finish by releaseService through the new pre-signed path, Fee 36 drops
     ([02CA064B…](https://devnet.xrpl.org/transactions/02CA064BC57B402E280D106C0E57DA7104732717CBC863E9D0241A3DC98C0001)); wrong
     fulfillment `tecCRYPTOCONDITION_ERROR` then the right one ([BE3512BD…](https://devnet.xrpl.org/transactions/BE3512BD7EFDEE97DA13419066D323EE17DCEAFF2291BBCC4223311AC88501AA));
