@@ -214,6 +214,21 @@ lacks bedrock-mantle:CreateInference. The standard model-catalog read also retur
 succeeded and the full live eval was not run. An AWS administrator must grant the session suitable
 model inference permissions; there is no code-side bypass. VER-10 remains pending live acceptance.
 
+## Amazon Nova provider (VER-14)
+
+VERIFIER_PROVIDER=nova calls Amazon Nova through the Bedrock Converse API
+(https://bedrock-runtime.<region>.amazonaws.com/model/<id>/converse) with the same AWS_REGION and
+AWS_BEARER_TOKEN_BEDROCK as the bedrock provider; no AWS SDK dependency. The default model is the
+global inference profile global.amazon.nova-2-lite-v1:0, used unless VERIFIER_MODEL names a Nova model.
+llm/converse.ts translates the Anthropic-shaped content (images, PDFs, text documents) that live.ts and
+project.ts already build, and gets structured output from one forced tool call validated with the same
+zod schemas. Prompts, 20s deadlines, zero retries, the review cache (keyed by provider) and verdict logic
+are unchanged. Use it when the AWS account has no Claude model access.
+
+Live check (10-25, us-east-2): pnpm eval --mode live matched 14/14 scenarios on Nova 2 Lite (one run,
+2-5s per milestone). Live stability still requires 3 uncached matches per scenario. Nova 2 Lite is a
+small model; judge its photo and invoice reasoning before relying on it on stage.
+
 ## Environment
 
 VERIFIER_MODE=mock|live; ANTHROPIC_API_KEY for live only; VERIFIER_MODEL overrides the configured

@@ -1,4 +1,4 @@
-// VERIFIER_MODE=live: Claude vision + document reading with structured (zod-validated) output.
+// VERIFIER_MODE=live: Claude (or Nova via Converse) vision + document reading with structured (zod-validated) output.
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import sharp from "sharp";
@@ -8,6 +8,8 @@ import { isImage, isTextLike } from "../meta.ts";
 import { withDeadline } from "../deadline.ts";
 import { readReviewCache, reviewCacheKey, writeReviewCache } from "./cache.ts";
 import { createLiveClient } from "./client.ts";
+import { ConverseError, converseParse } from "./converse.ts";
+import { resolveProvider } from "../config.ts";
 import {
   LlmMilestoneOutput,
   unavailableJudgement,
@@ -73,7 +75,8 @@ async function evidenceBlocks(l: LoadedEvidence): Promise<Anthropic.Beta.BetaCon
 export class LiveJudge implements MilestoneJudge {
   constructor(
     private readonly model: string,
-    private readonly client: Anthropic = createLiveClient(),
+    // undefined => VERIFIER_PROVIDER=nova, which calls Bedrock Converse instead of the Anthropic client.
+    private readonly client: Anthropic | undefined = resolveProvider() === "nova" ? undefined : createLiveClient(),
     private readonly options: { timeoutMs?: number; cacheDir?: string | false } = {},
   ) {}
 
@@ -114,14 +117,16 @@ export class LiveJudge implements MilestoneJudge {
 
     let parsed: LlmMilestoneOutput | null;
       const timeout = this.options.timeoutMs ?? 20_000;
-      const res = await withDeadline((signal) => this.client.beta.messages.parse({
+      const client = this.client;
+      const res = await withDeadline<{ stop_reason: string | null; parsed_output: LlmMilestoneOutput | null; model: string }>((signal) => client ? client.beta.messages.parse({
         model: this.model,
         max_tokens: 6000,
         // Opus 5.5: thinking is always adaptive; effort is the depth control (default medium).
         output_config: { effort: "high", format: betaZodOutputFormat(LlmMilestoneOutput) },
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content }],
-      }, { timeout, maxRetries: 0, signal }), timeout);
+      }, { timeout, maxRetries: 0, signal })
+        : converseParse({ model: this.model, system: SYSTEM_PROMPT, content, schema: LlmMilestoneOutput, maxTokens: 6000, signal }), timeout);
       if (res.stop_reason === "refusal") return unavailableJudgement("model declined to review", res.model, input);
       if (res.stop_reason === "max_tokens") return unavailableJudgement("model output truncated", res.model, input);
       if (res.stop_reason !== "end_turn") return unavailableJudgement("model review did not complete", res.model, input);
@@ -132,7 +137,8 @@ export class LiveJudge implements MilestoneJudge {
       return judgement;
     } catch (e) {
       const msg =
-        e instanceof Anthropic.AuthenticationError ? "provider credentials are invalid or missing"
+        e instanceof ConverseError ? (e.status === 401 || e.status === 403 ? "provider credentials are invalid or missing" : e.status === 429 ? "rate limited" : `API error ${e.status}`)
+        : e instanceof Anthropic.AuthenticationError ? "provider credentials are invalid or missing"
         : e instanceof Anthropic.RateLimitError ? "rate limited"
         : e instanceof Anthropic.APIError ? `API error ${e.status ?? "unknown"}`
         : "image processing, transport or structured review failed";

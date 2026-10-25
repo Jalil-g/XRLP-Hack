@@ -59,7 +59,7 @@ export function validateCoreEnv(env: Env): CoreEnvReport {
 
   const ledger = oneOf(env, "LEDGER_MODE", ["fake", "devnet"], "fake", problems);
   const vmode = oneOf(env, "VERIFIER_MODE", ["mock", "live"], "mock", problems);
-  const provider = oneOf(env, "VERIFIER_PROVIDER", ["anthropic", "bedrock"], "anthropic", problems);
+  const provider = oneOf(env, "VERIFIER_PROVIDER", ["anthropic", "bedrock", "nova"], "anthropic", problems);
   if (env.CORE_VERIFIER !== undefined) oneOf(env, "CORE_VERIFIER", ["fake", "verifier"], "fake", problems);
   const keeper = oneOf(env, "KEEPER", ["0", "1", "true", "false"], "0", problems);
 
@@ -78,7 +78,7 @@ export function validateCoreEnv(env: Env): CoreEnvReport {
   if (usesVerifier && vmode === "live") {
     if (provider === "anthropic" && isPlaceholder(env.ANTHROPIC_API_KEY))
       problems.push("VERIFIER_MODE=live with VERIFIER_PROVIDER=anthropic needs ANTHROPIC_API_KEY (set it in .env)");
-    if (provider === "bedrock" && !env.AWS_REGION) problems.push("VERIFIER_PROVIDER=bedrock needs AWS_REGION (and standard AWS credentials)");
+    if ((provider === "bedrock" || provider === "nova") && !env.AWS_REGION) problems.push(`VERIFIER_PROVIDER=${provider} needs AWS_REGION (and AWS_BEARER_TOKEN_BEDROCK)`);
   }
 
   if (ledger === "devnet") {
