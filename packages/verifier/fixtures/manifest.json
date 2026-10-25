@@ -51,7 +51,7 @@
         "evidence/maple-st/foundation/footing_inspection.txt"
       ],
       "audit": "evidence/maple-st/audits/foundation_offsite.json",
-      "expect": "needs_human",
+      "expect": "fail",
       "failingChecks": [
         "gps_within_site"
       ],

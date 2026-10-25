@@ -272,7 +272,7 @@ export const SCENARIOS: Scenario[] = [
   scenario({
     key: "C",
     title: "Milestone 1 — one photo geotagged 2.6 km from the site",
-    expect: "needs_human",
+    expect: "fail",
     failingChecks: ["gps_within_site"], // a failed lazy-fraud-only check escalates to needs_human, never to a hard fail
     warnChecks: [],
     evidencePaths: [F.wide, F.bolts, F.wallsOffsite, F.invoice, F.footing],

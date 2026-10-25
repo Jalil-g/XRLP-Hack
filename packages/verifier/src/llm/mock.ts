@@ -34,6 +34,12 @@ export class MockJudge implements MilestoneJudge {
       documents: this.documents(input),
       invoiceTotals: {},
       model: "mock",
+      audit: {
+        check: "audit_matches_evidence", source: "mock-llm", evidenceIds: [],
+        result: !input.audits?.length ? "warn" : input.audits.some((a) => a.checklist.some((line) => line.status === "not_done")) ? "fail" : input.audits.some((a) => a.checklist.some((line) => line.status === "partial")) ? "warn" : "pass",
+        confidence: input.audits?.length ? 0.9 : 0,
+        reason: "[mock] Checklist-based stand-in for audit/evidence agreement; no image or note interpretation was performed.",
+      },
     };
   }
 
