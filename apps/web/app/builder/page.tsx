@@ -7,8 +7,8 @@ import { ChecksPanel } from "@/components/checks/checks-panel";
 import { Empty, PageHeader, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
-import type { CheckResult, Milestone, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, checkLabel, sovLinesFor } from "@/lib/display";
+import type { Milestone, ProjectDetail } from "@/lib/contract";
+import { PROJECT_STATUS, sovLinesFor } from "@/lib/display";
 import { MAPLE_FIXTURE_SETS } from "@/lib/fixture-files";
 import { getSession } from "@/lib/session";
 import { formatAmount, toCents } from "@/lib/utils";
@@ -91,7 +91,17 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
       )}
       {p.status === "verified" && <p className="text-body text-ink-2">Verified. The platform locks terms and assigns your inspector next.</p>}
 
-      {d.verification && ["verifying", "verified", "rejected"].includes(p.status) && <VerificationReport v={d.verification} />}
+      {d.verification && (
+        <p className="mb-6 flex flex-wrap items-center gap-3 text-small">
+          <Tag tone={d.verification.decision === "pass" ? "pass" : d.verification.decision === "fail" ? "fail" : "review"}>
+            {d.verification.decision === "pass" ? "Verified" : d.verification.decision === "fail" ? "Rejected" : "Needs an inspector visit"}
+          </Tag>
+          <span className="text-ink-2">Identity, feasibility and capability checked</span>
+          <Link href={`/projects/${p.id}/verification`} className="text-link hover:underline">
+            Verification report
+          </Link>
+        </p>
+      )}
 
       {current && <CurrentMilestone d={d} m={current} />}
       <Payouts d={d} />
@@ -201,32 +211,6 @@ function NextStep({ title, body, action }: { title: string; body: string; action
         <p className="mt-1 text-small text-ink-2">{body}</p>
       </div>
       {action}
-    </div>
-  );
-}
-
-function VerificationReport({ v }: { v: NonNullable<ProjectDetail["verification"]> }) {
-  const groups: [string, CheckResult[]][] = [
-    ["Identity", v.identity],
-    ["Feasibility", v.feasibility],
-    ["Capability", v.capability],
-  ];
-  return (
-    <div className="mt-6 grid gap-8 md:grid-cols-3">
-      {groups.map(([name, checks]) => (
-        <div key={name}>
-          <h4 className="text-small font-semibold">{name}</h4>
-          <ul className="mt-2 space-y-2">
-            {checks.map((c) => (
-              <li key={c.check} className="text-small">
-                <span className={c.result === "pass" ? "text-pass" : c.result === "fail" ? "text-fail" : "text-review"}>{c.result === "pass" ? "Pass" : c.result === "fail" ? "Fail" : "Review"}</span>{" "}
-                <span className="font-medium">{checkLabel(c)}</span>
-                <span className="block text-caption text-ink-2">{c.reason}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
     </div>
   );
 }

@@ -189,6 +189,16 @@ export default async function ProjectPage({ params, searchParams }: Props) {
                 { label: "Credential", value: builder.verified ? <Val main={<span className="text-pass">VERIFIED_BUILDER</span>} note={builder.credentialTx ? <TxLink hash={builder.credentialTx} /> : undefined} /> : "Not verified" },
                 { label: "Licence", value: builder.licenseNumber },
                 { label: "Track record", value: `${builder.completedProjects} completed projects` },
+                {
+                  label: "Verification",
+                  value: d.verification ? (
+                    <Link href={`/projects/${p.id}/verification`} className="text-link hover:underline">
+                      Report: {d.verification.decision === "pass" ? "verified" : d.verification.decision === "fail" ? "rejected" : "needs a visit"}
+                    </Link>
+                  ) : (
+                    "Not verified yet"
+                  ),
+                },
               ]}
             />
           </Section>
