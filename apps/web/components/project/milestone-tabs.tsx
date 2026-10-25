@@ -14,7 +14,7 @@ export function MilestoneTabs({ milestones, selectedId }: { milestones: Mileston
         return (
           <Link
             key={m.id}
-            href={`?m=${encodeURIComponent(m.id)}`}
+            href={`?view=milestones&m=${encodeURIComponent(m.id)}`}
             scroll={false}
             aria-current={active ? "page" : undefined}
             className={cn(

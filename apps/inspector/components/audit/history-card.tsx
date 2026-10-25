@@ -38,7 +38,7 @@ export function AuditHistoryCard({ entry }: { entry: AuditHistoryEntry }) {
         </div>
 
         {verdictPredatesAudit && <p className="rounded-md bg-warn-bg p-3 text-small text-warn">The latest verdict predates this report. This audit is awaiting a new suite run.</p>}
-        <section aria-label="Checks that use inspector audits" className="space-y-2">
+        <details className="disclosure" open={fed.some(({ result }) => result?.result === "fail") ? true : undefined}><summary>Checks informed by this audit</summary><section aria-label="Checks that use inspector audits" className="disclosure-body space-y-2">
           <h3 className="text-small font-semibold">What your audit feeds</h3>
           <p className="text-caption text-muted">These checks use inspector reports. Results below are the latest for this milestone, shared across its audits.</p>
           <ul className="grid gap-3 md:grid-cols-3">
@@ -53,7 +53,7 @@ export function AuditHistoryCard({ entry }: { entry: AuditHistoryEntry }) {
               </li>
             ))}
           </ul>
-        </section>
+        </section></details>
 
         {checks.verdict && <p className="text-small text-ink-2">{checks.verdict.summary} <span className="text-caption text-muted">({Math.round(checks.verdict.confidence * 100)}% confidence · {formatDateTime(checks.verdict.createdAt)})</span></p>}
         <details className="rounded-lg border border-line p-3">

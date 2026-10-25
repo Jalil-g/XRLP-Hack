@@ -17,42 +17,36 @@ import { formatAmount, toCents } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Builder" };
 
-export default async function BuilderPage() {
+export default async function BuilderPage({ searchParams }: { searchParams: Promise<{ project?: string }> }) {
   const session = await getSession();
   const builder = session.builder;
   if (!builder) return <Empty title="No builder accounts">Core did not return any builders.</Empty>;
   const summaries = (await api.listProjects()).filter((s) => (s.builderId ? s.builderId === builder.id : s.builderName === builder.name));
   const details = await Promise.all(summaries.map((s) => api.getProject(s.id)));
+  const selectedId = (await searchParams).project;
+  const selected = details.find((d) => d.project.id === selectedId) ?? details.find((d) => d.project.milestones.some((m) => ["failed", "audited", "escrowed"].includes(m.status))) ?? details[0];
+  const received = details.reduce((sum, d) => sum + d.project.milestones.filter((m) => m.status === "released").reduce((n, m) => n + toCents(m.amount), 0), 0);
 
   return (
-    <div className="space-y-14">
+    <div className="space-y-7">
       <AutoRefresh ms={4000} />
       <PageHeader
         action={
-          <Link href="/builder/new" className={buttonClass("secondary")}>
+          <Link href="/builder/new" className={buttonClass("primary")}>
             New project
           </Link>
         }
-        title={builder.name}
+        title="My builds"
         meta={builder.verified ? <Tag tone="pass">Verified builder</Tag> : <Tag>Not verified yet</Tag>}
-        description={
-          <>
-            Licence {builder.licenseNumber} · {builder.completedProjects} completed projects
-            {builder.credentialTx && (
-              <>
-                {" "}
-                · credential <TxLink hash={builder.credentialTx} />
-              </>
-            )}
-          </>
-        }
+        description={`${builder.name} · Manage the next step for each project.`}
       />
 
       {details.length === 0 && <Empty title="No projects yet">Submit a project with its Schedule of Values to get it verified and listed.</Empty>}
 
-      {details.map((d) => (
-        <BuilderProject key={d.project.id} d={d} />
-      ))}
+      <dl className="summary-strip"><div><dt>Your projects</dt><dd>{details.length}<small>in the workspace</small></dd></div><div><dt>Active milestones</dt><dd>{details.reduce((sum, d) => sum + d.project.milestones.filter((m) => !["released", "refunded", "pending"].includes(m.status)).length, 0)}<small>awaiting completion</small></dd></div><div><dt>Released to you</dt><dd>{formatAmount(received / 100)}<small>RLUSD</small></dd></div></dl>
+      <nav className="view-tabs" aria-label="Your builds">{details.map((d) => <Link key={d.project.id} href={`?project=${encodeURIComponent(d.project.id)}`} scroll={false} aria-current={d === selected ? "page" : undefined}>{d.project.name}</Link>)}</nav>
+      {selected && <div className="surface surface-pad"><BuilderProject key={selected.project.id} d={selected} /></div>}
+
     </div>
   );
 }
@@ -79,14 +73,14 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
       {p.status === "draft" && (
         <NextStep
           title="Pay the verification fee"
-          body="250 RLUSD pays for the AI review of your identity, the project's feasibility and your capability, plus an inspector visit if one is needed. In production the fee scales with project size."
+          body="Pay 250 RLUSD to start the project review. An inspector visit may be requested if needed."
           action={<ActionButton context={p.name} action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>Pay 250 RLUSD</ActionButton>}
         />
       )}
       {p.status === "verifying" && (
         <NextStep
           title="Run verification"
-          body="The AI checks your licence, insurance and entity (mock registries), whether the Schedule of Values adds up and is priced in range, and your track record."
+          body="Check your credentials, budget and track record before opening the project to investors."
           action={<ActionButton action={{ kind: "verifyProject", projectId: p.id }}>Run verification</ActionButton>}
         />
       )}
@@ -98,11 +92,10 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
       {p.status === "verified" && <p className="text-body text-ink-2">Verified. The platform locks terms and assigns your inspector next.</p>}
 
       {d.verification && (
-        <p className="mb-6 flex flex-wrap items-center gap-3 text-small">
+        <p className="my-5 flex flex-wrap items-center gap-3 text-caption">
           <Tag tone={d.verification.decision === "pass" ? "pass" : d.verification.decision === "fail" ? "fail" : "review"}>
             {d.verification.decision === "pass" ? "Verified" : d.verification.decision === "fail" ? "Rejected" : "Needs an inspector visit"}
           </Tag>
-          <span className="text-ink-2">Identity, feasibility and capability checked</span>
           <Link href={`/projects/${p.id}/verification`} className="text-link hover:underline">
             Verification report
           </Link>
@@ -119,8 +112,8 @@ function Payouts({ d }: { d: ProjectDetail }) {
   const paid = d.project.milestones.filter((m) => m.status === "released");
   if (!paid.length) return null;
   return (
-    <div className="mt-8">
-      <h4 className="mb-2 text-small font-semibold">Paid to you</h4>
+    <details className="disclosure mt-6">
+      <summary>Past payouts <span className="text-caption text-ink-2">{paid.length} milestones</span></summary>
       <ul className="divide-y divide-line border-y border-line">
         {paid.map((m) => (
           <li key={m.id} className="flex items-center justify-between gap-4 py-2.5 text-small">
@@ -134,7 +127,7 @@ function Payouts({ d }: { d: ProjectDetail }) {
           </li>
         ))}
       </ul>
-    </div>
+    </details>
   );
 }
 
@@ -202,7 +195,7 @@ function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
       ) : (
         <>
           {uploader}
-          {panel}
+          <details className="disclosure" open={m.status === "audited" || m.status === "verified" ? true : undefined}><summary>Milestone checks</summary><div className="overflow-hidden rounded-b-panel">{panel}</div></details>
         </>
       )}
     </div>

@@ -12,10 +12,10 @@ export const DialogClose = D.Close;
 export function DialogContent({ className, children, closeDisabled = false, ...props }: React.ComponentProps<typeof D.Content> & { closeDisabled?: boolean }) {
   return (
     <D.Portal>
-      <D.Overlay className="fixed inset-0 z-50 bg-black/30" />
+      <D.Overlay className="dialog-overlay fixed inset-0 z-50 bg-[#172017]/55 backdrop-blur-sm" />
       <D.Content
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-[480px] max-h-[calc(100dvh-2rem)] overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-panel bg-page shadow-overlay focus:outline-none",
+          "dialog-enter fixed top-1/2 left-1/2 z-50 w-[calc(100vw-2rem)] max-w-[480px] max-h-[calc(100dvh-2rem)] overflow-y-auto -translate-x-1/2 -translate-y-1/2 rounded-panel bg-page shadow-overlay focus:outline-none",
           className,
         )}
         {...props}

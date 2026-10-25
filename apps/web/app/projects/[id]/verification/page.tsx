@@ -38,7 +38,7 @@ export default async function VerificationPage({ params }: Props) {
   const decision = v ? ({ pass: { tone: "pass", label: "Verified" }, fail: { tone: "fail", label: "Rejected" }, needs_human: { tone: "review", label: "Needs an inspector visit" } } as const)[v.decision] : undefined;
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-7">
       <div>
         <nav className="flex gap-2 text-caption text-ink-2">
           <Link href="/" className="hover:text-ink">
@@ -57,7 +57,7 @@ export default async function VerificationPage({ params }: Props) {
         />
       </div>
 
-      <dl className="grid gap-x-10 gap-y-4 border-y border-line py-5 sm:grid-cols-3">
+      <dl className="surface surface-pad grid gap-x-8 gap-y-5 sm:grid-cols-3">
         <Fact
           label="Verification fee"
           value={fee ? `${formatAmount(fee.amount ?? "250")} RLUSD paid by ${builder.name}` : "Not paid yet"}
@@ -94,7 +94,7 @@ export default async function VerificationPage({ params }: Props) {
       )}
 
       {v ? (
-        <div className="grid items-start gap-8 lg:grid-cols-3">
+        <div className="space-y-3">
           <Group title="Identity" note="Licence, insurance, entity" checks={v.identity} />
           <Group title="Feasibility" note="Schedule of Values, permits, site" checks={v.feasibility} />
           <Group title="Capability" note="Track record and workload" checks={v.capability} />
@@ -115,12 +115,11 @@ export default async function VerificationPage({ params }: Props) {
 function Group({ title, note, checks }: { title: string; note: string; checks: CheckResult[] }) {
   const failed = checks.filter((c) => c.result === "fail").length;
   return (
-    <section className="overflow-hidden rounded-panel border border-line">
-      <header className="flex items-baseline justify-between gap-4 border-b border-line bg-band px-5 py-3">
-        <h2 className="text-body font-semibold">{title}</h2>
-        <span className="text-caption text-ink-2">{failed ? `${failed} failed` : `${checks.length} passed`}</span>
-      </header>
-      <p className="px-5 pt-3 text-caption text-ink-2">{note}</p>
+    <details className="disclosure" open={failed > 0 ? true : undefined}>
+      <summary>
+        <div><h2 className="text-small font-semibold">{title}</h2><p className="mt-1 text-caption font-normal text-ink-2">{note}</p></div>
+        <span className="text-caption text-ink-2">{failed ? `${failed} failed` : `${checks.filter((c) => c.result === "pass").length} passed`}</span>
+      </summary>
       <ul className="divide-y divide-line">
         {checks.map((c) => {
           const mock = MOCK.exec(c.reason)?.[1];
@@ -142,7 +141,7 @@ function Group({ title, note, checks }: { title: string; note: string; checks: C
           );
         })}
       </ul>
-    </section>
+    </details>
   );
 }
 

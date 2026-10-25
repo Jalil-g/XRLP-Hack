@@ -56,11 +56,11 @@ export default async function DemoPage() {
   const bRefunded = stall?.refunded;
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-7">
       <AutoRefresh ms={2500} />
       <PageHeader
-        title="Demo control room"
-        description="Prepare the 100-second recording: show the project, review the evidence, release one milestone, and hold a failed milestone."
+        title="Control room"
+        description="Guide a project from verification to its first milestone payment."
         action={
           <div className="flex gap-2">
             <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>
@@ -75,7 +75,7 @@ export default async function DemoPage() {
 
       {!a && <p className="rounded-panel bg-review-bg px-5 py-4 text-small text-review">No pre-staged demo project found. Run Reset demo, or pre-stage Project A (XRPL-11).</p>}
 
-      <ol className="divide-y divide-line border-y border-line">
+      <ol className="surface overflow-hidden divide-y divide-line">
         <Scene
           n={1}
           title="Verified project"
@@ -121,7 +121,7 @@ export default async function DemoPage() {
       <details className="space-y-4">
         <summary className="min-h-11 cursor-pointer py-2 text-heading">Extended walkthrough and engineering checks</summary>
         <p className="text-small text-ink-2">Outside the timed pitch. Use these controls for preparation or technical Q&A.</p>
-        <ol className="divide-y divide-line border-y border-line">
+        <ol className="surface overflow-hidden divide-y divide-line">
         <Scene
           title="Ledger says no"
           body="A wrong fulfillment is rejected. This tests the escrow condition; it does not prove that the ledger enforces AI checks."
@@ -245,17 +245,17 @@ function Scene({
   screen?: React.ReactNode;
 }) {
   return (
-    <li className="grid grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-x-4 py-5">
-      <span className="tabular pt-0.5 text-body text-ink-2">{n ?? ""}</span>
+    <li className="demo-scene">
+      <span className="milestone-number">{n ?? ""}</span>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-body font-semibold">{title}</h3>
           {state}
         </div>
-        <p className="mt-1 max-w-[72ch] text-small text-ink-2">{body}</p>
+        <details className="mt-2 text-caption text-ink-2"><summary className="min-h-7 cursor-pointer">How this step works</summary><p className="mt-1 max-w-[65ch]">{body}</p></details>
         {detail && <p className="mt-1.5 text-small font-medium text-ink">{detail}</p>}
       </div>
-      <div className="flex flex-col items-end gap-2">
+      <div className="demo-scene-actions">
         {action}
         {screen}
       </div>

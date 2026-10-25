@@ -5,9 +5,13 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FundsTransfer } from "@/components/project/investment-transfer";
+import { TxLink } from "@/components/chain";
+import { VerificationJourney } from "./verification-journey";
 import { Button } from "@/components/ui/button";
 import { ApiError, api } from "@/lib/api";
-import type { Attestation, CheckResult, ChecksStatus, Evidence, InspectorAudit, Milestone } from "@/lib/contract";
+import type { Attestation, CheckResult, ChecksStatus, Evidence, InspectorAudit, Milestone, RunChecksResult } from "@/lib/contract";
 import { AuditRow } from "./audit-row";
 import { CheckRow } from "./check-row";
 import { OutcomeBanner, outcomeOf } from "./outcome-banner";
@@ -37,8 +41,9 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const verdictAt = status.verdict?.createdAt;
-  // Stay "running" until the refreshed props carry the new verdict, so the panel never flashes back to "ready".
-  useEffect(() => setRunning(false), [verdictAt]);
+  const submitting = useRef(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [receipt, setReceipt] = useState<RunChecksResult | null>(null);
 
   const results = [...status.required, ...status.optional];
   const ran = results.length > 0;
@@ -66,24 +71,45 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
   const total = ran ? results.length : (status.suite?.length ?? 0);
   const canRun = !!run && ["evidence_submitted", "audited", "failed"].includes(m.status);
 
-  const runChecks = async () => {
-    if (!run) return;
-    setRunning(true);
-    window.setTimeout(() => setRunning(false), 15_000); // never spin forever if the refresh brings nothing new
-    try {
-      await api.runChecks(run.projectId, m.id);
-      if (run.pinHref) router.replace(run.pinHref, { scroll: false });
+  const finish = () => {
+    if (submitting.current) return;
+    setDialogOpen(false);
+    if (receipt) {
+      if (run?.pinHref) router.replace(run.pinHref, { scroll: false });
       router.refresh();
+    }
+  };
+  const runChecks = async () => {
+    if (!run || submitting.current) return;
+    submitting.current = true;
+    setReceipt(null);
+    setDialogOpen(true);
+    setRunning(true);
+    try {
+      setReceipt(await api.runChecks(run.projectId, m.id));
     } catch (err) {
-      setRunning(false);
+      setDialogOpen(false);
       toast.error(err instanceof Error ? err.message : "Checks could not run", {
         description: err instanceof ApiError && err.txResult ? err.txResult : undefined,
       });
+    } finally {
+      submitting.current = false;
+      setRunning(false);
     }
   };
 
   return (
-    <div className="overflow-hidden rounded-panel border border-line">
+    <div className="overflow-hidden rounded-panel border border-line bg-page">
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) finish(); }}>
+        <DialogContent className="max-w-[540px]" closeDisabled={running} data-pause-auto-refresh="true">
+          <DialogHeader><DialogTitle>{receipt?.release ? "Milestone payment released" : running ? "Checking the milestone" : receipt?.verdict.decision === "pass" ? "Checks passed" : "Funds stay protected"}</DialogTitle><DialogDescription>{m.title} · {builderName}</DialogDescription></DialogHeader>
+          <DialogBody>
+            {receipt?.release ? <FundsTransfer amount={m.amount} source={{ label: "Milestone escrow", name: m.title, kind: "vault" }} destination={{ label: "Builder wallet", name: builderName, kind: "wallet" }} confirmed successLabel="Milestone payment released" note="The milestone checks passed and the release transaction was confirmed." /> : <VerificationJourney state={running ? "pending" : receipt?.verdict.decision === "pass" ? "pass" : "held"} title={running ? "Reviewing the evidence and signed audit" : receipt?.verdict.decision === "pass" ? "Checks passed · no release confirmed" : receipt?.verdict.decision === "needs_human" ? "A human review is needed" : "Checks failed · funds remain locked"} detail={running ? "The verification service is evaluating this milestone. Results will appear when it responds." : receipt?.verdict.decision === "pass" ? "The suite passed. No payment confirmation was returned; check the project status before trying again." : "Review the check results to see what needs attention before funds can move."} />}
+            {receipt?.release && <p className="mt-4 text-caption text-ink-2">EscrowFinish <TxLink hash={receipt.release.txHash} /></p>}
+          </DialogBody>
+          <DialogFooter>{!running && <Button onClick={finish}>View milestone</Button>}</DialogFooter>
+        </DialogContent>
+      </Dialog>
       <OutcomeBanner
         outcome={revealing && ran ? "running" : outcomeOf(m, running)}
         milestone={m}
@@ -108,13 +134,16 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
           state={stateAt(0, auditResult?.result)}
           inspectorName={audit ? names[audit.inspector] : undefined}
         />
-        {rows.map((r, i) => (
-          <CheckRow key={r.check.check} check={r.check} state={stateAt(i + 1, r.result)} evidence={evidence} />
-        ))}
+        {rows.filter((r) => r.result === "fail" || r.result === "warn").map((r) => <CheckRow key={r.check.check} check={r.check} state={running ? "running" : r.result!} evidence={evidence} />)}
       </ul>
+      <details className="check-details border-t border-line" open={running || revealing ? true : undefined}>
+        <summary>{ran ? `View all ${total} check results` : `Explore the ${total} required checks`}</summary>
+        <ul className="divide-y divide-line">{rows.filter((r) => r.result !== "fail" && r.result !== "warn").map((r, i) => <CheckRow key={r.check.check} check={r.check} state={stateAt(i + 1, r.result)} evidence={evidence} />)}</ul>
+
       {status.verdict && !running && !revealing && (
         <VerdictRow verdict={status.verdict} attestationTx={latest("verdict")?.txHash} hash={latest("verdict")?.hash} released={m.status === "released"} />
       )}
+      </details>
     </div>
   );
 }

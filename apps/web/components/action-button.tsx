@@ -10,6 +10,9 @@ import { API_MODE, api } from "@/lib/api";
 import { errorDescription, errorFeedback } from "@/lib/error-feedback";
 import { cancelFeedback, checksFeedback, decisionFeedback } from "@/lib/action-feedback";
 import type { ChainEvent, Rlusd, XrplAddress } from "@/lib/contract";
+import { FundsTransfer } from "@/components/project/investment-transfer";
+import { ProcessFeedback } from "@/components/process-feedback";
+import { TxLink } from "@/components/chain";
 import { shortHash } from "@/lib/utils";
 
 /** Every write the UI can trigger, by route. Serializable so server components can pass it down. */
@@ -122,8 +125,18 @@ export function ActionButton({
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);
+  const [receipt, setReceipt] = useState<Outcome | null>(null);
   const needsReview = ["payFee", "invest", "repay", "withdraw"].includes(action.kind);
 
+  const showExperience = needsReview || ["verifyProject", "lockTerms", "closeLoan", "runChecks", "decide", "cancelMilestone"].includes(action.kind);
+  const finish = () => {
+    if (submitting.current) return;
+    setReviewing(false);
+    if (receipt) {
+      if (afterHref) router.replace(afterHref, { scroll: false });
+      router.refresh();
+    }
+  };
   const run = async () => {
     if (submitting.current || disabled) return;
     submitting.current = true;
@@ -140,9 +153,11 @@ export function ActionButton({
       if (out.tone === "error") toast.error(out.message, opts);
       else if (out.tone === "info") toast.info(out.message, opts);
       else toast.success(out.message, opts);
-      setReviewing(false);
-      if (afterHref) router.replace(afterHref, { scroll: false });
-      router.refresh();
+      if (showExperience) setReceipt(out);
+      else {
+        if (afterHref) router.replace(afterHref, { scroll: false });
+        router.refresh();
+      }
     } catch (err) {
       const feedback = errorFeedback(err);
       setError(`${feedback.title}. ${errorDescription(feedback)}`);
@@ -153,28 +168,36 @@ export function ActionButton({
     }
   };
 
+  const money = needsReview && ("amount" in action || action.kind === "payFee");
+  const amount = "amount" in action ? action.amount : "250";
+  const withdrawal = action.kind === "withdraw";
+  const fee = action.kind === "payFee";
+  const sourceAddress = "investor" in action && !withdrawal ? action.investor : "builder" in action ? action.builder : undefined;
+  const note = !needsReview ? "Review the error below before retrying this action." : fee ? "This payment covers project verification. The project review runs next." : withdrawal ? "Your vault shares are redeemed for available funds." : "Funds arrive in the project vault. Builder payouts follow milestone checks.";
   return (
     <>
       <Button variant={variant} size={size} disabled={disabled || busy} onClick={() => {
-        if (needsReview) { setError(undefined); setReviewing(true); } else void run();
+        setError(undefined);
+        setReceipt(null);
+        if (showExperience) setReviewing(true);
+        if (!needsReview) void run();
       }} className={className} aria-busy={busy}>
         {busy && <Loader2 className="animate-spin" aria-hidden />}{children}
       </Button>
-      <Dialog open={reviewing} onOpenChange={(open) => { if (!busy) setReviewing(open); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Review transaction</DialogTitle><DialogDescription>{context ?? "Check the transaction details before continuing."}</DialogDescription></DialogHeader>
-          <DialogBody className="space-y-3 text-small">
-            <p className="text-heading">{children}</p>
-            {"investor" in action && <p className="break-all text-ink-2">Investor: {action.investor}</p>}
-            {"builder" in action && <p className="break-all text-ink-2">Builder: {action.builder}</p>}
-            <p className="text-ink-2">{action.kind === "payFee" ? "This pays the project verification fee. Verification runs after payment." : action.kind === "withdraw" ? "This redeems vault shares for available funds. Confirm the amount before withdrawing." : action.kind === "repay" ? "This sends a loan repayment to the project vault." : "This deposits funds into the project vault in exchange for shares. Withdrawals depend on the redemption date and available funds."}</p>
-            {API_MODE === "mock" && <p className="text-review">Mock data · No real funds move.</p>}
-            {error && <p role="alert" className="text-fail">{error}</p>}
+      <Dialog open={reviewing} onOpenChange={(open) => { if (!open) finish(); }}>
+        <DialogContent className={money && (busy || receipt) ? "max-w-[540px]" : undefined} closeDisabled={busy} data-pause-auto-refresh="true">
+          <DialogHeader><DialogTitle>{receipt ? receipt.message : busy ? money ? "Moving your funds" : "Processing your request" : needsReview ? "Review transaction" : "Try this action again"}</DialogTitle><DialogDescription>{context ?? (busy ? "The result will appear as soon as it is confirmed." : "Check the details for this action.")}</DialogDescription></DialogHeader>
+          <DialogBody className="space-y-4 text-small">
+            {busy || receipt ? money ? <FundsTransfer amount={amount}
+              source={{ label: withdrawal ? "Project vault" : "Your wallet", name: withdrawal ? context ?? "Project vault" : "Selected account", address: sourceAddress, kind: withdrawal ? "vault" : "wallet" }}
+              destination={{ label: withdrawal ? "Your wallet" : fee ? "Verification" : "Project vault", name: withdrawal ? "Investor account" : fee ? "Drawproof" : context ?? "Project vault", kind: withdrawal ? "wallet" : "vault" }}
+              confirmed={!!receipt} successLabel={receipt?.message ?? "Transfer confirmed"} note={note} />
+              : <ProcessFeedback state={busy ? "pending" : receipt?.tone === "error" || receipt?.tone === "info" ? "held" : "complete"} title={busy ? "Checking the request" : receipt?.message ?? "Request complete"} detail={busy ? "Waiting for a result. No changes are confirmed yet." : "The result above reflects the completed request."} />
+              : <><p className="text-heading">{children}</p>{"investor" in action && <p className="break-all text-caption text-ink-2">Investor: {action.investor}</p>}{"builder" in action && <p className="break-all text-caption text-ink-2">Builder: {action.builder}</p>}<p className="text-ink-2">{note}</p>{API_MODE === "mock" && <p className="text-caption text-review">Mock data · No real funds move.</p>}</>}
+            {receipt && receipt.events.length > 0 && <details className="disclosure"><summary>Transaction receipt <span className="text-caption text-ink-2">{receipt.events.length} recorded</span></summary><div className="disclosure-body space-y-2">{receipt.events.map((event, index) => <p key={`${event.txHash}-${index}`} className="flex flex-wrap justify-between gap-2 text-caption"><span>{event.kind.replaceAll("_", " ")}</span><TxLink hash={event.txHash} /></p>)}</div></details>}
+            {error && <p role="alert" className="rounded-control bg-fail-bg p-3 text-fail">{error}</p>}
           </DialogBody>
-          <DialogFooter>
-            <Button variant="secondary" disabled={busy} onClick={() => setReviewing(false)}>Back</Button>
-            <Button disabled={busy || disabled} onClick={run}>{busy ? "Submitting…" : children}</Button>
-          </DialogFooter>
+          <DialogFooter>{receipt ? <Button onClick={finish}>Done</Button> : !busy && <><Button variant="secondary" onClick={finish}>{needsReview ? "Back" : "Close"}</Button><Button onClick={() => void run()}>{needsReview ? children : "Try again"}</Button></>}</DialogFooter>
         </DialogContent>
       </Dialog>
     </>

@@ -32,40 +32,17 @@ export default function QueuePage() {
   const actionable = groups ? ACTIONABLE.reduce((n, k) => n + groups[k].length, 0) : 0;
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-7">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-title">Assigned audits</h1>
-          <p className="mt-2 max-w-2xl text-body text-muted">{BRAND.tagline}</p>
+          <p className="mt-2 text-small text-muted">Your next site visit, review, and signature.</p>
         </div>
         <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
       </div>
 
-      <Card className="border-y border-line">
-        <CardContent className="flex flex-wrap items-center gap-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold">{inspector.name}</span>
-              <VerifiedInspectorBadge inspector={inspector} />
-            </div>
-            <p className="text-caption text-muted">
-              {inspector.licenseNumber} · {inspector.trades.join(", ")}
-            </p>
-          </div>
-          {groups && (
-            <div className="ml-auto flex flex-wrap gap-1.5">
-              {ACTIONABLE.map((n) => (
-                <Badge key={n} tone={groups[n].length ? NEEDS[n].tone : "neutral"}>
-                  {groups[n].length} {NEEDS[n].label.toLowerCase()}
-                </Badge>
-              ))}
-            </div>
-          )}
-          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="font-mono text-caption text-muted hover:text-brand">
-            {shortAddress(inspector.address, 8, 6)}
-          </a>
-        </CardContent>
-      </Card>
+      <dl className="summary-strip"><div><dt>Ready to audit</dt><dd>{groups?.audit.length ?? "—"}<small>milestones</small></dd></div><div><dt>Needs a fresh look</dt><dd>{groups?.re_audit.length ?? "—"}<small>re-audits</small></dd></div><div><dt>Site visits</dt><dd>{groups?.pre_visit.length ?? "—"}<small>before verification</small></dd></div></dl>
+      <div className="flex flex-wrap items-center gap-3 text-caption text-muted"><VerifiedInspectorBadge inspector={inspector} /><span>{inspector.licenseNumber} · {inspector.trades.join(", ")}</span></div>
 
       {!groups ? (
         queue.error ? (

@@ -80,7 +80,7 @@ export function InvestDialog({
         Invest
       </Button>
       <Dialog open={open} onOpenChange={changeOpen}>
-        <DialogContent closeDisabled={busy} data-pause-auto-refresh="true">
+        <DialogContent className={busy || done ? "max-w-[540px]" : undefined} closeDisabled={busy} data-pause-auto-refresh="true">
           {busy || done ? (
             <>
               <DialogHeader>
@@ -100,7 +100,7 @@ export function InvestDialog({
                 {done && <p className="mt-4 border-t border-line pt-4 text-small text-ink-2">VaultDeposit <TxLink hash={done.tx} /></p>}
               </DialogBody>
               <DialogFooter>
-                {done ? <Button onClick={() => changeOpen(false)}>Done</Button> : <p className="w-full text-center text-caption text-ink-2">Waiting for the vault to respond.</p>}
+                {done && <Button onClick={() => changeOpen(false)}>Done</Button>}
               </DialogFooter>
             </>
           ) : reviewing ? (

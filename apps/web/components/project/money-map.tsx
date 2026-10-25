@@ -2,7 +2,6 @@
 
 // Where the money is, as a flow: Vault → Project account → Escrows → Builder. Amounts come from route 2 snapshots.
 // When a value changes (release, refund, repayment) the node flashes once, so the movement is visible on stage.
-import { ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn, formatAmount } from "@/lib/utils";
 
@@ -25,24 +24,5 @@ export function MoneyMap({ nodes }: { nodes: MoneyNode[] }) {
     timers.current.push(window.setTimeout(() => setFlash((f) => Object.fromEntries(Object.entries(f).filter(([, t]) => t !== stamp))), 1400));
   }, [nodes]);
 
-  return (
-    <ol className="grid items-stretch gap-2" style={{ gridTemplateColumns: nodes.map(() => "minmax(0,1fr)").join(" 24px ") }} aria-label="Money map">
-      {nodes.flatMap((n, i) => [
-        ...(i > 0 ? [<ChevronRight key={`arrow-${n.key}`} className="size-5 self-center justify-self-center text-ink-3" aria-hidden />] : []),
-        <li
-          key={n.key}
-          className={cn(
-            "rounded-panel px-4 py-3.5 transition-colors duration-700 ease-out",
-            flash[n.key] ? (n.tone === "pass" ? "bg-pass-bg" : "bg-info-bg") : "bg-band",
-          )}
-        >
-          <p className="text-caption text-ink-2">{n.label}</p>
-          <p className="tabular mt-0.5 text-heading">
-            {formatAmount(n.amount)} <span className="text-small font-normal text-ink-2">RLUSD</span>
-          </p>
-          <p className="mt-0.5 text-caption text-ink-2">{n.note}</p>
-        </li>,
-      ])}
-    </ol>
-  );
+  return <ol className="money-map" aria-label="Money map">{nodes.map((node, index) => <li key={node.key} className={cn("money-node", flash[node.key] && "money-node-flash")}><div className="flex items-center justify-between gap-2"><span className="text-caption text-ink-2">{node.label}</span><span className="font-mono text-[10px] text-ink-2">0{index + 1}</span></div><p className={cn("mt-3 tabular text-[24px] font-medium tracking-tight", node.tone === "pass" && "text-pass")}>{formatAmount(node.amount)}<span className="ml-1 text-[10px] font-normal tracking-normal text-ink-2">RLUSD</span></p><p className="mt-2 text-caption text-ink-2">{node.note}</p></li>)}</ol>;
 }

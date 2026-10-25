@@ -38,7 +38,7 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const title = m ? `M${m.index + 1} · ${m.title}` : "Site visit before verification";
 
   return (
-    <li className={cn("py-5 transition-colors duration-150", fresh && "bg-brand-50")}>
+    <li className={cn("px-5 py-5 transition-colors duration-150", fresh && "bg-brand-50")}>
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1">
           <SectionLabel className="flex items-center gap-2">
@@ -68,6 +68,7 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
         </div>
       </div>
 
+      <details className="mt-3 text-caption text-muted"><summary className="min-h-8 cursor-pointer">Scope & evidence · {ev.uploaded} files{expiry?.urgent ? ` · ${expiry.text}` : ""}</summary>
       <ul className="mt-2 flex flex-wrap gap-1.5">
         {task.sov.map((l) => (
           <li key={l.code} className="rounded-md bg-subtle px-2 py-0.5 text-caption text-ink-2">
@@ -109,6 +110,7 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
           <MapPin className="size-3.5" /> {task.siteGeo.lat.toFixed(4)}, {task.siteGeo.lng.toFixed(4)}
         </span>
       </div>
+      </details>
     </li>
   );
 }

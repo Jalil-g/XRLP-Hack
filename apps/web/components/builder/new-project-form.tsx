@@ -3,9 +3,10 @@
 // Route 3: a builder submits a project as a Schedule of Values. Templates are pre-filled SoVs derived from the contract's
 // MILESTONE_TEMPLATES; the evidence and checks on each line are read-only (the builder does not get to define "done").
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { MILESTONE_TEMPLATES } from "@xrlp/shared";
+import { ProcessFeedback } from "@/components/process-feedback";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tag } from "@/components/ui/tag";
@@ -64,6 +65,9 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
   const [rows, setRows] = useState<Row[]>(() => templateRows("residential_new", 10_000_000));
   const [docs, setDocs] = useState(() => new Set(DOCUMENTS.map((d) => d.kind)));
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState(0);
+  const [createdId, setCreatedId] = useState<string>();
+  const submitting = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const principalCents = toCents(principal.replace(/[^\d.]/g, ""));
@@ -72,7 +76,10 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
   const problems = [
     !name.trim() && "Name the project",
     !siteAddress.trim() && "Add the site address",
-    principalCents <= 0 && "Set the principal",
+    (!Number.isSafeInteger(principalCents) || principalCents <= 0) && "Set a valid principal",
+    (!Number.isFinite(Number(rate)) || Number(rate) < 0) && "Set a valid annual rate",
+    (!Number.isFinite(Number(months)) || Number(months) <= 0) && "Set a valid term",
+    !Number.isFinite(Date.parse(`${deadline}T16:00:00Z`)) && "Set the funding deadline",
     rows.length === 0 && "Add at least one Schedule of Values line",
     diff !== 0 && principalCents > 0 && `Lines total ${formatAmount(fromCents(totalCents))} RLUSD; they must equal the principal`,
   ].filter(Boolean) as string[];
@@ -80,6 +87,8 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
   const update = (id: number, patch: Partial<SovLine>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, line: { ...r.line, ...patch } } : r)));
 
   const submit = async () => {
+    if (submitting.current || problems.length) return;
+    submitting.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -100,16 +109,22 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
         sov: rows.map((r) => r.line),
         documents: DOCUMENTS.filter((d) => docs.has(d.kind)).map((d) => ({ kind: d.kind, filename: d.filename })),
       });
-      router.push(`/projects/${project.id}/verification`);
+      setCreatedId(project.id);
+      setBusy(false);
     } catch (err) {
       setError(err instanceof ApiError || err instanceof Error ? err.message : "Could not create the project");
       setBusy(false);
+    } finally {
+      submitting.current = false;
     }
   };
 
+  if (busy || createdId) return <div className="surface surface-pad mx-auto max-w-[560px]" data-pause-auto-refresh="true"><ProcessFeedback state={busy ? "pending" : "complete"} title={busy ? "Creating your project" : "Your project is ready for verification"} detail={busy ? "Saving the project, budget, and milestone schedule." : `${name} has been created. Next, pay the verification fee to begin its review.`} />{createdId && <div className="mt-6 flex justify-center"><Button onClick={() => router.push(`/projects/${createdId}/verification`)}>Open verification</Button></div>}</div>;
+
   return (
-    <div className="space-y-12">
-      <section className="grid max-w-[760px] gap-5">
+    <div className="space-y-6">
+      <div className="form-steps" role="group" aria-label="New project steps">{["Project details", "Budget & milestones", "Documents & review"].map((label, index) => <button key={label} type="button" aria-pressed={step === index} disabled={index > step && (index === 1 ? !name.trim() || !siteAddress.trim() : problems.length > 0)} onClick={() => setStep(index)}><span>{String(index + 1).padStart(2, "0")}</span>{label}</button>)}</div>
+      {step === 0 && <section className="surface surface-pad mx-auto grid max-w-[760px] gap-5">
         <h2 className="text-heading">Project</h2>
         <Field label="Name" id="name">
           <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Cedar Ln ADU" />
@@ -139,9 +154,9 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
         <Field label="Description" id="desc" hint="What gets built, and how the loan is repaid.">
           <Textarea id="desc" value={description} onChange={(e) => setDescription(e.target.value)} />
         </Field>
-      </section>
+      </section>}
 
-      <section className="grid max-w-[760px] gap-5">
+      {step === 1 && <div className="surface surface-pad space-y-8"><section className="grid gap-5">
         <h2 className="text-heading">Loan terms</h2>
         <div className="grid gap-5 sm:grid-cols-4">
           <Field label="Principal (RLUSD)" id="principal">
@@ -252,7 +267,9 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
         </Button>
       </section>
 
-      <section className="max-w-[760px] space-y-3">
+      </div>}
+      {step === 2 && <section className="surface surface-pad mx-auto max-w-[760px] space-y-4">
+        <dl className="grid grid-cols-2 gap-4 border-b border-line pb-5 text-small"><div><dt className="text-caption text-ink-2">Project</dt><dd className="mt-1 font-medium">{name}</dd></div><div><dt className="text-caption text-ink-2">Budget</dt><dd className="mt-1 font-medium">{formatAmount(fromCents(principalCents))} RLUSD</dd></div><div><dt className="text-caption text-ink-2">Site</dt><dd className="mt-1">{siteAddress}</dd></div><div><dt className="text-caption text-ink-2">Terms</dt><dd className="mt-1">{rate}% annually · {months} months</dd></div></dl>
         <h2 className="text-heading">Documents</h2>
         <p className="text-small text-ink-2">Checked by the AI during verification against mock registries.</p>
         <ul className="divide-y divide-line border-y border-line">
@@ -279,17 +296,15 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
             </li>
           ))}
         </ul>
-      </section>
+      </section>}
 
-      <section className="flex flex-wrap items-center gap-4 border-t border-line pt-6">
-        <Button size="lg" disabled={problems.length > 0 || busy} onClick={submit}>
-          {busy && <Loader2 className="animate-spin" aria-hidden />}
-          Create project
-        </Button>
-        <p className="text-small text-ink-2">
-          {problems[0] ?? `Submitted as ${builderName}. Next: pay the 250 RLUSD verification fee.`}
-        </p>
-        {error && <p className="w-full rounded-control bg-fail-bg px-3 py-2 text-small text-fail">{error}</p>}
+      <section className="flex flex-wrap items-center justify-between gap-4 border-t border-line pt-5">
+        <span className="text-caption text-ink-2">Step {step + 1} of 3</span>
+        <div className="flex flex-wrap items-center gap-3">{step > 0 && <Button variant="secondary" onClick={() => setStep((value) => value - 1)}>Back</Button>}
+        {step < 2 ? <Button disabled={step === 0 ? !name.trim() || !siteAddress.trim() : problems.length > 0} onClick={() => setStep((value) => value + 1)}>Continue</Button> : <Button size="lg" disabled={problems.length > 0 || busy} onClick={submit}>Create project</Button>}</div>
+        {step > 0 && problems.length > 0 && <p role="status" className="w-full text-caption text-review">{problems[0]}</p>}
+        {step === 2 && <p className="w-full text-caption text-ink-2">Submitted as {builderName}. Next: pay the 250 RLUSD verification fee.</p>}
+        {error && <p role="alert" className="w-full rounded-control bg-fail-bg px-3 py-2 text-small text-fail">{error}</p>}
       </section>
     </div>
   );

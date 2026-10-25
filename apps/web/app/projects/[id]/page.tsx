@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ArrowLeft, ArrowUpRight, Check, LayoutGrid, ListChecks, Wallet, History } from "lucide-react";
+import { ProjectArt } from "@/components/project/project-art";
+import { Progress } from "@/components/ui/progress";
 import { notFound } from "next/navigation";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { Address, TxLink } from "@/components/chain";
@@ -16,14 +19,14 @@ import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { LOCKED_MILESTONE_V2 } from "@xrlp/shared";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, VAULT_PHASE, focusMilestone, namer, roleNamer } from "@/lib/display";
+import { PROJECT_STATUS, PROJECT_TYPE, MILESTONE_STATUS, VAULT_PHASE, focusMilestone, namer, roleNamer } from "@/lib/display";
 import { investmentAvailability } from "@/lib/investment";
 import { getSession } from "@/lib/session";
 import { formatAmount, formatBps, formatDate, fromCents, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ m?: string }> };
+type Props = { params: Promise<{ id: string }>; searchParams: Promise<{ m?: string; view?: string }> };
 
 async function load(id: string): Promise<ProjectDetail> {
   try {
@@ -44,7 +47,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 }
 
 export default async function ProjectPage({ params, searchParams }: Props) {
-  const [{ id }, { m: selectedId }, session] = await Promise.all([params, searchParams, getSession()]);
+  const [{ id }, { m: selectedId, view: selectedView }, session] = await Promise.all([params, searchParams, getSession()]);
   const d = await load(id);
   const { project: p, builder } = d;
   const who = namer(session.parties);
@@ -58,21 +61,9 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const audits = (selected && d.audits[selected.id]) ?? [];
   const investment = investmentAvailability(p.status, d.vault?.phase, d.vault?.subscriptionDate);
 
-  return (
-    <div className="space-y-10">
-      <AutoRefresh ms={3000} />
-
-      <div>
-        <Link href="/" className="text-caption text-ink-2 hover:text-ink">
-          Projects
-        </Link>
-        <PageHeader
-          className="mt-2"
-          title={p.name}
-          meta={<Tag tone={status.tone}>{status.label}</Tag>}
-          description={`${builder.name} · ${p.siteAddress}`}
-          action={
-            p.status === "funding" && session.investor
+  const view = ["overview", "milestones", "financials", "activity"].includes(selectedView ?? "") ? selectedView : selectedId ? "milestones" : "overview";
+  const pct = Math.min(100, raised / Math.max(1, toCents(p.terms.principal)) * 100);
+  const investmentAction = (p.status === "funding" && session.investor && session.role === "investor"
               ? investment.available
                 ? <InvestDialog
                     projectId={p.id}
@@ -83,12 +74,52 @@ export default async function ProjectPage({ params, searchParams }: Props) {
                     redemptionDate={d.vault?.redemptionDate}
                   />
                 : <Button size="lg" disabled title={investment.reason}>{investment.label}</Button>
-              : undefined
-          }
+              : undefined);
+
+  return (
+    <div className="space-y-7">
+      <AutoRefresh ms={3000} />
+
+      <div>
+        <Link href="/" className="inline-flex min-h-8 items-center gap-2 text-caption text-ink-2 hover:text-ink">
+          <ArrowLeft className="size-3.5" aria-hidden="true" /> All projects
+        </Link>
+        <PageHeader
+          className="mt-2"
+          title={p.name}
+          meta={<Tag tone={status.tone}>{status.label}</Tag>}
+          description={`${builder.name} · ${p.siteAddress}`}
+          action={view !== "overview" ? investmentAction : undefined}
         />
       </div>
 
-      <section className="space-y-5">
+      <nav className="view-tabs" aria-label="Project views">
+        {[{ key: "overview", label: "Overview", Icon: LayoutGrid }, { key: "milestones", label: "Milestones", Icon: ListChecks }, { key: "financials", label: "Financials", Icon: Wallet }, { key: "activity", label: "Activity", Icon: History }].map(({ key, label, Icon }) => <Link key={key} href={`?view=${key}${selectedId ? `&m=${encodeURIComponent(selectedId)}` : ""}`} scroll={false} aria-current={view === key ? "page" : undefined}><Icon aria-hidden="true" />{label}</Link>)}
+      </nav>
+
+      {view === "overview" && <div className="space-y-6">
+        <div className="project-overview">
+          <div className="surface overflow-hidden">
+            <ProjectArt id={p.id} large />
+            <div className="flex flex-wrap items-center justify-between gap-4 p-5"><div><p className="text-small font-medium">{PROJECT_TYPE[p.type]}</p><p className="mt-1 text-caption text-ink-2">{p.siteAddress}</p></div><Link href={`/projects/${p.id}/verification`} className="inline-flex min-h-10 items-center gap-1.5 text-caption font-medium text-link">Verification report <ArrowUpRight className="size-3.5" aria-hidden="true" /></Link></div>
+          </div>
+          <section className="surface project-funding" aria-label="Funding summary">
+            <p className="text-small text-ink-2">Capital committed</p>
+            <p className="mt-2 tabular text-display">{formatAmount(raised / 100)}<span className="ml-2 text-caption font-normal tracking-normal text-ink-2">RLUSD</span></p>
+            <div className="mt-4 flex justify-between text-caption text-ink-2"><span>of {formatAmount(p.terms.principal)} RLUSD</span><span>{Math.floor(pct)}% funded</span></div>
+            <Progress value={pct} className="mt-2" label={`${Math.floor(pct)}% funded`} />
+            <dl><div><dt>Annual rate</dt><dd>{formatBps(p.terms.interestRateBps)}</dd></div><div><dt>Loan term</dt><dd>{p.terms.termDays}<span className="ml-1 text-caption text-ink-2">days</span></dd></div></dl>
+            {investmentAction ? <div className="[&_button]:w-full">{investmentAction}</div> : <Tag tone={status.tone}>{status.label}</Tag>}
+            <p className="mt-3 text-caption text-ink-2">{p.status === "funding" ? `Funding closes ${formatDate(p.terms.fundingDeadline)}.` : "Funds move when milestone checks pass."}</p>
+          </section>
+        </div>
+        <section className="surface surface-pad">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-3"><h2 className="text-heading">The path to completion</h2><span className="text-caption text-ink-2">{p.milestones.filter((m) => m.status === "released").length} of {p.milestones.length} milestones released</span></div>
+          {p.milestones.map((m) => <Link key={m.id} href={`?view=milestones&m=${encodeURIComponent(m.id)}`} className="milestone-summary group"><span className={`milestone-number ${m.status === "released" ? "bg-pass-bg text-pass" : ""}`}>{m.status === "released" ? <Check className="size-4" aria-hidden="true" /> : String(m.index + 1).padStart(2, "0")}</span><div className="min-w-0 flex-1"><p className="text-small font-medium group-hover:text-link">{m.title}</p><p className="mt-0.5 text-caption text-ink-2">{formatAmount(m.amount)} RLUSD</p></div><Tag tone={MILESTONE_STATUS[m.status].tone}>{MILESTONE_STATUS[m.status].label}</Tag><ArrowUpRight className="hidden size-4 text-ink-2 sm:block" aria-hidden="true" /></Link>)}
+        </section>
+      </div>}
+
+      {view === "milestones" && <section className="space-y-5">
         <MilestoneTabs milestones={p.milestones} selectedId={selected?.id} />
         {selected && (
           <>
@@ -118,8 +149,9 @@ export default async function ProjectPage({ params, searchParams }: Props) {
             <EvidenceStrip evidence={d.evidence?.[selected.id] ?? []} audit={audits[audits.length - 1]} results={[...checks.required, ...checks.optional]} />
           </>
         )}
-      </section>
+      </section>}
 
+      {view === "financials" && <div className="space-y-7">
       {d.vault && (
         <Section title="Where the money is" aside="Moves only by ledger transactions">
           <MoneyMap
@@ -149,7 +181,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
         </Section>
       )}
 
-      <div className="grid gap-12 border-t border-line pt-10 md:grid-cols-3">
+      <div className="surface surface-pad grid gap-8 xl:grid-cols-3">
         <Section title="Loan">
           <Properties
             labelWidth={124}
@@ -203,7 +235,8 @@ export default async function ProjectPage({ params, searchParams }: Props) {
         </Section>
       )}
 
-      <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_340px]">
+      </div>}
+      {view === "activity" && <div className="surface surface-pad grid gap-10 xl:grid-cols-[minmax(0,1fr)_300px]">
         <Section title="Activity" aside="Every line is an XRPL transaction">
           <Activity events={d.events} who={who} roleOf={roleNamer(session.parties)} builderName={builder.name} milestoneTitle={title} limit={14} />
         </Section>
@@ -230,7 +263,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
             />
           </Section>
         </aside>
-      </div>
+      </div>}
     </div>
   );
 }

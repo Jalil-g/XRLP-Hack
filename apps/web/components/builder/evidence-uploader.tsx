@@ -1,5 +1,6 @@
 "use client";
 
+import { ProcessFeedback } from "@/components/process-feedback";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Loader2, X } from "lucide-react";
@@ -90,7 +91,7 @@ export function EvidenceUploader({
       setReceipt(`${r.evidence.length} files submitted for ${milestoneTitle}. Next: the inspector reviews the evidence.`);
       setReviewing(false);
       setFiles([]);
-      router.refresh();
+
     } catch (err) {
       const feedback = errorFeedback(err);
       setError(`${feedback.title}. ${errorDescription(feedback)}`);
@@ -100,6 +101,8 @@ export function EvidenceUploader({
       setBusy(false);
     }
   };
+
+  if (busy || receipt) return <div className="rounded-panel border border-line bg-page p-5" data-pause-auto-refresh="true"><ProcessFeedback state={busy ? "pending" : "complete"} title={busy ? "Submitting your evidence" : "Evidence received"} detail={busy ? `${files.length} files for ${milestoneTitle}. Waiting for the upload response.` : receipt} />{receipt && <div className="mt-5 flex justify-end"><Button onClick={() => { setReceipt(undefined); router.refresh(); }}>Continue</Button></div>}</div>;
 
   return (
     <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_280px]">

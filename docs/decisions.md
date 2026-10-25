@@ -1,5 +1,11 @@
 # Decisions log
 
+## Focused frontend workspaces — 2026-10-25 (#197)
+
+- User authorized a redesign of the entire frontend and richer process animations, superseding the earlier Apple/Notion visual restrictions. Both apps now share a charcoal/neutral/lime workspace system and compact navigation. The canonical guide is `docs/ideas/shared-frontend-style.md`.
+- Reduce default information density with project views, collapsed supporting checks, one selected builder project, stepped project creation, and separate inspector evidence/report views. Existing milestone links and all evidence/signing protections remain supported.
+- Funding and milestone release share a dimensional transfer scene; verification, document upload, project creation, and signed-audit filing have state-driven animations. Success always follows the actual API result, reduced motion is static, and consequential receipts pause automatic refresh until dismissal. No application dependencies or backend contracts are added.
+
 ## Investment transfer animation — 2026-10-25
 
 - User requested visible money movement after confirming an investment. The deposit dialog shows RLUSD flowing from the investor wallet into the project vault, matching the actual VaultDeposit destination; builder payouts still require milestone checks.

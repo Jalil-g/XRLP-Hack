@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, ArrowUpRight } from "lucide-react";
 import { API_MODE } from "@/lib/api";
 import type { Session } from "@/lib/session";
 import { BRAND } from "@/lib/utils";
@@ -15,44 +15,36 @@ export function SiteHeader({ session }: { session: Session }) {
         ? { cookie: "builder" as const, current: session.builder?.id ?? "", options: session.builders.map((b) => ({ value: b.id, label: b.name })) }
         : null;
 
+  const name = session.role === "investor" ? session.investor?.name : session.role === "builder" ? session.builder?.name : "Platform operator";
+  const initials = (name ?? "DP").split(" ").map((word) => word[0]).slice(0, 2).join("");
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-page">
-      <div className="mx-auto flex min-h-14 max-w-[1184px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-1.5 sm:px-8">
-        <Link href="/" className="text-body font-semibold tracking-[-0.01em] text-ink">
-          {BRAND.name}
-        </Link>
+    <>
+      <aside className="workspace-sidebar">
+        <Link href="/" className="workspace-brand"><span className="brand-symbol" aria-hidden="true"><i /><i /><i /><i /></span>{BRAND.name}<span className="text-accent">.</span></Link>
+        <p className="workspace-label">Your workspace</p>
         <NavLinks role={session.role} />
-        <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
-          {API_MODE === "mock" ? (
-            <span
-              className="rounded-tag bg-review-bg px-2 py-0.5 text-caption font-medium text-review"
-              title="NEXT_PUBLIC_API_MODE=mock: fixture data, no ledger. Tx hashes are not real."
-            >
-              Mock data
-            </span>
-          ) : (
-            <span className="text-caption text-ink-2" title="NEXT_PUBLIC_API_MODE=http">
-              Live API
-            </span>
-          )}
+        <div className="sidebar-bottom">
+          <div className="mb-6 border-t border-white/10 pt-5"><ArrowUpRight className="size-5 text-accent" aria-hidden="true" /><p>Built on proof.<br />Funded with confidence.</p></div>
+          <span className="sidebar-network">XRPL Devnet</span>
+        </div>
+      </aside>
+      <header className="workspace-topbar">
+        <div className="workspace-context"><strong className="capitalize">{session.role} workspace</strong><span>/</span><span>Construction finance</span></div>
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="rounded-tag border border-line bg-page px-2 py-1 text-[11px] text-ink-2">{API_MODE === "mock" ? "Mock data" : "Live API"}</span>
           <details className="relative">
-            <summary className="flex h-11 max-w-[200px] cursor-pointer list-none items-center gap-2 rounded-control px-2 text-caption font-medium hover:bg-band [&::-webkit-details-marker]:hidden">
-              <span className="capitalize">{session.role}</span><ChevronDown className="size-3.5 shrink-0 text-ink-2" aria-hidden />
-              <span className="hidden truncate text-ink-2 lg:inline">{session.role === "investor" ? session.investor?.name : session.role === "builder" ? session.builder?.name : "Operator"}</span>
+            <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden" aria-label="Account and workspace">
+              <span className="workspace-avatar">{initials}</span><span className="hidden max-w-[150px] truncate text-caption font-medium sm:block">{name}</span><ChevronDown className="size-3.5 text-ink-2" aria-hidden="true" />
             </summary>
             <div className="absolute right-0 z-50 mt-2 w-[min(360px,calc(100vw-2rem))] space-y-4 rounded-panel border border-line bg-page p-4 shadow-overlay">
-              <p className="text-small font-medium">Demo account</p>
+              <p className="text-small font-medium">Switch workspace</p>
               <RoleSwitcher role={session.role} identities={identities} />
               <ProjectorToggle />
             </div>
           </details>
         </div>
-      </div>
-      {session.directoryUnavailable && (
-        <p role="alert" className="border-t border-line bg-review-bg px-4 py-2 text-center text-small text-review">
-          Account details are unavailable. Names and account actions may be missing; refresh before transacting.
-        </p>
-      )}
-    </header>
+      </header>
+      {session.directoryUnavailable && <p role="alert" className="workspace-topbar bg-review-bg text-small text-review">Account details are unavailable. Refresh before transacting.</p>}
+    </>
   );
 }

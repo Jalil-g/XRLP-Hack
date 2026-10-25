@@ -16,6 +16,7 @@ import { SiteMap, type MapPin } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
 import { NEEDS } from "@/components/task-row";
 import { Badge } from "@/components/ui/badge";
+import { ProcessFeedback } from "@/components/process-feedback";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -134,6 +135,7 @@ function AuditForm({
   const [draft, setDraft] = useState<AuditDraft>(() => emptyDraft(task));
   const [showErrors, setShowErrors] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [workView, setWorkView] = useState<"evidence" | "report">("evidence");
   const [phase, setPhase] = useState<"idle" | "signing" | "filing">("idle");
   const [submitError, setSubmitError] = useState<SubmitErrorView>();
   const [result, setResult] = useState<{ res: SubmitAuditResult; signed?: SignedAttestation }>();
@@ -274,9 +276,10 @@ function AuditForm({
         <p className="text-caption text-muted">Evidence version: {bundle ? shortHash(bundle) : "Preparing…"}. {canSign ? "Signed with your loaded browser key." : "Browser signing is unavailable for this report. Core will sign on your behalf."}</p>
       </ReviewDialog>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+      <div className="audit-steps" role="group" aria-label="Audit workspace"><button type="button" aria-pressed={workView === "evidence"} onClick={() => setWorkView("evidence")}><span>01</span> Review evidence</button><button type="button" aria-pressed={workView === "report"} onClick={() => setWorkView("report")}><span>02</span> Write your audit</button><span className="audit-step-next"><span>03</span> Sign & submit</span></div>
+      <div className="mx-auto max-w-[920px]">
         {/* Left: what the builder claims. */}
-        <div className="min-w-0 space-y-6 lg:sticky lg:top-24 lg:self-start">
+        <div className={cn("min-w-0 space-y-5", workView !== "evidence" && "hidden")}>
           <Card>
             <CardHeader>
               <div>
@@ -298,10 +301,11 @@ function AuditForm({
               <SiteMap site={task.siteGeo} pins={pins} />
             </CardContent>
           </Card>
+          <div className="flex justify-end"><Button onClick={() => setWorkView("report")}>Continue to audit</Button></div>
         </div>
 
-        {/* Right: the inspector's audit. */}
-        <div className="min-w-0 space-y-6">
+        {/* Keep both views mounted so changing steps preserves report inputs. */}
+        <div className={cn("min-w-0 space-y-5", workView !== "report" && "hidden")}>
           {isReAudit && <ReAuditContext task={task} checks={checks} inspector={inspector} bundle={bundle} onReload={onReload} busy={busy} />}
 
           <Card id="checklist">
@@ -371,9 +375,10 @@ function AuditForm({
               )}
               {key !== undefined && spv && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
               <Button ref={submitButton} variant="brand" size="lg" className="w-full" aria-keyshortcuts="Control+Enter Meta+Enter" onClick={() => {
+                setWorkView("report");
                 setShowErrors(true);
                 if (problems.length) {
-                  document.getElementById(problems[0]!.field)?.scrollIntoView({ block: "center" });
+                  window.requestAnimationFrame(() => document.getElementById(problems[0]!.field)?.scrollIntoView({ block: "center" }));
                   return;
                 }
                 setReviewing(true);
@@ -398,7 +403,7 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
       {back}
       <Card>
         <CardContent className="space-y-4 py-8 text-center">
-          <CheckCircle2 className="mx-auto size-10 text-ok" />
+          <ProcessFeedback complete title="Signed report received" detail="Your audit is filed. Milestone checks determine what happens next." />
           <div>
             <h1 className="text-xl font-semibold">Audit filed</h1>
             <p className="mt-1 text-small text-muted">
