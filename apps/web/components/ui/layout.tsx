@@ -42,7 +42,7 @@ export function Section({
   return (
     <section className={cn("min-w-0", className)}>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-4">
-        <h2 className="text-[17px] leading-6 font-semibold tracking-[-0.01em]">{title}</h2>
+        <h2 className="t-card">{title}</h2>
         {aside && <div className="text-caption text-ink-2">{aside}</div>}
       </div>
       {children}
@@ -67,7 +67,7 @@ export function Properties({ items, labelWidth = 160, className }: { items: { la
 /** Empty / not-yet state: one line plus an action. */
 export function Empty({ title, children, action, className }: { title: string; children?: React.ReactNode; action?: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-panel bg-band px-6 py-10 text-center", className)}>
+    <div className={cn("panel px-6 py-10 text-center", className)}>
       <p className="text-body font-medium text-ink">{title}</p>
       {children && <div className="mx-auto mt-1 max-w-[52ch] text-small text-ink-2">{children}</div>}
       {action && <div className="mt-4">{action}</div>}

@@ -1,4 +1,5 @@
 "use client";
+import { AuditWorkspace } from "@/components/audit/workspace";
 // INS-06: pre-construction site visit for a project whose verification the AI escalated. Mock-only until the contract on #53
 // is agreed (see lib/site-visit.ts): in http mode core does not have the route yet and answers 404.
 import Link from "next/link";
@@ -197,7 +198,7 @@ function SiteVisitForm({ task, inspector, inspectorName }: { task: InspectorTask
         </p>
       )}
 
-      <div className="grid items-start gap-x-12 gap-y-12 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+      <AuditWorkspace siteVisit>
         <div className="min-w-0 space-y-10">
           <Card id="answers">
             <CardHeader>
@@ -232,7 +233,7 @@ function SiteVisitForm({ task, inspector, inspectorName }: { task: InspectorTask
             </ol>
           </Card>
 
-          <Section title="Notes">
+          <Section id="review" title="Notes & review">
             <textarea
               aria-label="Site visit notes"
               value={draft.notes}
@@ -317,7 +318,7 @@ function SiteVisitForm({ task, inspector, inspectorName }: { task: InspectorTask
             </div>
           </div>
         </div>
-      </div>
+      </AuditWorkspace>
     </div>
   );
 }

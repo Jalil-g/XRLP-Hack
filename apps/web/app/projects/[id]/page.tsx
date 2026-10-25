@@ -70,19 +70,20 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   ];
 
   return (
-    <div>
+    <div className="space-y-8">
       <AutoRefresh ms={3000} />
 
       <ReleaseStage>
         <div className="space-y-8">
-          <header>
-            <Link href="/" className="text-small font-medium text-ink-3 hover:text-ink">
-              Projects
+          <header className="flex min-h-48 flex-col justify-end rounded-md bg-[#163c35] px-6 py-7 text-white md:px-8">
+            <Link href="/" className="mb-4 text-small text-white/75 hover:text-white">
+              ← All projects
             </Link>
             <div className="mt-1 flex flex-wrap items-center gap-3">
-              <h1 className="text-[28px] leading-9 font-semibold tracking-[-0.025em]">{p.name}</h1>
+              <h1 className="text-[34px] leading-10 font-medium tracking-tight">{p.name}</h1>
               <Tag tone={status.tone}>{status.label}</Tag>
             </div>
+            <p className="mt-2 text-small text-white/75">{p.siteAddress} · {builder.name}</p>
           </header>
 
           <ProjectHero
@@ -150,7 +151,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
         </div>
       </ReleaseStage>
 
-      <div className="mt-20 grid gap-x-14 gap-y-12 md:grid-cols-3">
+      <div className="grid gap-5 md:grid-cols-3 [&>section]:rounded-md [&>section]:border [&>section]:border-line [&>section]:bg-white [&>section]:p-5">
         <Section title="Loan">
           <Properties
             labelWidth={120}
@@ -211,12 +212,12 @@ export default async function ProjectPage({ params, searchParams }: Props) {
       </div>
 
       {(p.sov?.length ?? 0) > 0 && (
-        <Section title="Schedule of Values" className="mt-16">
+        <Section title="Schedule of Values" className="rounded-md border border-line bg-white p-5 md:p-6">
           <SovTable sov={p.sov ?? []} milestones={p.milestones} selectedId={selected?.id} />
         </Section>
       )}
 
-      <div className="mt-16 grid gap-x-14 gap-y-12 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] [&>section]:rounded-md [&>section]:border [&>section]:border-line [&>section]:bg-white [&>section]:p-5">
         <Section title="Activity">
           <Activity events={d.events} who={who} roleOf={roleNamer(session.parties)} builderName={builder.name} milestoneTitle={title} limit={10} />
         </Section>

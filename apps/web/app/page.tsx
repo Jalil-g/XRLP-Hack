@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { ProjectHero } from "@/components/project/project-hero";
+import { ProjectCover } from "@/components/project/project-cover";
 import { buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
@@ -10,126 +11,67 @@ import { fundingCountdown, MARKETPLACE_TYPES, marketplaceProjects, parseProjectT
 import { cn, formatAmount, formatBps, formatDate, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
-
-const GRID = "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-2 md:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_72px_150px]";
-
 type Props = { searchParams: Promise<{ type?: string | string[] }> };
 
 export default async function ProjectsPage({ searchParams }: Props) {
   const selectedType = parseProjectType((await searchParams).type);
-  // Verified projects in every later status (funding, escrowed, completed...), open-for-funding first (lib/marketplace).
   const projects = marketplaceProjects(await api.listProjects(), selectedType);
   const target = projects.reduce((total, project) => total + toCents(project.principal), 0);
   const raised = projects.reduce((total, project) => total + toCents(project.raised), 0);
-  const open = projects.filter((project) => project.status === "funding").length;
+  const open = projects.filter((project) => project.status === "funding");
+  const closing = open[0];
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-7">
       <AutoRefresh ms={5000} />
-      <h1 className="sr-only">Projects</h1>
-
-      {projects.length > 0 && (
-        <ProjectHero
-          money={{ mode: "funding", raisedCents: raised, targetCents: target }}
-          facts={[
-            { label: "Projects", value: String(projects.length) },
-            { label: "Open for funding", value: String(open) },
-          ]}
-        />
-      )}
-
-      <section aria-label="Projects">
-        <nav className="mb-4 flex flex-wrap gap-2" aria-label="Filter projects by type">
-          <FilterLink href="/" active={!selectedType}>All</FilterLink>
-          {MARKETPLACE_TYPES.map((type) => (
-            <FilterLink key={type} href={`/?type=${type}`} active={selectedType === type}>{PROJECT_TYPE[type]}</FilterLink>
-          ))}
-        </nav>
-
-        {projects.length === 0 ? (
-          <Empty
-            title={selectedType ? "No matching verified projects" : "No verified projects"}
-            action={selectedType
-              ? <Link href="/" className={buttonClass("secondary")}>Clear the type filter</Link>
-              : <Link href="/demo" className={buttonClass("secondary")}>Open demo</Link>}
-          >
-            {selectedType ? `No ${PROJECT_TYPE[selectedType].toLowerCase()} projects are listed right now.` : "Projects appear here after they pass verification. This list refreshes automatically."}
-          </Empty>
-        ) : (
-          <>
-            <div aria-hidden className={cn(GRID, "hidden border-b border-line px-3 pb-2 text-caption text-ink-2 md:grid")}>
-              <span>Project</span>
-              <span>Raised</span>
-              <span className="text-right">Rate</span>
-              <span />
-            </div>
-            <ul>
-              {projects.map((p) => {
-                const pct = Math.min(100, (toCents(p.raised) / Math.max(1, toCents(p.principal))) * 100);
-                const status = PROJECT_STATUS[p.status];
-                const funding = p.status === "funding";
-                const place = p.siteAddress.split(",")[1]?.trim() || p.siteAddress;
-                return (
-                  <li key={p.id} className="border-b border-line">
-                    <Link
-                      href={`/projects/${p.id}`}
-                      className={cn(GRID, "group -mx-3 rounded-[12px] px-3 py-5 transition-colors duration-150 hover:bg-band")}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-body font-semibold">{p.name}</span>
-                        <span className="block truncate text-small text-ink-2">
-                          {place} · {PROJECT_TYPE[p.type]}
-                          {p.builderName && <> · {p.builderName}{p.builderVerified && <span className="text-pass"> (verified)</span>}</>}
-                        </span>
-                      </span>
-                      <span className="text-right md:order-4 md:text-left">
-                        {funding ? <Tag tone={status.tone}>{status.label}</Tag> : <span className="text-small text-ink-3">{status.label}</span>}
-                        {funding && (
-                          <span className="mt-1 block text-caption text-ink-2 tabular-nums" title={`Funding closes ${formatDate(p.fundingDeadline)}`}>
-                            {fundingCountdown(p.fundingDeadline)}
-                          </span>
-                        )}
-                      </span>
-                      <span className="col-span-2 md:order-2 md:col-span-1">
-                        <span className="block text-small tabular-nums">
-                          <strong className="font-semibold">{formatAmount(p.raised)}</strong>
-                          <span className="text-ink-2">{pct < 100 ? ` of ${formatAmount(p.principal)}` : " raised"}</span>
-                        </span>
-                        {pct < 100 && <span
-                          role="progressbar"
-                          aria-label={`${Math.floor(pct)}% raised`}
-                          aria-valuenow={Math.round(pct)}
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          className="mt-2 block h-1.5 overflow-hidden rounded-full bg-band-2"
-                        >
-                          <span className="block h-full rounded-full bg-accent shadow-[inset_0_0_0_1px_rgb(0_0_0/0.08)]" style={{ width: `${pct}%` }} />
-                        </span>}
-                      </span>
-                      <span className="col-span-2 text-small font-semibold tabular-nums md:order-3 md:col-span-1 md:text-right">
-                        <span className="font-normal text-ink-2 md:hidden">Rate </span>
-                        {p.interestRateBps !== undefined ? formatBps(p.interestRateBps) : "n/a"}
-                      </span>
-                    </Link>
-                  </li>
-                );
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div><p className="mb-1 text-small text-ink-2">Construction lending, backed by proof</p><h1 className="text-[30px] leading-10 font-medium tracking-tight">Projects</h1></div>
+        <Link href="/portfolio" className="flex items-center gap-2 text-small underline underline-offset-4">Your portfolio <ArrowRight className="size-4" aria-hidden /></Link>
+      </header>
+      {closing && <div className="flex flex-wrap items-center justify-between gap-4 rounded-md bg-[#163c35] px-6 py-4 text-white"><p className="text-[17px]">{closing.name} · {fundingCountdown(closing.fundingDeadline)}</p><Link href={`/projects/${closing.id}`} className={cn(buttonClass("secondary"), "border-white bg-white text-[#163c35]")}>View project</Link></div>}
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <section aria-label="Projects" className="min-w-0 space-y-4">
+          <h2 className="text-[23px] font-medium">{selectedType ? PROJECT_TYPE[selectedType] : "Explore projects"}</h2>
+          <nav className="flex flex-wrap gap-2" aria-label="Filter projects by type">
+            <FilterLink href="/" active={!selectedType}>All</FilterLink>
+            {MARKETPLACE_TYPES.map((type) => <FilterLink key={type} href={`/?type=${type}`} active={selectedType === type}>{PROJECT_TYPE[type]}</FilterLink>)}
+          </nav>
+          {projects.length === 0 ? <Empty title={selectedType ? "No matching verified projects" : "No verified projects"} action={<Link href={selectedType ? "/" : "/demo"} className={buttonClass("secondary")}>{selectedType ? "Clear the type filter" : "Open demo"}</Link>}>Projects appear here after they pass verification. This list refreshes automatically.</Empty> : (
+            <ul className="space-y-4">
+              {projects.map((project) => {
+                const percent = Math.min(100, (toCents(project.raised) / Math.max(1, toCents(project.principal))) * 100);
+                const status = PROJECT_STATUS[project.status];
+                return <li key={project.id} className="rounded-md border border-line bg-white p-5"><article className="space-y-5">
+                  <div className="grid gap-5 md:grid-cols-2">
+                    <ProjectCover name={project.name} address={project.siteAddress} />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-small text-ink-2"><span>{PROJECT_TYPE[project.type]}</span><Tag tone={status.tone}>{status.label}</Tag></div>
+                      <h3 className="mt-2 text-[22px] leading-7 font-medium">{project.name}</h3>
+                      {project.builderName && <p className="mt-1 text-small text-ink-2">{project.builderName}{project.builderVerified && <span className="text-pass"> · Verified builder</span>}</p>}
+                      <dl className="mt-4 divide-y divide-line text-small">{[
+                        ["Rate", project.interestRateBps !== undefined ? formatBps(project.interestRateBps) : "Not available"],
+                        ["Raised", `${formatAmount(project.raised)} / ${formatAmount(project.principal)} RLUSD`],
+                        ["Closes", formatDate(project.fundingDeadline)],
+                      ].map(([label, value]) => <div key={label} className="flex justify-between gap-3 py-2"><dt className="text-ink-2">{label}</dt><dd className="text-right tabular-nums">{value}</dd></div>)}</dl>
+                    </div>
+                  </div>
+                  <div role="progressbar" aria-label={`${Math.floor(percent)}% raised`} aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100} className="h-1.5 overflow-hidden rounded-full bg-[#e8ece8]"><div className="h-full rounded-full bg-[#163c35]" style={{ width: `${percent}%` }} /></div>
+                  <Link href={`/projects/${project.id}`} className={cn(buttonClass("secondary"), "w-full rounded-md border-[#163c35] text-[#163c35]")}>View project <ArrowRight className="ml-2 size-4" aria-hidden /></Link>
+                </article></li>;
               })}
             </ul>
-          </>
-        )}
-      </section>
+          )}
+        </section>
+        <aside className="space-y-4">
+          <section className="rounded-md border border-line bg-white p-5"><h2 className="text-[20px] font-medium">Marketplace</h2><dl className="mt-4 grid grid-cols-2 gap-4"><div><dt className="text-small text-ink-2">Raised · RLUSD</dt><dd className="mt-1 text-[26px] tabular-nums">{formatAmount(raised / 100)}</dd></div><div className="border-l border-line pl-4"><dt className="text-small text-ink-2">Open projects</dt><dd className="mt-1 text-[26px] tabular-nums">{open.length}</dd></div></dl><p className="mt-4 border-t border-line pt-3 text-small text-ink-2">{formatAmount(target / 100)} RLUSD in listed project principal</p></section>
+          <section className="rounded-md border border-line bg-white p-5"><ShieldCheck className="mb-3 size-6 text-[#163c35]" aria-hidden /><h2 className="text-[20px] font-medium">Proof before payout</h2><p className="mt-3 text-small leading-6 text-ink-2">Signed audits and passing checks gate escrow release.</p><Link href="/demo" className="mt-4 inline-flex items-center gap-2 text-small underline underline-offset-4">See the live workflow <ArrowRight className="size-4" aria-hidden /></Link></section>
+          <section className="rounded-md border border-line bg-white p-5"><h2 className="text-[20px] font-medium">Building something?</h2><p className="mt-2 text-small leading-6 text-ink-2">Manage your project, evidence and milestone draws in one workspace.</p><Link href="/builder" className={cn(buttonClass(), "mt-4 w-full bg-[#163c35] text-white")}>Builder workspace</Link></section>
+        </aside>
+      </div>
     </div>
   );
 }
 
 function FilterLink({ href, active, children }: { href: string; active: boolean; children: React.ReactNode }) {
-  return (
-    <Link
-      href={href}
-      aria-current={active ? "page" : undefined}
-      className={cn("rounded-control px-3 py-1.5 text-small transition-colors duration-150", active ? "bg-ink text-page" : "bg-band text-ink hover:bg-line")}
-    >
-      {children}
-    </Link>
-  );
+  return <Link href={href} aria-current={active ? "page" : undefined} className={cn("rounded-md border px-3 py-2 text-small transition-colors", active ? "border-[#163c35] bg-[#163c35] text-white" : "border-line bg-white text-ink hover:bg-band")}>{children}</Link>;
 }

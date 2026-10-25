@@ -6,7 +6,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { BuilderHero, type HeroFigure } from "@/components/builder/builder-hero";
 import { EvidenceReceipt } from "@/components/builder/evidence-receipt";
 import { EvidenceUploader } from "@/components/builder/evidence-uploader";
-import { TxLink } from "@/components/chain";
+import { Address, TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
 import { Proof } from "@/components/checks/proof";
 import { StatusIcon, type RowState } from "@/components/checks/status-icon";
@@ -20,7 +20,7 @@ import type { Milestone, ProjectDetail, ProjectStatus } from "@/lib/contract";
 import { PROJECT_STATUS, checkName, sovLinesFor } from "@/lib/display";
 import { MAPLE_FIXTURE_SETS } from "@/lib/fixture-files";
 import { getSession } from "@/lib/session";
-import { cn, formatDate, toCents } from "@/lib/utils";
+import { cn, formatAmount, formatDate, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Builder" };
@@ -39,7 +39,7 @@ export default async function BuilderPage({ searchParams }: Props) {
   const details = await Promise.all(summaries.map((s) => api.getProject(s.id)));
 
   return (
-    <div className="space-y-14">
+    <div className="space-y-7">
       <AutoRefresh ms={4000} />
       <PageHeader
         title={builder.name}
@@ -62,19 +62,30 @@ export default async function BuilderPage({ searchParams }: Props) {
         />
       )}
 
+      <div className="flex flex-wrap items-center justify-between gap-4 rounded-md bg-[#163c35] px-6 py-4 text-white"><p className="text-[17px]">Your projects, from verified plans to milestone payouts.</p><Link href="/builder/new" className="text-small underline underline-offset-4">Start a project →</Link></div>
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="min-w-0 space-y-5">
+      <h2 className="text-[23px] font-medium">Projects</h2>
       {details.map((d, i) => (
         <BuilderProject key={d.project.id} d={d} lead={i === 0} pin={pin} />
       ))}
+      <section className="flex flex-col items-center gap-3 rounded-md border border-dashed border-line-2 p-8 text-center"><h3 className="text-[22px] font-medium">New project</h3><p className="max-w-80 text-small leading-6 text-ink-2">Add your schedule of values and verification documents.</p><Link href="/builder/new" className={buttonClass()}>Start a project</Link></section>
+      </div>
+      <aside className="space-y-4">
+      <section className="rounded-md border border-line bg-white p-5"><h2 className="text-[20px] font-medium">Wallet</h2><p className="mt-3 text-small text-ink-2">Builder account</p><div className="mt-2 break-all"><Address address={builder.address} /></div>{details.find((detail) => detail.balances)?.balances && <><p className="mt-4 text-small text-ink-2">RLUSD balance</p><p className="mt-1 text-[32px] leading-10 tabular-nums">{formatAmount(details.find((detail) => detail.balances)!.balances!.builder)}</p></>}<div className="mt-4 border-t border-line pt-3"><Tag tone={builder.verified ? "pass" : "neutral"}>{builder.verified ? "Verified builder" : "Not verified"}</Tag></div></section>
+      <section className="rounded-md border border-line bg-white p-5"><h2 className="text-[20px] font-medium">Milestone payouts</h2><p className="mt-3 text-small text-ink-2">Released to you · RLUSD</p><p className="mt-1 text-[32px] leading-10 tabular-nums">{formatAmount(details.flatMap((detail) => detail.project.milestones).filter((milestone) => milestone.status === "released").reduce((total, milestone) => total + toCents(milestone.amount), 0) / 100)}</p><p className="mt-3 text-small leading-6 text-ink-2">Checks gate payouts. View receipts on each project.</p></section>
 
       <Proof
         label="Builder proof"
-        className="border-t border-line pt-2"
+        className="rounded-md border border-line bg-white p-5"
         items={[
           { label: "Licence", value: builder.licenseNumber },
           { label: "Completed", value: `${builder.completedProjects} projects` },
           { label: "Credential", value: builder.credentialTx && <TxLink hash={builder.credentialTx} /> },
         ]}
       />
+      </aside>
+      </div>
     </div>
   );
 }
@@ -116,7 +127,7 @@ function BuilderProject({ d, lead, pin }: { d: ProjectDetail; lead: boolean; pin
 
   return (
     <ReleaseStage>
-      <section aria-labelledby={`project-${p.id}`} className="space-y-7">
+      <section aria-labelledby={`project-${p.id}`} className="space-y-6 rounded-md border border-line bg-white p-5 md:p-6">
         <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex flex-wrap items-center gap-3">
             <h2 id={`project-${p.id}`} className="text-heading">

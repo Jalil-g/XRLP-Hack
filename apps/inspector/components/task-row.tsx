@@ -9,7 +9,7 @@ import { cn, formatAmount, formatDate } from "@/lib/utils";
 
 export const NEEDS: Record<TaskNeeds, { label: string; action: string; tone: Tone }> = {
   re_audit: { label: "Re-audit", action: "Re-audit", tone: "warn" },
-  audit: { label: "Audit due", action: "Audit", tone: "neutral" },
+  audit: { label: "Audit due", action: "Start audit", tone: "neutral" },
   pre_visit: { label: "Site visit", action: "Visit site", tone: "info" },
   none: { label: "Nothing due", action: "", tone: "neutral" },
 };
@@ -37,14 +37,16 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const short = ev.kinds.filter((k) => k.have < k.need);
 
   return (
-    <li className={cn("grid items-center gap-x-8 gap-y-3 py-4 transition-[background-color,box-shadow] duration-500 sm:grid-cols-[minmax(0,1fr)_auto]", fresh && "bg-band shadow-[-12px_0_0_var(--color-band),12px_0_0_var(--color-band)]")}>
-      <div className="min-w-0">
-        <p className="flex flex-wrap items-center gap-x-2 text-body font-semibold">
+    <tr className={cn("h-14 transition-colors duration-500", fresh && "bg-band")}>
+      <td className="py-3 pr-4">
+        <p className="flex flex-wrap items-center gap-x-2">
           {task.projectName}
           {fresh && <Badge>New</Badge>}
         </p>
-        <p className="mt-0.5 flex flex-wrap gap-x-5 gap-y-0.5 text-small text-ink-2">
-          <span className="text-ink">
+        <p className="mt-1 text-caption text-ink-2">{formatAmount(taskAmount(task))} RLUSD{mine > 0 && ` · ${mine} prior audit${mine === 1 ? "" : "s"}`}</p>
+      </td>
+      <td className="py-3 pr-4">
+          <span>
             {m ? (
               <>
                 <span className="mr-1.5 tabular text-ink-3">{m.index + 1}</span>
@@ -54,29 +56,27 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
               "Site visit"
             )}
           </span>
-          {m &&
+      </td>
+      <td className="py-3 pr-4 text-caption text-ink-2"><span className="block">{task.siteGeo.lat.toFixed(4)}, {task.siteGeo.lng.toFixed(4)}</span><span>{task.siteGeo.radiusM} m radius</span></td>
+      <td className="py-3 pr-4">
+          {m ?
             (short.length ? (
               <span className="font-medium text-fail">
                 {short.map((k) => `${k.have}/${k.need} ${KIND[k.kind][1]}`).join(", ")}
               </span>
             ) : (
               <span className="tabular">{ev.uploaded} file{ev.uploaded === 1 ? "" : "s"}</span>
-            ))}
-          {expiry && <span className={cn("tabular", expiry.urgent && "font-medium text-fail")}>{expiry.text}</span>}
-          {mine > 0 && <span>{mine} prior audit{mine === 1 ? "" : "s"}</span>}
-        </p>
-      </div>
-      <div className="flex items-center justify-between gap-6 sm:justify-end">
-        <p className="tabular sm:min-w-[120px] sm:text-right">
-          <span className="text-body font-semibold">{formatAmount(taskAmount(task))}</span>
-          <span className="ml-1 text-caption text-ink-2">RLUSD</span>
-        </p>
+            )) : <span className="text-ink-2">Site visit required</span>}
+      </td>
+      <td className="py-3 pr-4 text-caption">{expiry ? <span className={cn(expiry.urgent && "text-fail")}>{expiry.text}</span> : "—"}</td>
+      <td className="py-3 pr-4"><Badge tone={NEEDS[task.needs].tone}>{NEEDS[task.needs].label}</Badge></td>
+      <td className="py-3 text-right">
         {href && (
-          <Link href={href} className={buttonClass("primary", "md", "min-w-[112px]")}>
+          <Link href={href} className={buttonClass("secondary", "sm", "min-w-[112px]")}>
             {NEEDS[task.needs].action}
           </Link>
         )}
-      </div>
-    </li>
+      </td>
+    </tr>
   );
 }

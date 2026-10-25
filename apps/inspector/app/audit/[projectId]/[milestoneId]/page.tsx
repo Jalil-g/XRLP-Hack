@@ -1,4 +1,5 @@
 "use client";
+import { AuditWorkspace } from "@/components/audit/workspace";
 // INS-03 audit form: the inspector's deliverable for one milestone. Builder evidence on the left (what the suite will check),
 // the audit on the right: SoV checklist, site photos with EXIF, site map, notes. INS-04: the inspector signs the audit's
 // attestation (XRPL-08 Payment to the SPV) in this browser and route 10 carries it as signedTxBlob.
@@ -293,10 +294,10 @@ function AuditForm({
 
       {isReAudit && <ReAuditContext task={task} checks={checks} inspector={inspector} bundle={bundle} onReload={onReload} busy={busy} />}
 
-      <div className="grid items-start gap-x-12 gap-y-12 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <AuditWorkspace>
         {/* Left: what the builder claims. */}
         <div className="min-w-0 space-y-10">
-          <Section title="Builder evidence" aside={<span className="tabular">{ev.uploaded} file{ev.uploaded === 1 ? "" : "s"}</span>}>
+          <Section id="evidence" title="Builder evidence" aside={<span className="tabular">{ev.uploaded} file{ev.uploaded === 1 ? "" : "s"}</span>}>
             <EvidenceGallery evidence={task.evidence} site={task.siteGeo} browserExif={browserExif} />
           </Section>
           <Section title="Photo locations">
@@ -320,7 +321,7 @@ function AuditForm({
             <PhotoPicker photos={draft.photos} onChange={(photos) => setDraft((d) => ({ ...d, photos }))} site={task.siteGeo} invalid={showErrors && draft.photos.length === 0} />
           </Section>
 
-          <Section title="Notes">
+          <Section id="review" title="Notes & review">
             <textarea
               aria-label="Audit notes"
               value={draft.notes}
@@ -331,7 +332,7 @@ function AuditForm({
             />
           </Section>
 
-          <div className="space-y-4 border-t border-line pt-6">
+          <div id="sign" className="space-y-4 border-t border-line pt-6">
             {showErrors && problems.length > 0 && (
               <ul className="space-y-1 text-small text-fail">
                 {problems.map((p) => (
@@ -379,7 +380,7 @@ function AuditForm({
             </div>
           </div>
         </div>
-      </div>
+      </AuditWorkspace>
     </div>
   );
 }

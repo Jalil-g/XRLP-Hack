@@ -39,7 +39,7 @@ export function Section({ title, aside, children, className, id }: {
   return (
     <section id={id} className={cn("min-w-0", className)}>
       <div className="mb-3 flex min-h-11 flex-wrap items-center justify-between gap-x-4">
-        <h2 className="text-[17px] leading-6 font-semibold tracking-[-0.01em]">{title}</h2>
+        <h2 className="text-[28px] leading-9 font-normal">{title}</h2>
         {aside && <div className="flex items-center gap-2 text-caption text-ink-2">{aside}</div>}
       </div>
       {children}

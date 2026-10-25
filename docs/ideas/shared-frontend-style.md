@@ -1,5 +1,7 @@
 # Drawproof — finance workspace design system
 
+> Superseded on 2026-10-25 by the user's explicit selection of **Elmir's redesign** in `design/drawproof-ui` (PR #204). Use that source for the live apps: paper `#F7F7F5`, ink/actions `#2F4241`, white panels with `#E3E4E0` borders and 6px corners, regular-weight headings, and role-specific card/table layouts. Preserve live API, signing, session, and transaction behavior. Do not reintroduce the dark capital slabs, oversized financial heroes, or chartreuse brand direction documented below. This document is retained as historical context; see the latest entry in `docs/decisions.md` and issue #205.
+
 2026-10-25 · Canonical direction for `apps/web` and `apps/inspector`.
 
 This replaces the earlier Apple/Notion white-and-blue polish. The user explicitly requested a more impressive finance platform, referencing Ramp, Robinhood, and Apple. Preserve the existing product and review flows; replace the visual hierarchy, compositions, and component treatment. This is a redesign, not a palette swap.

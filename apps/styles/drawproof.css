@@ -1,72 +1,127 @@
-/* Drawproof. Canonical tokens consumed by both applications.
-   White canvas, true ink, neutral greys. Lime only for money paid to the builder and progress toward release. */
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Hanken Grotesk", "Helvetica Neue", Arial, ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  --color-page: #ffffff;
+  --color-page: #f7f7f5;
   --color-surface: #ffffff;
-  --color-band: #f6f6f6;
-  --color-band-2: #e8e8e8;
-  --color-ink: #0a0a0a;
-  --color-ink-2: #5e5e5e;
-  --color-ink-3: #6b6b6b;
-  --color-line: #ebebeb;
-  --color-line-2: #8f8f8f;
-  /* Former dark slab; now plain ink on the white canvas. */
+  --color-band: #f1f2ef;
+  --color-band-2: #eeefec;
+  --color-ink: #2f4241;
+  --color-ink-2: #5e6966;
+  --color-ink-3: #5e6966;
+  --color-line: #e3e4e0;
+  --color-line-2: #cfd3cf;
   --color-capital: #ffffff;
-  --color-capital-text: #0a0a0a;
-  --color-capital-muted: #5e5e5e;
-  --color-accent: #d4f564;
-  --color-accent-hover: #c6ea4f;
+  --color-capital-text: #2f4241;
+  --color-capital-muted: #5e6966;
+  --color-accent: #f1f2ef;
+  --color-accent-hover: #eeefec;
 
-  --color-action: #0a0a0a;
-  --color-action-hover: #2b2b2b;
-  --color-action-press: #000000;
-  --color-link: #0a0a0a;
+  --color-action: #2f4241;
+  --color-action-hover: #253534;
+  --color-action-press: #1d2b2a;
+  --color-link: #2f4241;
 
-  --color-pass: #1a7f45;
-  --color-pass-bg: #e9f6ee;
-  --color-fail: #c0262d;
-  --color-fail-bg: #fdeeee;
+  --color-pass: #1f7a4d;
+  --color-pass-bg: #e5f2ea;
+  --color-fail: #b42318;
+  --color-fail-bg: #fbe9e7;
   --color-review: #8a5a00;
-  --color-review-bg: #fff5dc;
+  --color-review-bg: #fbf1d9;
   --color-review-icon: #c28a00;
-  --color-neutral: #5e5e5e;
-  --color-neutral-bg: #f2f2f2;
+  --color-neutral: #4b5563;
+  --color-neutral-bg: #eeefec;
   --color-info: #1f5f99;
   --color-info-bg: #edf3fa;
 
-  --text-display: 4rem;
-  --text-display--line-height: 4.25rem;
-  --text-display--letter-spacing: -0.04em;
-  --text-display--font-weight: 700;
+  --text-display: 2.5rem;
+  --text-display--line-height: 3rem;
+  --text-display--letter-spacing: -0.01em;
+  --text-display--font-weight: 400;
   --text-title: 2.5rem;
-  --text-title--line-height: 2.875rem;
-  --text-title--letter-spacing: -0.025em;
-  --text-title--font-weight: 600;
-  --text-heading: 1.5rem;
-  --text-heading--line-height: 1.875rem;
-  --text-heading--letter-spacing: -0.015em;
-  --text-heading--font-weight: 600;
+  --text-title--line-height: 3rem;
+  --text-title--letter-spacing: -0.01em;
+  --text-title--font-weight: 400;
+  --text-heading: 1.75rem;
+  --text-heading--line-height: 2.25rem;
+  --text-heading--letter-spacing: 0em;
+  --text-heading--font-weight: 400;
   --text-body: 1rem;
-  --text-body--line-height: 1.5rem;
+  --text-body--line-height: 1.625rem;
   --text-small: 0.875rem;
   --text-small--line-height: 1.25rem;
   --text-caption: 0.8125rem;
   --text-caption--line-height: 1.125rem;
 
-  --radius-control: 10px;
-  --radius-panel: 14px;
-  --radius-tag: 6px;
+  --radius-control: 6px;
+  --radius-panel: 6px;
+  --radius-tag: 4px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 6px;
+  --radius-xl: 6px;
+  --color-paper: #f7f7f5;
+  --color-label: #5e6966;
+  --color-hairline: #e3e4e0;
+  --color-control: #cfd3cf;
+  --color-clay: #8c4a35;
 
   --shadow-overlay: 0 24px 56px -16px rgb(0 0 0 / 0.24), 0 4px 12px -4px rgb(0 0 0 / 0.08);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ok: var(--color-pass);
+  --color-ok-bg: var(--color-pass-bg);
+  --color-bad: var(--color-fail);
+  --color-bad-bg: var(--color-fail-bg);
+  --color-warn: var(--color-review);
+  --color-warn-bg: var(--color-review-bg);
+}
+
+:root {
+  --radius: 6px;
+  --background: #f7f7f5;
+  --foreground: #2f4241;
+  --card: #ffffff;
+  --card-foreground: #2f4241;
+  --popover: #ffffff;
+  --popover-foreground: #2f4241;
+  --primary: #2f4241;
+  --primary-foreground: #ffffff;
+  --secondary: #ffffff;
+  --secondary-foreground: #2f4241;
+  --muted: #eeefec;
+  --muted-foreground: #5e6966;
+  --accent: #f1f2ef;
+  --accent-foreground: #2f4241;
+  --destructive: #b42318;
+  --border: #e3e4e0;
+  --input: #cfd3cf;
+  --ring: #2f4241;
+}
+
 @layer base {
   html {
+    color-scheme: light;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -76,14 +131,16 @@
   }
   h1,
   h2,
-  h3 {
+  h3,
+  h4 {
+    font-weight: 400;
     text-wrap: balance;
   }
   p {
     text-wrap: pretty;
   }
   ::selection {
-    background: var(--color-accent);
+    background: var(--color-band-2);
     color: var(--color-ink);
   }
   :focus-visible {
@@ -103,6 +160,17 @@
     scrollbar-color: var(--color-line-2) transparent;
   }
 }
+
+@utility t-page { font-size: 40px; line-height: 48px; font-weight: 400; letter-spacing: -0.01em; }
+@utility t-section { font-size: 28px; line-height: 36px; font-weight: 400; }
+@utility t-card { font-size: 22px; line-height: 30px; font-weight: 400; }
+@utility t-body { font-size: 16px; line-height: 26px; }
+@utility t-label { font-size: 14px; line-height: 20px; color: var(--color-label); }
+@utility t-caption { font-size: 13px; line-height: 18px; }
+@utility t-mono { font-family: var(--font-mono); font-size: 13px; line-height: 18px; }
+@utility tnum { font-variant-numeric: tabular-nums; }
+@utility panel { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: 6px; }
+@utility container-app { width: 100%; max-width: 1264px; margin-inline: auto; padding-inline: clamp(16px, 4vw, 32px); }
 
 @utility tabular {
   font-variant-numeric: tabular-nums;

@@ -16,7 +16,7 @@ export function Tag({ tone = "neutral", className, ...props }: React.HTMLAttribu
   return (
     <span
       className={cn(
-        "inline-flex h-[22px] items-center gap-1 rounded-full px-2.5 text-[12px] font-medium whitespace-nowrap [&_svg]:size-3.5",
+        "inline-flex min-h-[24px] items-center gap-1 rounded-tag px-2 text-caption font-medium whitespace-nowrap [&_svg]:size-3.5",
         tagTones[tone],
         className,
       )}

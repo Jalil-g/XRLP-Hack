@@ -31,10 +31,11 @@ export default async function PortfolioPage() {
   ];
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-8">
       <AutoRefresh ms={4000} />
       <header>
-        <h1 className="text-[28px] leading-9 font-semibold tracking-[-0.025em]">Portfolio</h1>
+        <h1 className="text-[30px] leading-10 font-medium tracking-tight">Portfolio</h1>
+        <p className="mt-1 text-small text-ink-2">Your project positions and available withdrawals.</p>
       </header>
 
       {positions.length === 0 ? (
@@ -46,13 +47,13 @@ export default async function PortfolioPage() {
         />
       ) : (
         <>
-          <section aria-label="Portfolio value" className="space-y-5">
+          <section aria-label="Portfolio value" className="space-y-5 rounded-md border border-line bg-white p-5 md:p-6">
             <div className="flex flex-wrap items-end justify-between gap-x-12 gap-y-5">
               <div className="min-w-0">
                 <p className="text-small font-medium text-ink-2">Value</p>
-                <p className="hero-amount mt-2">
+                <p className="mt-2 text-[32px] leading-10 font-medium tracking-tight tabular-nums">
                   {formatAmount(fromCents(total), { cents: true })}
-                  <span> RLUSD</span>
+                  <span className="text-[15px] font-normal tracking-normal text-ink-2"> RLUSD</span>
                 </p>
               </div>
               <div className="flex flex-wrap items-end gap-x-10 gap-y-4">
@@ -76,9 +77,12 @@ export default async function PortfolioPage() {
             />
           </section>
 
+          <section className="rounded-md border border-line bg-white p-5 md:p-6">
+          <div className="mb-4 flex items-center justify-between gap-4"><h2 className="text-[23px] font-medium">Positions</h2>{browse}</div>
+          <div aria-hidden className="hidden grid-cols-[minmax(0,1fr)_160px_180px] gap-8 border-b-2 border-[#163c35] pb-3 text-small font-medium md:grid"><span>Project</span><span className="text-right">Value · RLUSD</span><span className="text-right">Withdrawal status</span></div>
           <ul aria-label="Positions">
             {positions.map((pos) => (
-              <li key={pos.projectId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-3 border-b border-line py-5 first:border-t md:grid-cols-[minmax(0,1fr)_160px_180px]">
+              <li key={pos.projectId} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-8 gap-y-3 border-b border-line py-5 last:border-0 md:grid-cols-[minmax(0,1fr)_160px_180px]">
                 <Link href={`/projects/${pos.projectId}`} className="min-w-0 rounded-[8px]">
                   <span className="block truncate text-body font-semibold hover:underline">{pos.projectName}</span>
                   <span className="block text-small text-ink-2 tabular-nums">{sharesFromUnits(pos.shares).toLocaleString("en-US", { maximumFractionDigits: 2 })} shares</span>
@@ -96,6 +100,7 @@ export default async function PortfolioPage() {
               </li>
             ))}
           </ul>
+          </section>
         </>
       )}
     </div>
