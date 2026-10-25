@@ -47,7 +47,8 @@ export function createHttpServer(api: CoreApi, opts: HttpServerOptions): Hono {
   app.notFound((c) => c.json({ error: { code: "not_found", message: `No route ${c.req.method} ${c.req.path}` } }, 404));
   app.onError((e, c) => {
     const { status, body } = toApiError(e);
-    if (status >= 500) console.error(`[core-http] ${c.req.method} ${c.req.path}`, e);
+    // Message + code + tx hash only: the cause chain can carry signed blobs or adapter internals (#149).
+    if (status >= 500) console.error(`[core-http] ${c.req.method} ${c.req.path} ${body.error.code}: ${body.error.message}${body.error.txHash ? ` tx ${body.error.txHash}` : ""}`);
     return c.json(body, status as ContentfulStatusCode);
   });
   return app;

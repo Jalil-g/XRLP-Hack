@@ -52,6 +52,7 @@ describe("devnet identities", () => {
     assert.equal(ids.aiAgent, a("aiAgent"));
     assert.equal(ids.releaseService, a("releaseService"));
     assert.equal(ids.trustee, a("trustee"));
+    assert.equal(ids.issuer, a("issuer"), "issuer read for #149 reserved addresses");
     assert.equal(ids.builder.address, a("builder"));
     assert.equal(ids.builder.id, "bld-hudson-valley");
     assert.deepEqual(ids.investors.map((i) => [i.name, i.address, i.kyc]), [["Ava Chen", a("investor1"), true], ["Marcus Johnson", a("investor2"), true], ["Priya Patel", a("investor3"), false]]);

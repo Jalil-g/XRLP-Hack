@@ -14,6 +14,8 @@ export interface DevnetIdentities {
   releaseService: XrplAddress;
   /** 4th SPV signer (never signs in core; listed for the role picker / docs). */
   trustee: XrplAddress;
+  /** RLUSD issuer (platform-held; never a participant). Optional: older wallet files may lack it. */
+  issuer?: XrplAddress;
   builder: RegisterBuilderInput & { id: string; address: XrplAddress };
   /** investor1/2 hold KYC_INVESTOR after bootstrap; investor3 never does (the tecNO_AUTH beat). */
   investors: { name: string; address: XrplAddress; role: WalletRole; kyc: boolean }[];
@@ -60,6 +62,7 @@ export function identitiesFromWalletFile(file: WalletFile, path = "WALLETS_FILE"
     aiAgent: addr("aiAgent"),
     releaseService: addr("releaseService"),
     trustee: addr("trustee"),
+    ...(file.wallets?.issuer?.address ? { issuer: file.wallets.issuer.address } : {}),
     builder: { ...DEMO.builders.hudson, address: addr("builder") },
     investors,
     inspectors,

@@ -142,6 +142,8 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
     aiAgentAddress: ids?.aiAgent ?? DEMO_ADDRESSES.aiAgent,
     releaseServiceAddress: ids?.releaseService ?? DEMO_ADDRESSES.releaseService,
     ...prestage,
+    // #149: platform-held devnet accounts can never register as builder / inspector / investor.
+    ...(ids ? { reservedAddresses: [ids.trustee, ...(ids.issuer ? [ids.issuer] : [])] } : {}),
     ...(cancelAfterFor ? { cancelAfterFor } : {}),
     // The ledger's cover minimum is CoverRateMinimum (10%) of principal + interest, not of principal; 11% of principal is
     // the headroom xrpl's defaultCoverDeposit uses (covers interest up to 10% of principal). Proper fix: service.ts cover on owed.
