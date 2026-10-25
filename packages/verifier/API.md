@@ -110,6 +110,16 @@ also exported; it rejects cycles and non-finite/non-JSON data. Neither helper si
 
 ## Project verification
 
+## Invoice reconciliation (VER-05)
+
+Standard-risk invoice totals within +/-10% of the milestone amount pass; mismatch up to +/-25%
+requires review; beyond 25% fails. High-risk/high-value policy narrows the pass band. Boundaries use
+integer cross-multiplication, so a one-cent excess cannot hide behind a rounded display percentage.
+Unreadable/malformed totals need review. Text/JSON parsing is deterministic; PDFs/images use live
+extraction and are explicitly labeled LLM-extracted. No live PDF extraction result was measured here.
+
+## Project verification
+
 verifyProject({ project, builder, sov, documents, history?, now?, mode?, registry?, dataDir? }) returns
 shared ProjectVerification with local inspectorPreVisitRequired and registryIsMock flags.
 Identity checks licence/insurance expiry and name consistency plus entity information. Feasibility

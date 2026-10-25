@@ -31,6 +31,8 @@ export interface PolicyThresholds {
   invoiceUnderTolerancePct: number;
   /** Invoices above (100 + x)% of the draw => budget overrun warning. */
   invoiceOverTolerancePct: number;
+  /** Beyond this absolute percentage mismatch: hard fail. Between pass/warn bands: review. */
+  invoiceWarnTolerancePct: number;
   /** LLM judgments below this confidence are routed to a human, whatever they say. */
   minLlmConfidence: number;
 }
@@ -60,7 +62,8 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     phashFailDistance: 10,
     phashWarnDistance: 14,
     invoiceUnderTolerancePct: 10,
-    invoiceOverTolerancePct: 30,
+    invoiceOverTolerancePct: 10,
+    invoiceWarnTolerancePct: 25,
     minLlmConfidence: 0.7,
   },
   medium: {
@@ -70,8 +73,9 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     futureSkewMinutes: 10,
     phashFailDistance: 10,
     phashWarnDistance: 14,
-    invoiceUnderTolerancePct: 5,
-    invoiceOverTolerancePct: 25,
+    invoiceUnderTolerancePct: 10,
+    invoiceOverTolerancePct: 10,
+    invoiceWarnTolerancePct: 25,
     minLlmConfidence: 0.8,
   },
   high: {
@@ -81,8 +85,9 @@ const BASE_THRESHOLDS: Record<RiskTier, PolicyThresholds> = {
     futureSkewMinutes: 5,
     phashFailDistance: 12,
     phashWarnDistance: 16,
-    invoiceUnderTolerancePct: 2,
-    invoiceOverTolerancePct: 15,
+    invoiceUnderTolerancePct: 5,
+    invoiceOverTolerancePct: 5,
+    invoiceWarnTolerancePct: 25,
     minLlmConfidence: 0.9,
   },
 };
@@ -135,6 +140,7 @@ export function policyFor(project: Project, builder: Builder, milestone: Milesto
 
   if (highValue) {
     t.invoiceUnderTolerancePct = Math.min(t.invoiceUnderTolerancePct, 3);
+    t.invoiceOverTolerancePct = Math.min(t.invoiceOverTolerancePct, 3);
     t.minLlmConfidence = Math.round(Math.min(0.95, t.minLlmConfidence + 0.05) * 100) / 100;
     checks.invoice_matches_budget.onWarn = "needs_human";
     checks.document_consistency.onWarn = "needs_human";
