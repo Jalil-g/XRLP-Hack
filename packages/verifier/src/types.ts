@@ -9,6 +9,7 @@ export const MILESTONE_CHECKS = [
   "invoice_matches_budget",
   "inspector_audit_present",
   "audit_checklist_complete",
+  "audit_matches_evidence",
   "lien_waiver_matches_invoices",
   "stage_visually_consistent",
   "document_consistency",
