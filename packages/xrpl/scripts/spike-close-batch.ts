@@ -60,7 +60,8 @@ async function stage(label: string): Promise<{ project: Project; conditions: str
   const subEnd = (await ledgerTime()) + SUBSCRIPTION_S + 45; // the SPV faucet funding runs first inside setup
   const setup = await setupProjectOnChain(project, {
     subscriptionEndsAt: new Date(rippleTimeToISOTime(subEnd) as string),
-    redemptionAt: new Date(rippleTimeToISOTime(subEnd + PAYMENT_INTERVAL_S * PAYMENT_TOTAL + 60 + 300) as string),
+    // 1 h buffer: all three projects are staged before the first close, and LoanSet needs now + loan term + 60 ≤ it.
+    redemptionAt: new Date(rippleTimeToISOTime(subEnd + PAYMENT_INTERVAL_S * PAYMENT_TOTAL + 60 + 3600) as string),
     ...schedule,
   });
   for (const [k, t] of Object.entries(setup.txs)) spike.rows.push({ step: `${label}: ${k}`, result: t.result, hash: t.hash });
