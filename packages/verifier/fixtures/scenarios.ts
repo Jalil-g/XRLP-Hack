@@ -232,6 +232,9 @@ function scenario(
       ...base,
       milestone,
       evidence: await Promise.all(s.evidencePaths.map(ev)),
+      audits: s.auditPath ? [await loadAudit(s.auditPath)] : [],
+      assignedInspectors: ["rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh", "rPEPPER7kfTD9w2To4CQk6UCfuHM9c6GDY"],
+      sov: project.sov,
       priorEvidence:
         s.milestoneIndex === 0
           ? [await oakPrior()]
@@ -295,7 +298,6 @@ export const SCENARIOS: Scenario[] = [
     evidencePaths: [F.wide, F.bolts, F.walls, F.invoice, F.footing, F.lien],
     auditPath: null,
     milestoneIndex: 0,
-    pending: "VER-03",
   }),
 ];
 
