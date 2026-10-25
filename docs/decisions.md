@@ -1,5 +1,9 @@
 # Decisions log
 
+## 2026-10-25 — Elmir's design is the live frontend direction
+
+The user explicitly selected Elmir's redesign from `design/drawproof-ui` (PR #204), not Brian's finance workspace redesign (PR #194), for the live frontend on main. Port the paper canvas, dark teal ink/actions, white bordered panels, regular-weight typography, and role-specific layouts into `apps/web` and `apps/inspector`. Keep the existing typed API clients, session identities, evidence checks, audit signing, transaction receipts, and Devnet-only behavior. The standalone preview's mock data layer is not a replacement for the live integration. This supersedes the finance workspace visual direction below; historical entries remain for context. Issue #205 tracks the integration. Screenshots are waived by the user to prioritize the working site under the hackathon deadline.
+
 ## 2026-10-25 — Finance workspace redesign
 
 The user rejected the restrained frontend polish and requested a more impressive, intuitive finance platform inspired by Ramp, Robinhood and Apple. `docs/ideas/shared-frontend-style.md` now supersedes the previous white/blue Apple/Notion visual restrictions across both apps. The chosen implementation direction uses warm neutrals, dark capital summaries, selective chartreuse and stronger financial hierarchy. Preserve all domain behavior and guided reviews. Write the guide first, then implement on a new branch with Opus or GPT-6.1 Sol agents; independent rendered review is required. Pitch timing/storyline are unchanged.

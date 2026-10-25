@@ -23,13 +23,13 @@ export function ProjectHero({ money, facts: liveFacts, action }: { money: HeroMo
   const [a = 0, b = 0, c = 0, d = 0, e = 0] = values;
 
   return (
-    <section aria-label="Project capital" className="space-y-5">
+    <section aria-label="Project capital" className="space-y-5 rounded-md border border-line bg-white p-5 md:p-6">
       <div className="flex flex-wrap items-end justify-between gap-x-12 gap-y-5">
         <div className="min-w-0">
           <p className="text-small font-medium text-ink-2">{staged.mode === "funding" ? "Raised" : "Loan principal"}</p>
-          <p className="hero-amount mt-2">
+          <p className="mt-2 text-[32px] leading-10 font-medium tracking-tight tabular-nums">
             {formatAmount((staged.mode === "funding" ? a : e) / 100)}
-            <span>
+            <span className="ml-1 text-[15px] font-normal tracking-normal text-ink-2">
               {" "}RLUSD
               {staged.mode === "funding" && <span className="ml-2 text-ink-3">of {formatAmount(b / 100)}</span>}
             </span>

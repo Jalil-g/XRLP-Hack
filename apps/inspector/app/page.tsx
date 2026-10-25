@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { useIdentity } from "@/components/identity";
 import { TaskRow } from "@/components/task-row";
-import { Empty, Facts } from "@/components/ui/layout";
+import { Empty } from "@/components/ui/layout";
 import { LoadingState } from "@/components/ui/loading-state";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
 import { api } from "@/lib/api";
@@ -33,20 +33,15 @@ export default function QueuePage() {
   const due = groups ? ACTIONABLE.flatMap((n) => groups[n]) : [];
 
   return (
-    <div className="space-y-12">
-      <section aria-label="Your queue" className="flex flex-wrap items-end justify-between gap-x-12 gap-y-6">
-        <h1 className="min-w-0">
-          <span className="block text-small font-medium text-ink-2">Due now</span>
-          <span className="hero-amount mt-2 block">{groups ? actionable : "–"}</span>
-        </h1>
-        <Facts
-          items={[
-            { key: "inspector", label: <VerifiedInspectorBadge inspector={inspector} />, value: inspector.name },
-            { label: "License", value: inspector.licenseNumber },
-            { label: "Trades", value: sentence(inspector.trades.join(", ")) },
-          ]}
-        />
+    <div className="space-y-6">
+      <section aria-label="Your queue" className="flex flex-wrap items-end justify-between gap-6">
+        <h1 className="text-title">Queue</h1>
+        <p className="text-[40px] leading-12 tabular">{groups ? actionable : "–"} <span className="text-[20px] text-ink-2">due</span></p>
       </section>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-small text-ink-2">
+        <span>{inspector.name}</span><VerifiedInspectorBadge inspector={inspector} />
+        <span>License {inspector.licenseNumber}</span><span>{sentence(inspector.trades.join(", "))}</span>
+      </div>
 
       {!groups ? (
         queue.error ? (
@@ -59,8 +54,8 @@ export default function QueuePage() {
         )
       ) : (
         <>
-          <section aria-label="Due" className="min-w-0">
-            <div className="flex min-h-11 items-center justify-end border-b border-line pb-1">
+          <section aria-label="Due" className="min-w-0 rounded-panel border border-line bg-surface px-6 py-2">
+            <div className="flex min-h-11 items-center justify-end pb-1">
               <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
             </div>
             {due.length === 0 ? (
@@ -76,11 +71,7 @@ export default function QueuePage() {
                 }
               />
             ) : (
-              <ul className="divide-y divide-line">
-                {due.map((t) => (
-                  <TaskRow key={taskKey(t)} task={t} fresh={fresh.has(taskKey(t))} now={now} />
-                ))}
-              </ul>
+              <TaskTable tasks={due} fresh={fresh} now={now} />
             )}
           </section>
           {groups.none.length > 0 && <Done tasks={groups.none} fresh={fresh} now={now} />}
@@ -107,13 +98,23 @@ function Done({ tasks, fresh, now }: { tasks: InspectorTask[]; fresh: Set<string
         <span className="tabular text-ink-3">{tasks.length}</span>
       </button>
       {open && (
-        <ul className="divide-y divide-line">
-          {tasks.map((t) => (
-            <TaskRow key={taskKey(t)} task={t} fresh={fresh.has(taskKey(t))} now={now} />
-          ))}
-        </ul>
+        <div className="rounded-panel border border-line bg-surface px-6 py-2"><TaskTable tasks={tasks} fresh={fresh} now={now} /></div>
       )}
     </section>
+  );
+}
+
+function TaskTable({ tasks, fresh, now }: { tasks: InspectorTask[]; fresh: Set<string>; now: number }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[850px] text-left text-[15px] tabular">
+        <thead><tr className="border-b-2 border-ink">
+          {["Project", "Milestone", "Site", "Evidence", "Due", "Status"].map((label) => <th key={label} scope="col" className="py-2 pr-4 font-medium">{label}</th>)}
+          <th scope="col" className="py-2 text-right"><span className="sr-only">Action</span></th>
+        </tr></thead>
+        <tbody className="divide-y divide-line">{tasks.map((task) => <TaskRow key={taskKey(task)} task={task} fresh={fresh.has(taskKey(task))} now={now} />)}</tbody>
+      </table>
+    </div>
   );
 }
 

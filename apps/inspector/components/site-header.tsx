@@ -33,15 +33,15 @@ export function SiteHeader() {
   const pathname = usePathname();
   const { inspector } = useIdentity();
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-surface/90 backdrop-blur-md">
-      <div className="mx-auto flex min-h-14 max-w-[1264px] flex-wrap items-center gap-x-8 gap-y-1 px-4 py-1.5 sm:px-8">
-        <Link href="/" className="inline-flex min-h-11 items-center text-[19px] font-bold tracking-[-0.04em] text-ink" aria-label="Drawproof inspector home">{BRAND.name}</Link>
+    <header className="sticky top-0 z-40 border-b border-line bg-surface">
+      <div className="mx-auto flex min-h-[72px] max-w-[1264px] flex-wrap items-center gap-x-10 gap-y-1 px-4 sm:px-8">
+        <Link href="/" className="inline-flex min-h-11 items-center text-[20px] font-medium tracking-tight text-ink" aria-label="Drawproof inspector home">{BRAND.name}</Link>
         <nav aria-label="Inspector navigation" className="order-3 flex w-full items-center gap-6 overflow-x-auto border-t border-line sm:order-none sm:w-auto sm:border-0">
           {LINKS.map(({ href, label }) => {
             const active = href === "/" ? pathname !== "/history" : pathname === href;
             return (
               <Link key={href} href={href} aria-current={active ? "page" : undefined}
-                className={cn("flex min-h-11 min-w-11 shrink-0 items-center text-small font-medium transition-colors duration-150", active ? "text-ink" : "text-ink-3 hover:text-ink")}>
+                className={cn("relative flex min-h-[72px] min-w-11 shrink-0 items-center text-body transition-colors duration-150", active ? "text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-[#8c4a35]" : "text-ink-2 hover:text-ink")}>
                 {label}
               </Link>
             );

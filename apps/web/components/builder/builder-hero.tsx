@@ -30,13 +30,13 @@ export function BuilderHero({
   const [main = 0, ...rest] = values;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 rounded-md border border-line bg-[#f7f7f2] p-5">
       <div className="flex flex-wrap items-end justify-between gap-x-12 gap-y-5">
         <div className="min-w-0">
           <p className="text-small font-medium text-ink-2">{staged.label}</p>
-          <p className={cn(lead ? "hero-amount mt-2" : "mt-1 text-[40px] leading-[44px] font-semibold tracking-[-0.03em] tabular-nums")}>
+          <p className={cn("mt-2 font-medium tracking-tight tabular-nums", lead ? "text-[32px] leading-10" : "text-[28px] leading-9")}>
             {formatAmount(main / 100)}
-            <span className={cn(!lead && "ml-1 text-body font-medium tracking-normal text-ink-2")}>
+            <span className="ml-1 text-[15px] font-normal tracking-normal text-ink-2">
               {" "}RLUSD
               {staged.ofCents !== undefined && <span className="ml-2 text-ink-3">of {formatAmount(staged.ofCents / 100)}</span>}
             </span>

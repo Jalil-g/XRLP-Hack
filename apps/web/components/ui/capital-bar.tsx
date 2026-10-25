@@ -1,11 +1,9 @@
-// Proportional money-location bar on the white canvas. Real amounts only; every segment is labeled in the legend.
-// Lime = money that reached the builder (or raised toward the target); ink = locked in escrow; grey = still open.
 import { cn, formatAmount } from "@/lib/utils";
 
 export type CapitalSegment = { label: string; cents: number; tone: "accent" | "muted" | "track"; /** List in the legend even at zero (e.g. "Released 0"). */ keep?: boolean };
 
-const fill = { accent: "bg-accent shadow-[inset_0_0_0_1px_rgb(0_0_0/0.08)]", muted: "bg-ink", track: "bg-band-2" } as const;
-const dot = { accent: "bg-accent ring-1 ring-black/15", muted: "bg-ink", track: "bg-band-2 ring-1 ring-line-2" } as const;
+const fill = { accent: "bg-pass", muted: "bg-ink", track: "bg-band-2" } as const;
+const dot = { accent: "bg-pass", muted: "bg-ink", track: "bg-band-2 ring-1 ring-line-2" } as const;
 
 export function CapitalBar({
   segments,
@@ -42,7 +40,7 @@ export function CapitalBar({
             <span key={s.label} className="inline-flex items-center gap-2">
               <span aria-hidden className={cn("size-2.5 rounded-full", dot[s.tone])} />
               {s.label}
-              <strong className="font-semibold text-ink tabular-nums">{formatAmount(s.cents / 100)}</strong>
+              <strong className="font-normal text-ink tabular-nums">{formatAmount(s.cents / 100)}</strong>
             </span>
           ))}
         </figcaption>

@@ -16,19 +16,19 @@ export function SiteHeader({ session }: { session: Session }) {
         : null;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-surface/90 backdrop-blur-md">
-      <div className="mx-auto flex min-h-14 max-w-[1264px] flex-wrap items-center gap-x-8 gap-y-1 px-4 py-1.5 sm:px-8">
-        <Link href="/" className="text-[19px] font-bold tracking-[-0.04em] text-ink">
+    <header className="sticky top-0 z-40 border-b border-hairline bg-surface">
+      <div className="container-app flex min-h-[72px] flex-wrap items-center gap-x-10 gap-y-1">
+        <Link href="/" className="text-[20px] font-medium tracking-tight text-ink">
           {BRAND.name}
         </Link>
         <NavLinks role={session.role} />
         <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
           {API_MODE === "mock" ? (
-            <span className="rounded-tag border border-line px-1.5 text-[11px] leading-5 font-medium text-ink-3" title="NEXT_PUBLIC_API_MODE=mock: fixture data, no ledger. Tx hashes are not real.">
+            <span className="rounded-tag bg-neutral-bg px-2 py-0.5 text-caption font-medium text-neutral" title="NEXT_PUBLIC_API_MODE=mock: fixture data, no ledger. Tx hashes are not real.">
               Mock
             </span>
           ) : (
-            <span className="text-[11px] leading-5 font-medium text-ink-3" title="NEXT_PUBLIC_API_MODE=http">
+            <span className="rounded-tag bg-neutral-bg px-2 py-0.5 text-caption font-medium text-neutral" title="NEXT_PUBLIC_API_MODE=http">
               Devnet
             </span>
           )}

@@ -16,10 +16,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <IdentityProvider>
           <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-4 focus:z-50 focus:rounded-control focus:bg-surface focus:p-3">Skip to content</a>
           <SiteHeader />
-          <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1264px] px-4 pt-8 pb-24 sm:px-8 sm:pt-11">{children}</main>
+          <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1264px] px-4 py-10 sm:px-8">{children}</main>
         </IdentityProvider>
-        <footer className="mx-auto max-w-[1264px] px-4 py-8 text-caption text-ink-3 sm:px-8">
-          {BRAND.network} prototype.
+        <footer className="mt-16 bg-[#2f4241] text-white">
+          <div className="mx-auto flex max-w-[1264px] flex-wrap justify-between gap-8 px-4 py-10 sm:px-8">
+            <p className="text-[20px]">{BRAND.name}</p>
+            <p className="text-caption text-white/70">{BRAND.network} prototype. Inspector observations do not release funds.</p>
+          </div>
         </footer>
       </body>
     </html>

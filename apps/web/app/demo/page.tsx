@@ -60,11 +60,11 @@ export default async function DemoPage() {
   const progress = (n: number) => (done[n - 1] ? "done" : nextScene === n ? "current" : "todo") as Progress;
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-7">
       <AutoRefresh ms={2500} />
-      <header className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4">
+      <header className="flex flex-wrap items-center justify-between gap-x-8 gap-y-4 rounded-md border border-line bg-white p-5 md:p-6">
         <div className="flex flex-wrap items-baseline gap-x-3">
-          <h1 className="text-[28px] leading-9 font-semibold tracking-[-0.025em]">Demo control room</h1>
+          <h1 className="text-[30px] leading-10 font-medium tracking-tight">Demo control room</h1>
           {a && <span className="text-body text-ink-2">{a.project.name}</span>}
         </div>
         <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>
@@ -79,7 +79,7 @@ export default async function DemoPage() {
         </div>
       )}
 
-      <ol className="border-t border-line" aria-label="Recording sequence">
+      <ol className="overflow-hidden rounded-md border border-line bg-white px-5 md:px-6" aria-label="Recording sequence">
         <Scene
           n={1}
           progress={progress(1)}

@@ -28,7 +28,7 @@
 }
 
 /* The queue's one number, on the canvas (same scale as the web project hero). */
-.hero-amount { font-size: 64px; line-height: 1; letter-spacing: -.045em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hero-amount { font-size: 40px; line-height: 48px; letter-spacing: -.01em; font-weight: 400; font-variant-numeric: tabular-nums; }
 .hero-amount > span { margin-left: 4px; font-size: 17px; letter-spacing: 0; font-weight: 500; color: var(--color-ink-2); }
 @media (max-width: 639px) { .hero-amount { font-size: 48px; } }
 
@@ -48,4 +48,31 @@ html[data-projector="true"] {
   --color-ink-2: #3f3f3f;
   --color-ink-3: #3f3f3f;
   --color-line: #d6d6d6;
+}
+
+body {
+  background: #f7f7f5;
+  color: #2f4241;
+  line-height: 26px;
+}
+
+body .text-title {
+  font-size: 40px;
+  line-height: 48px;
+  font-weight: 400;
+  letter-spacing: -.01em;
+}
+
+body .font-semibold,
+body .font-bold {
+  font-weight: 400;
+}
+
+body .rounded-panel,
+body .rounded-control {
+  border-radius: 6px;
+}
+
+@media (max-width: 639px) {
+  body .text-title { font-size: 32px; line-height: 40px; }
 }
