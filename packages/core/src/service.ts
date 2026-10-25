@@ -1029,7 +1029,7 @@ export class CoreService implements CoreApi {
       if (!m.cancelAfter || this.now() < new Date(m.cancelAfter))
         throw new DomainError("TOO_SOON", `Escrow for ${mid} can be cancelled after ${m.cancelAfter}`, undefined, { txResult: "tecNO_PERMISSION" });
       const tx = await this.cancelOrConfirmGone(m);
-      const evs = tx ? this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.platformAddress, amount: m.amount }) : [];
+      const evs = tx ? this.evs([tx], { projectId: id, milestoneId: mid, kind: "escrow_cancelled", actor: this.releaseServiceAddress, amount: m.amount }) : [];
       events.push(...evs);
       await this.store.write((db) => {
         const p = this.projectIn(db, id);
@@ -1062,6 +1062,7 @@ export class CoreService implements CoreApi {
     }
     await this.store.write((db) => {
       const meta = this.meta(db, id);
+      this.assertNoOtherRefundPending(meta, mid);
       meta.refundAttempts = { ...meta.refundAttempts, [mid]: { at: this.nowIso(), ...(loanNow ? { tvoBefore: loanNow.totalValueOutstanding } : {}) } };
     });
     let tx: TxResult;
@@ -1069,10 +1070,24 @@ export class CoreService implements CoreApi {
       tx = await this.onLedger("escrow refund LoanPay", () => this.ledger.repayLoan({ project: p, amount: m.amount, source: "escrow_refund" }));
     } catch (e) {
       const txHash = e instanceof DomainError ? e.txHash : undefined;
-      if (txHash) await this.store.write((db) => void (this.meta(db, id).refundAttempts![mid]!.txHash = txHash));
+      const txResult = e instanceof DomainError ? e.txResult : undefined;
+      // tec / tem: the LoanPay definitely did not apply. Drop the marker, or a later LoanPay on this loan (builder repay,
+      // another milestone's refund) shrinks TotalValueOutstanding and the retry would "reconcile" a refund never paid.
+      if (txResult && /^te[cm][A-Z_]+$/.test(txResult)) await this.store.write((db) => void delete this.meta(db, id).refundAttempts?.[mid]);
+      else if (txHash) await this.store.write((db) => void (this.meta(db, id).refundAttempts![mid]!.txHash = txHash));
       throw e;
     }
     return this.commitRefund(id, m, p.chain.spv, tx, events);
+  }
+
+  /**
+   * A refund LoanPay with an unknown outcome is reconciled from the loan's TotalValueOutstanding drop. Any other LoanPay
+   * on the loan meanwhile would read as that refund having applied, so none goes out until the marker is resolved.
+   */
+  private assertNoOtherRefundPending(meta: ProjectMeta | undefined, except?: string): void {
+    const other = Object.keys(meta?.refundAttempts ?? {}).find((k) => k !== except);
+    if (other)
+      throw new DomainError("CONFLICT", `A refund LoanPay for ${other} has an unknown outcome; resolve it (route 13 / keeper tick) before another LoanPay on this loan`);
   }
 
   /** milestone -> refunded, repayment recorded, write-ahead marker cleared. No tx = reconciled without a known hash. */
@@ -1104,7 +1119,8 @@ export class CoreService implements CoreApi {
     try {
       return await this.onLedger("escrow cancel", () => this.ledger.cancelEscrow({ owner, offerSequence }));
     } catch (e) {
-      if (!(e instanceof DomainError) || e.code !== "LEDGER_ERROR") throw e;
+      // Devnet maps an EscrowCancel tecNO_TARGET (escrow already gone) to not_found -> NOT_FOUND; the fake says LEDGER_ERROR.
+      if (!(e instanceof DomainError) || (e.code !== "LEDGER_ERROR" && e.code !== "NOT_FOUND")) throw e;
       const onLedger = await this.ledger.getEscrow(owner, offerSequence).catch(() => undefined);
       if (onLedger !== null) throw e; // still there (or unknown): the cancel really failed
       if (m.status === "verified")
@@ -1119,8 +1135,9 @@ export class CoreService implements CoreApi {
     const amount = fromMicro(toMicro(body.amount));
     if (toMicro(amount) <= 0n) throw new DomainError("VALIDATION", "Repayment must be positive");
     return this.locks.run(id, async () => {
-      const p = await this.read((db) => this.projectIn(db, id));
+      const { p, meta } = await this.read((db) => ({ p: this.projectIn(db, id), meta: metaOf(db, id) }));
       assertProjectStatus(id, p.status, OPEN_PROJECT, "repay");
+      this.assertNoOtherRefundPending(meta);
       const tx = await this.onLedger("LoanPay", () => this.ledger.repayLoan({ project: p, amount, source: "builder" }));
       const events = this.evs([tx], { projectId: id, kind: "loan_payment", actor: p.chain.spv, amount });
       return this.store.write((db) => {

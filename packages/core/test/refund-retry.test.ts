@@ -79,4 +79,38 @@ describe("refund LoanPay retry safety", () => {
     assert.equal(t.applied(), 1);
     assert.equal(await status(t.svc, t.project.id, t.m1.id), "refunded");
   });
+
+  it("LoanPay definitely failed, then the builder repays: the retry still pays the refund (no false reconcile)", async () => {
+    const t = await m1Expired();
+    let fail = true;
+    t.ledger.repayLoan = async (a) => {
+      if (fail && a.source === "escrow_refund") throw new LedgerError("ledger_error", "tecPATH_DRY", { txResult: "tecPATH_DRY" });
+      if (a.source === "escrow_refund") t.count();
+      return t.real(a);
+    };
+    await t.svc.cancelExpired(t.project.id, t.m1.id).catch(() => undefined);
+    assert.equal(await status(t.svc, t.project.id, t.m1.id), "expired");
+    await t.svc.repay(t.project.id, { amount: "30000" }); // shrinks TotalValueOutstanding by more than half of M1
+    fail = false;
+    await t.svc.keeperTick();
+    assert.equal(t.applied(), 1, "the refund LoanPay went out");
+    assert.equal(await status(t.svc, t.project.id, t.m1.id), "refunded");
+    const refund = (await t.svc.listEvents(t.project.id)).find((e) => e.kind === "loan_payment" && e.milestoneId === t.m1.id)!;
+    assert.ok(!refund.result, "a real LoanPay, not a reconciled one");
+  });
+
+  it("refund outcome unknown: builder repay is refused until it is resolved", async () => {
+    const t = await m1Expired();
+    let lose = true;
+    t.ledger.repayLoan = async (a) => {
+      if (lose && a.source === "escrow_refund") throw new LedgerError("ledger_error", "socket closed", { txResult: "connection_lost" });
+      return t.real(a);
+    };
+    await t.svc.cancelExpired(t.project.id, t.m1.id).catch(() => undefined);
+    await assert.rejects(t.svc.repay(t.project.id, { amount: "30000" }), (e: Error & { code?: string }) => e.code === "CONFLICT");
+    lose = false;
+    await t.svc.keeperTick();
+    assert.equal(await status(t.svc, t.project.id, t.m1.id), "refunded");
+    await t.svc.repay(t.project.id, { amount: "30000" });
+  });
 });

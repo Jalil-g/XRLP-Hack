@@ -70,6 +70,30 @@ describe("keeperTick (CORE-06)", () => {
     assert.equal(await status(svc, project.id, m1.id), "refunded");
   });
 
+  it("devnet: escrow already gone -> EscrowCancel tecNO_TARGET mapped to not_found; still expires and refunds", async () => {
+    const { ledger, calls, svc, project, m1 } = await m1Expired();
+    const { owner, offerSequence } = m1.escrow!;
+    await ledger.cancelEscrow({ owner, offerSequence }); // cancelled out of band (or ours applied and the response was lost)
+    // What the XRPL adapter throws (toAdapterError: tecNO_TARGET -> apiCode not_found).
+    const notFound = Object.assign(new LedgerError("ledger_error", "EscrowCancel: tecNO_TARGET", { txResult: "tecNO_TARGET" }), { apiCode: "not_found" });
+    ledger.cancelEscrow = async () => {
+      calls.cancel++;
+      throw notFound;
+    };
+    const t = await svc.keeperTick();
+    assert.deepEqual(t.issues, []);
+    assert.deepEqual(t.events.map((e) => e.kind), ["loan_payment"]);
+    assert.equal(await status(svc, project.id, m1.id), "refunded");
+  });
+
+  it("escrow_cancelled is attributed to the release service (the EscrowCancel signer on devnet)", async () => {
+    const { svc, project, m1 } = await m1Expired();
+    const t = await svc.keeperTick();
+    const ev = t.events.find((e) => e.kind === "escrow_cancelled" && e.milestoneId === m1.id)!;
+    assert.equal(ev.actor, svc.releaseServiceAddress);
+    assert.equal(await status(svc, project.id, m1.id), "refunded");
+  });
+
   it("cancel itself fails with the escrow still open: reported as a cancel issue, nothing committed", async () => {
     const { ledger, svc, project, m1 } = await m1Expired();
     ledger.cancelEscrow = async () => {
