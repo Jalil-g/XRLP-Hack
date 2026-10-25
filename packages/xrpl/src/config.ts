@@ -26,9 +26,14 @@ export const config = {
   walletsFile: fromRoot(process.env.WALLETS_FILE ?? ".data/wallets.json"),
 };
 
-if (/mainnet|s1\.ripple\.com|s2\.ripple\.com|xrplcluster/i.test(config.wsUrl) || config.network === "mainnet") {
-  throw new Error(`Refusing to run against mainnet (${config.wsUrl}). Devnet only.`);
+/** Throws on any mainnet endpoint or network name. Exported so other packages (core's LEDGER_MODE=devnet) reuse the same guard. */
+export function assertNotMainnet(wsUrl: string, network: string): void {
+  if (/mainnet|s1\.ripple\.com|s2\.ripple\.com|xrplcluster/i.test(wsUrl) || network === "mainnet") {
+    throw new Error(`Refusing to run against mainnet (${wsUrl}). Devnet only.`);
+  }
 }
+
+assertNotMainnet(config.wsUrl, config.network);
 
 /** Mock RLUSD: 40-char hex currency code for "RLUSD". */
 export const RLUSD_CURRENCY = "524C555344000000000000000000000000000000";

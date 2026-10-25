@@ -75,6 +75,22 @@ export class DomainError extends Error {
 
 export const isDomainError = (e: unknown): e is DomainError => e instanceof DomainError;
 
+/** Shared LedgerError -> DomainErrorCode. The devnet adapter's XrplLedgerError adds `apiCode` (not_found, validation; #133 item 1). */
+export function ledgerErrorCode(e: { code: string; apiCode?: string }): DomainErrorCode {
+  switch (e.apiCode ?? e.code) {
+    case "too_soon":
+      return "TOO_SOON";
+    case "unsafe_release":
+      return "UNSAFE_RELEASE";
+    case "not_found":
+      return "NOT_FOUND";
+    case "validation":
+      return "VALIDATION";
+    default:
+      return "LEDGER_ERROR";
+  }
+}
+
 /** HTTP error envelope (docs/05-api.md §1). Unknown errors become 500 ledger_error-free "invalid_state" with the message. */
 export function toApiError(e: unknown): { status: number; body: ApiError } {
   if (e instanceof DomainError) {
