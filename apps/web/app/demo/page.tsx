@@ -9,7 +9,7 @@ import { DecisionForm } from "@/components/demo/decision-form";
 import { buttonClass } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
 import { MILESTONE_STATUS, PROJECT_STATUS, checkName } from "@/lib/display";
 import { getSession } from "@/lib/session";
@@ -22,10 +22,16 @@ const INSPECTOR_APP_URL = process.env.NEXT_PUBLIC_INSPECTOR_APP_URL ?? "http://l
 const RUNNABLE: Milestone["status"][] = ["evidence_submitted", "audited", "failed"];
 const ONBOARDING_ORDER = ["verifying", "verified", "draft", "funded", "funding"];
 
+// WEB-12: only a missing project is "not seeded yet"; a service failure must reach the error boundary.
+const get = (id: string) => api.getProject(id).catch((error: unknown) => {
+  if (error instanceof ApiError && error.status === 404) return undefined;
+  throw error;
+});
+
 export default async function DemoPage() {
   const session = await getSession();
-  const summaries = await api.listProjects().catch(() => []);
-  const all = (await Promise.all(summaries.map((s) => api.getProject(s.id).catch(() => undefined)))).filter((d): d is ProjectDetail => !!d);
+  const summaries = await api.listProjects();
+  const all = (await Promise.all(summaries.map((s) => get(s.id)))).filter((d): d is ProjectDetail => !!d);
 
   const a = all.find((d) => /maple/i.test(d.project.name)) ?? all.find((d) => d.project.status === "escrowed");
   const b = all.find((d) => d !== a && d.project.milestones.some((m) => m.status === "expired")) ?? all.find((d) => d !== a && d.project.status === "stalled");

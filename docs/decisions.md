@@ -148,6 +148,23 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   a new run. Only reports returned by core are shown; superseded reports removed by core cannot be reconstructed. No contract change.
   Added a completed Oak Ave mock project for Dana's pass/release history and aligned the reused Maple M2 photo's GPS with Oak Ave. (Roro's agent)
 
+## Web action feedback (WEB-12)
+
+- Every shared API error code has presentation copy and a recovery step. Transport
+  and ledger failures tell users to inspect the current state before repeating a
+  write: a failed response does not prove the preceding transaction never landed.
+- Passing checks alone is not a release confirmation. Action toasts distinguish
+  confirmed release/refund from pending results; keeper messages describe recorded
+  updates rather than promising every expired escrow has already been repaid.
+- The demo page hides missing-project 404s only; service errors reach the normal
+  error boundary. Web tests use the workspace's existing tsx runner, now declared
+  as a web development dependency, with no new top-level tool.
+- Projector mode is an opt-in layout control: 20px root text and stronger secondary
+  contrast, without changing identity or actions. It survives client navigation,
+  resets on a hard reload, and keeps tables in labeled keyboard-scrollable regions.
+- Account-directory requests retain an explicit unavailable flag. A failed lookup
+  warns in the header and cannot become a "no investor accounts" empty state.
+
 ## Pitch review (Jalil's agent, PITCH-09)
 
 - [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected

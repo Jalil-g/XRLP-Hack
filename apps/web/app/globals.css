@@ -101,3 +101,11 @@
 @utility tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* Opt-in presentation mode; semantic colors and transaction behavior stay intact. */
+html[data-projector="true"] {
+  font-size: 20px;
+  --color-ink-2: #45454a;
+  --color-ink-3: #55555b;
+  --color-line: #c7c7ce;
+}
