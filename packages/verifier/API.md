@@ -55,6 +55,11 @@ extractEvidenceMeta({ bytes: Uint8Array, mimeType: string, filename?: string })
 make cross-project reuse detection work later. Images: EXIF + pHash. Text/JSON docs: `invoiceTotal` from a
 `TOTAL:` line or a JSON `total` field. PDFs: nothing deterministic (live mode reads them).
 
+VER-02: current file bytes are authoritative; stored metadata cannot fill in stripped EXIF or a
+forged image hash. Corrupt images return an `error` from extraction and a `loadError` when loaded.
+Callers must not treat such a file as verified. Alpha is flattened onto white before pHash;
+invalid calendar dates, coordinate ranges and non-64-bit hashes are rejected.
+
 ### `verifyMilestone(input, opts?) → Promise<Verdict>`
 ```ts
 interface VerifyMilestoneInput {
