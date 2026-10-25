@@ -41,7 +41,7 @@ export async function runEvaluation(options: { mode?: VerifierMode; repeat?: num
   const mode = options.mode ?? "mock";
   const repeat = options.repeat ?? (mode === "live" ? 3 : 1);
   if (!["mock", "live"].includes(mode) || !Number.isInteger(repeat) || repeat < 1 || repeat > 3) throw new Error("Use mock/live and repeat 1..3.");
-  if (mode === "live" && !liveCredentialsAvailable()) throw new Error(`Live evaluation requires ${resolveProvider() === "bedrock" ? "AWS_BEARER_TOKEN_BEDROCK" : "ANTHROPIC_API_KEY"}; no live result was measured.`);
+  if (mode === "live" && !liveCredentialsAvailable()) throw new Error(`Live evaluation requires ${resolveProvider() === "anthropic" ? "ANTHROPIC_API_KEY" : "AWS_BEARER_TOKEN_BEDROCK"}; no live result was measured.`);
   const expectations: EvalExpectation[] = [];
   for (const file of await manifests(FIXTURES_DIR)) {
     const manifest = z.object({ scenarios: z.array(Expectation) }).parse(JSON.parse(await readFile(file, "utf8")));

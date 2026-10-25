@@ -40,6 +40,7 @@ describe("validateCoreEnv", () => {
     assert.match(validateCoreEnv({ VERIFIER_MODE: "live", ANTHROPIC_API_KEY: "sk-ant-REPLACE_ME" }).problems.join(), /ANTHROPIC_API_KEY/);
     assert.deepEqual(validateCoreEnv({ VERIFIER_MODE: "live", ANTHROPIC_API_KEY: "sk-ant-real" }).problems, []);
     assert.match(validateCoreEnv({ VERIFIER_MODE: "live", VERIFIER_PROVIDER: "bedrock" }).problems.join(), /AWS_REGION/);
+    assert.match(validateCoreEnv({ VERIFIER_MODE: "live", VERIFIER_PROVIDER: "nova" }).problems.join(), /AWS_REGION/);
     assert.deepEqual(validateCoreEnv({ VERIFIER_MODE: "live", CORE_VERIFIER: "fake" }).problems, [], "CORE_VERIFIER=fake wins");
     assert.match(validateCoreEnv({ VERIFIER_MODE: "live", ANTHROPIC_API_KEY: "k" }).summary, /verifier=verifier\/live\/anthropic/);
   });

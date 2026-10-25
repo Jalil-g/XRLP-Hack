@@ -304,3 +304,6 @@ Prefer option 1 for a constrained stage demo; option 2 is necessary if arbitrary
   (`ReleaseServicePort.keyExposedAt`); CancelAfter → cancel → refund handles the escrow.
 - [10-25] `CoreVerifierAdapter.policyFor` uses the stored builder `riskTier`, cached from every read/write of the store view
   createCore gives the service (sync port, async store). The stored tier wins over `@xrlp/verifier`'s in-process memory.
+- [10-25] VER-14: added `VERIFIER_PROVIDER=nova` (Amazon Nova 2 Lite via the Bedrock Converse API, same bearer token,
+  raw fetch, no new dependency). Reason: the team's AWS account has no Claude model access on Bedrock. Live eval
+  matched 14/14 scenarios. Mock remains the stage default. (Rahim)
