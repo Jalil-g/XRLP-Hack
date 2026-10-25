@@ -1,6 +1,6 @@
 # @xrlp/core — v2 (test-suite release model)
 
-HTTP contract: `docs/05-api.md`. `CoreService implements CoreApi` (`src/api-surface.ts`): one method per route 1–23.
+HTTP contract: `docs/05-api.md`. `CoreService implements CoreApi` (`src/api-surface.ts`): one method per route 1–25.
 
 ```bash
 pnpm --filter @xrlp/core serve      # HTTP on :4000 (PORT, DATA_DIR, CORS_ORIGINS); fake ledger + fake verifier by default
@@ -23,13 +23,17 @@ pnpm --filter @xrlp/core rehearse          # same against CORE_URL (fake: seed m
 - `verifier`: `CORE_VERIFIER=fake` → `FakeVerifier` (deterministic Maple St fixtures); on devnet it reads EXIF / pHash / invoice
   totals from the uploaded bytes (`src/adapters/evidence-meta.ts`). `CORE_VERIFIER=verifier`, or `VERIFIER_MODE=live` without
   `CORE_VERIFIER`, → `ClaudeVerifierAdapter` (`@xrlp/verifier`, mode = `VERIFIER_MODE`) via `src/adapters/verifier.ts`.
+  Its release policy uses the **stored** builder `riskTier` (by `project.builderId`), cached from every read/write of the
+  store view createCore hands the service, so restarts and prestaged projects keep the right audit count.
 - Errors from the ledger: `too_soon` / `unsafe_release` → 409, adapter `not_found` → 404, `validation` → 400, else `ledger_error` 502.
 - Devnet HTTP e2e: `pnpm --filter @xrlp/core e2e:devnet` against a running devnet server (`scripts/devnet-e2e.ts` header).
 - `release`: `ReleaseService` + `FilePreimageVault(DATA_DIR)` (AES-256-GCM sealed preimages). The service never sees a preimage.
 
 ## Flow rules (enforced in `src/service.ts`)
 fee (max 250 RLUSD, 20 bps) → `verifying` → verify (pass → `verified` + `VERIFIED_BUILDER` on first pass; fail → `rejected`;
-needs_human → stays `verifying`, inspectors get a `pre_visit` task) → lock (platform only; AI assigns inspector(s); vault with
+needs_human → stays `verifying`, panel inspectors get a `pre_visit` task; route 24 site visit = attested report, clears the task,
+no status change; route 25 operator decision (platform only, reason attested first) → `verified` (+ credential, builder risk
+tier from the AI report) / `rejected`) → lock (platform only; AI assigns inspector(s); vault with
 SubscriptionDate = funding deadline, RedemptionDate = + term + 7 days; 10% first-loss cover) → invest (KYC'd only, Subscription only,
 **never auto-closes**) → close (platform only, **explicit**, `too_soon` before SubscriptionDate; conditions only from the release
 service) → evidence (new round on resubmit) → audit (assigned inspector only; attested) → run checks (verdict attested **before**
@@ -38,7 +42,8 @@ attested **first**; can't override a failed check) → cancel per milestone (Esc
 other milestones continue) → repay → withdraw (Redemption only).
 
 `keeperTick()` cancels expired escrows (+ refund), retries pending refunds, and retries releases for `verified` milestones
-(e.g. after an `unsafe_release`). Idempotent per step: the cancel and the refund LoanPay commit separately, so a failed
+(e.g. after an `unsafe_release`), except when the release service reports the key exposed (`keyExposedAt`): that is reported
+once as a `release` issue (`UNSAFE_RELEASE`) and left for CancelAfter → cancel → refund. Idempotent per step: the cancel and the refund LoanPay commit separately, so a failed
 refund is retried alone, and an escrow already cancelled by someone else is refunded without a second cancel. Returns
 `{ events, issues }`; each issue is a step (`cancel` | `refund` | `release`) that failed this tick and will be retried.
 `KEEPER=1` runs it every 30 s in `serve` (`KEEPER_INTERVAL_MS` overrides; ticks never overlap). `tryStealDemo()` records a `release_refused` event with `tecCRYPTOCONDITION_ERROR`.

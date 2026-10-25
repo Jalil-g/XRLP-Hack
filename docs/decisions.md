@@ -266,3 +266,19 @@ Prefer option 1 for a constrained stage demo; option 2 is necessary if arbitrary
 ## Verifier adapter: unknown risk tier falls back to "medium" (2026-10-25)
 
 `ClaudeVerifierAdapter.policyFor(project, milestone)` used to fall back to `"high"` when the project had not been verified in the current process. That covers prestaged projects and any project after a core restart. The `"high"` fallback doubled `requiredAudits`, so Maple St M1, prestaged with one inspector, could never release in live mode. The order is now: risk cached by this process's `verifyProject`, then the `riskTier` option (trusted source), then `"medium"`. Safety does not depend on this tier. `verifyMilestone` still applies the builder's own stored `riskTier`, taking the stricter of the two policies, so a high-risk builder's draw cannot pass on one audit. `releasePolicyFor(…)` itself still defaults to `"high"`.
+
+## Project-level needs_human, exposed release keys, stored risk tier (2026-10-25, Sean's agent)
+
+- [10-25] Core adopts INS-06's site-visit route as **route 24** `POST /api/projects/:id/site-visit` (multipart `report`/`photos`,
+  response `{ visit }` + `events`). Any verified panel inspector may file it while the project is `verifying` after a `needs_human`
+  verification; it clears the `pre_visit` task and **never changes the project status**. Core attests it with the platform key
+  (memo kind `audit`, `milestoneId: "<id>:site-visit"`, `hash` = the app's `siteVisitHash`, reason `site-visit signed-for <inspector>`),
+  because the ledger adapter's attestation kinds have no `site_visit`; an inspector `signedTxBlob` is refused (`validation`) until
+  xrpl accepts that kind. No shared change (event kind `audit_attested`, no `milestoneId`).
+- [10-25] **Route 25** `POST /api/projects/:id/decision`: platform operator resolves a `needs_human` project (mirror of route 12),
+  reason attested first; approve → `verified` (+ `VERIFIED_BUILDER` on first pass, builder `riskTier` = the AI report's), reject → `rejected`.
+  The site visit is evidence for this decision, not a decision itself.
+- [10-25] Keeper: a `verified` milestone whose release key is exposed is reported once per process and never retried
+  (`ReleaseServicePort.keyExposedAt`); CancelAfter → cancel → refund handles the escrow.
+- [10-25] `CoreVerifierAdapter.policyFor` uses the stored builder `riskTier`, cached from every read/write of the store view
+  createCore gives the service (sync port, async store). The stored tier wins over `@xrlp/verifier`'s in-process memory.

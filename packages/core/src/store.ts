@@ -18,6 +18,7 @@ import type {
   Verdict,
   XrplAddress,
 } from "@xrlp/shared";
+import type { InspectorSiteVisit } from "./site-visit.ts";
 
 export interface InvestorProfile {
   address: XrplAddress;
@@ -34,6 +35,8 @@ export interface ProjectMeta {
   verificationFee?: { amount: Rlusd; tx: string; at: string };
   /** AI verification said needs_human: a panel inspector does a pre-construction visit. */
   preVisitRequested?: boolean;
+  /** Route 24 reports. `signedByInspector: false` = core attested it with the platform key on the inspector's behalf. */
+  siteVisits?: (InspectorSiteVisit & { hash: string; signedByInspector: boolean })[];
   assignment?: InspectorAssignment & { at: string; tx?: string };
   verifiedAt?: string;
   fundingOpenedAt?: string;

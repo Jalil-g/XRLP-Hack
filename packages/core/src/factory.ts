@@ -94,10 +94,12 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const env = opts.env ?? process.env;
   const clock = opts.clock ?? systemClock;
   const dataDir = opts.inMemory ? undefined : (opts.dataDir ?? resolveDataDir(env));
-  const store = opts.store ?? (dataDir ? new FileStore(dataDir) : new MemoryStore());
+  const baseStore = opts.store ?? (dataDir ? new FileStore(dataDir) : new MemoryStore());
   const devnet = !opts.ledger && env.LEDGER_MODE === "devnet" ? devnetConfigFromEnv(env) : undefined;
   const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir, devnet);
-  const verifier = opts.verifier ?? verifierFromEnv(env, clock, store, dataDir, !!devnet);
+  const verifier = opts.verifier ?? verifierFromEnv(env, clock, baseStore, dataDir, !!devnet);
+  // The real verifier's release policy uses the stored builder risk tier: its store view keeps that cache current.
+  const store = !opts.verifier && verifier instanceof CoreVerifierAdapter ? verifier.store : baseStore;
   // Hoisted so the CORE-07 prestage import writes into the ReleaseService's own vault (same instance).
   const vault = dataDir ? new FilePreimageVault(dataDir, releaseKeyFromEnv(env)) : new MemoryPreimageVault();
   const release = opts.release ?? new ReleaseService({ ledger, vault, now: () => clock.now() });
