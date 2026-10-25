@@ -77,11 +77,45 @@ describe("http client", () => {
     assert.equal(req.form?.get("signedTxBlob"), "12000322");
   });
 
+  it("history reads unique route 2 projects discovered through route 18 and rejects incomplete refreshes", async () => {
+    const backend = await import("../lib/mock/backend.ts");
+    backend.mockControl.setLatency(0);
+    const queue = await backend.inspectorQueue(fx.ADDR.dana);
+    const details = await Promise.all([...new Set(queue.map((t) => t.projectId))].map((id) => backend.getProject(id)));
+    const start = seen.length;
+    reply = (req) => ({ status: 200, body: req.url?.endsWith("/queue") ? queue : details.find((d) => req.url === `/api/projects/${d.project.id}`) });
+    assert.deepEqual(await api.getAuditHistory(fx.ADDR.dana), JSON.parse(JSON.stringify(details)));
+    assert.deepEqual(seen.slice(start).map((s) => s.url).sort(), [
+      `/api/inspectors/${fx.ADDR.dana}/queue`, "/api/projects/maple-st-duplex", "/api/projects/oak-ave-rowhouse", "/api/projects/elm-ct-fourplex",
+    ].sort());
+    reply = (req) => req.url?.endsWith("/queue")
+      ? { status: 200, body: queue }
+      : { status: 503, body: { error: { code: "ledger_error", message: "Unavailable" } } };
+    await assert.rejects(api.getAuditHistory(fx.ADDR.dana), (e) => e instanceof ApiError && e.status === 503);
+  });
+
   it("maps the error envelope to ApiError", async () => {
     reply = () => ({ status: 409, body: { error: { code: "invalid_state", message: "already audited", txHash: "AB" } } });
     await assert.rejects(api.getProject("maple-st-duplex"), (e) => e instanceof ApiError && e.code === "invalid_state" && e.status === 409 && e.txHash === "AB");
     reply = () => ({ status: 502, body: "<html>" });
     await assert.rejects(api.getProject("maple-st-duplex"), (e) => e instanceof ApiError && e.code === "network");
+  });
+
+  it("loads re-audit checks through route 2 and surfaces failures rather than hiding the failed-check context", async () => {
+    const backend = await import("../lib/mock/backend.ts");
+    backend.mockControl.setLatency(0);
+    const tasks = await backend.inspectorQueue(fx.ADDR.marcus);
+    const detail = await backend.getProject("rhinebeck-farmhouse");
+    const start = seen.length;
+    reply = (req) => ({ status: 200, body: req.url?.endsWith("/queue") ? tasks : detail });
+    const result = await api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1");
+    assert.equal(result?.checks?.outcome, "fail");
+    assert.deepEqual(seen.slice(start).map((r) => r.url), [`/api/inspectors/${fx.ADDR.marcus}/queue`, "/api/projects/rhinebeck-farmhouse"]);
+    // Core may call the resubmitted round `audit`, but its own prior report still calls for comparison.
+    tasks[0]!.needs = "audit";
+    assert.equal((await api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1"))?.checks?.outcome, "fail");
+    reply = (req) => req.url?.endsWith("/queue") ? { status: 200, body: tasks } : { status: 503, body: { error: { code: "ledger_error", message: "Unavailable" } } };
+    await assert.rejects(api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1"), (e) => e instanceof ApiError && e.status === 503);
   });
 
   it("warns (does not throw) when core drifts from the contract", async () => {

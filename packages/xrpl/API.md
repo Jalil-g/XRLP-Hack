@@ -59,7 +59,9 @@ Every submit goes through `src/submit.ts` (pure retry engine, offline-tested) vi
   For multisig the better option is `submitWithSigner(account, {...tx, SigningPubKey: ""}, (p) => multisign(signers.map((w) => w.sign(p, true).tx_blob)), { signersCount: signers.length })`.
   You get the lock and full retries, re-signing included.
 - **`LastLedgerSequence` is always set**: validated index + `lastLedgerMargin` (default `DEFAULT_LLS_MARGIN` = 20, env
-  `XRPL_LLS_MARGIN`). Pass `{ lastLedgerMargin: 60 }` for txs that may take longer (EscrowFinish).
+  `XRPL_LLS_MARGIN`). Pass `{ lastLedgerMargin: 60 }` for txs that may take longer (EscrowFinish). Margins must be an
+  integer in 1..500 (`MAX_LLS_MARGIN`, `assertLlsMargin`; a bad `XRPL_LLS_MARGIN` refuses to load): "provably not applied"
+  is a ranged `tx` lookup, and rippled searches at most 1000 ledgers at once.
 - **Retries are bounded** (`maxAttempts` default 5, exponential backoff 0.5s → 4s):
 
   | Preliminary / error | Action |
@@ -68,13 +70,21 @@ Every submit goes through `src/submit.ts` (pure retry engine, offline-tested) vi
   | `telINSUF_FEE_P`, `telCAN_NOT_QUEUE*`, RPC `tooBusy`/`noNetwork`/`noCurrent`/`slowDown` | back off, re-sign with the **same Sequence** and a fresh Fee (pre-signed blob: resubmit the same blob) |
   | websocket disconnect / timeout | reconnect the shared client, resubmit the **same blob** (same hash, so it's idempotent) |
   | `LastLedgerSequence` passed and `tx` reports `searched_all` with no hit | provably not applied → re-sign with the same Sequence (pre-signed: throw `retriable`) |
-  | `tefPAST_SEQ` | if this hash may have been sent earlier, wait and look it up (an earlier submit probably applied it); otherwise re-autofill a fresh Sequence |
-  | `tem*`, other `tef*`/`tel*` | throw at once, never retried |
+  | `tefPAST_SEQ` | if this hash may have been sent earlier, wait and look it up (an earlier submit probably applied it); otherwise wait out every **earlier** blob of this intent that may have been sent (one of them may hold the Sequence), then re-autofill a fresh Sequence |
+  | `tem*`, other `tef*`/`tel*` | throw, never retried (after waiting out earlier blobs of the intent that may still apply) |
+  | `tx` lookup fails while waiting (not a connection error) | `tooBusy`-style errors are polled through; anything else → `unknown_outcome` |
 
   A new blob is only signed after the old one provably **cannot** apply. Same-Sequence re-signs are mutually exclusive
-  with the original, so there is no double spend. A validated hash is never resubmitted.
+  with the original, so there is no double spend. A validated hash is never resubmitted. Every blob that may have reached a
+  server stays tracked until it validates or provably expires (security review H1): a fresh Sequence is signed, and a
+  retriable or definite failure thrown, only once all of them are settled.
 - **Errors.** `XrplTxError { txType, engineResult, hash?, explorerUrl?, retriable }` (the constructor is backwards
-  compatible). `retriable` is true only when nothing was applied and a re-prepared attempt may succeed.
+  compatible). `retriable` is true only when **no blob of the intent can still apply** (each was refused, or provably
+  expired), so rebuilding from scratch is safe; after a lost connection that was then proven expired the engine result is
+  `not_applied`. An unknown outcome is never retriable: `connection_lost` (socket down 6 times) or `unknown_outcome`
+  (history incomplete, lookup failed, a re-sign failed while an earlier blob may apply), both with the hash to look up
+  (security review H2). Error `cause`s are redacted copies: xrpl.js echoes the signed blob (for an EscrowFinish, the
+  fulfillment) in `TimeoutError` messages and `RippledError.data.request` (`redactedCause`, `redactSecrets`; M3).
   `toErrorCode(e)` maps to the shared `ErrorCode` (`@xrlp/shared`; `ApiErrorCode` is a deprecated alias): a shared
   `LedgerError` keeps its `code`; preflight refusals (`UnsafeReleaseError`, a refused `PreflightResult`, an
   `unsafeReleaseError()` body) → `unsafe_release`; `tecTOO_SOON → too_soon`,
@@ -265,6 +275,9 @@ one `Batch` of `EscrowCreate × N` (or `EscrowCreate × N`).
 | no duplicate condition within the call, none already on an **open escrow of the SPV** (`account_objects`): also guards against re-running a close | 〃 |
 | `ledger now + 60 s` (`MIN_ESCROW_LIFETIME_S`) `< CancelAfter_i < maturity`, where maturity = `ledger now + interval × total` (lower bound: the real LoanSet starts later) | 〃 |
 | milestone amounts > 0, ≤ 6 decimals, sum ≤ principal; SPV signers reach the on-ledger quorum | 〃 |
+| SPV master key disabled (multisig path; `spvSingleKey` is the explicit fallback) — else the SPV's own seed controls the principal | 〃 |
+| escrow destination (`builderAddress`): a classic address, an existing account, not the SPV / issuer / another demo role's key, and on the SPV's on-ledger signer list (`escrowDestinationProblems`; security review M5) | 〃 |
+| a condition that fails the format check is described, never echoed (a fulfillment / raw preimage passed by mistake stays out of errors, HTTP bodies and logs; M2) | 〃 |
 
 LoanSet terms: platform = `Account`, SPV = `Counterparty` (multisig, default platform + builder + trustee), `tfLoanOverpayment`,
 no late fees, origination fee as in XRPL-04. `loanSet` itself also rejects `PaymentTotal < 2` / `InterestRate ≤ 0`.
@@ -308,7 +321,7 @@ try {
   if (!(e instanceof CloseLoanPartialError)) throw e; // nothing submitted, or the LoanSet itself failed
   // fix a persistent cause first (frozen line, missing RLUSD), then:
   close = await resumeEscrowCreation(e);
-  // without the error object (e.g. after a restart):
+  // without the error object (e.g. after a restart): builderAddress is REQUIRED, and it waits one LLS margin first
   // close = await resumeEscrowCreation({ project, loanId, created, pending, conditions, cancelAfters }, { builderAddress });
 }
 // close.resumed = { created: ["m2", "m3"], alreadyPresent: [{ milestoneId: "m1", source: "created" }], submitted: [<Batch>] }
@@ -317,6 +330,8 @@ try {
 In order (nothing is submitted before step 5):
 1. **In-flight wait.** If the failed submit's outcome was unknown (`context.uncertain`: connection lost, incomplete server history),
    wait until that tx can no longer validate: past the Batch's `LastLedgerSequence`, else one `DEFAULT_LLS_MARGIN` (20 ledgers).
+   The `{project, ...}` form has no record of what was in flight (e.g. after a restart), so it always waits one margin
+   (`waitForInFlight: false` skips it), and its `builderAddress` is required and checked like the close's (security review M8).
 2. **Loan.** It must exist with `Borrower` = the SPV. Its real maturity (`NextPaymentDueDate + interval × (remaining − 1)`) bounds
    every new CancelAfter.
 3. **What exists** (`planEscrowResume`, pure). A milestone is *present* (never re-created) when the failed close reported it
@@ -435,6 +450,12 @@ Options: `walletsFile` (sets the process-wide wallet store path), `log` (one lin
 refusal), `privateVault` (default `true`), `finishMargins` (`{lastLedgerMargin, marginS}`, used by both `preflightFinish` and
 `finishEscrow`; default 60 ledgers → preflight wants ≥ 300 s before CancelAfter; short-dated spikes pass `{ lastLedgerMargin: 20, marginS: 60 }`). Keys come from the wallet store: **every address core passes that must sign**
 (builder, investors, credential subjects, SPV signers) must be a bootstrapped wallet; else `validation`.
+**Keys are bound to roles** (security review M4, `SIGNING_ROLES` / `keyForRole` in `adapter-map.ts`): an investor address must
+be `investor1..3`'s, a builder address the `builder`'s, a credential subject the role its type is for (KYC_INVESTOR → investors,
+VERIFIED_BUILDER → builder, VERIFIED_INSPECTOR → inspectors), an `attest` signer one of `aiAgent | platform | releaseService`.
+Another role's address (e.g. the issuer's, registered as an "investor" over HTTP) → `validation`, nothing signed. The SPV
+quorum picker never uses the `aiAgent` / `releaseService` / `issuer` keys, and `setupProjectOnChain` refuses them as builder
+or inspector before any tx (M6).
 
 | Port method | Does | Kinds on `TxResult` |
 |---|---|---|
@@ -482,7 +503,7 @@ does and writes `.data/adapter-e2e.json`.
 
 | What | Behaviour |
 |---|---|
-| `finishEscrow` (`escrow.ts`) | `fulfillmentMatches` → `preflightFinish` (`lastLedgerOffset` 60 → margin to CancelAfter = max(120 s, 60 × 5 s) = 300 s) → `EscrowFinish` with preflight's Fee (sized for the fulfillment) + LastLedgerSequence. If the submit throws `retriable: true` (nothing applied), it **re-runs preflight and rebuilds once**. Short-lived spike escrows: pass `lastLedgerMargin: 20, marginS: 60`. |
+| `finishEscrow` (`escrow.ts`) | `fulfillmentMatches` → `preflightFinish` (`lastLedgerOffset` 60 → margin to CancelAfter = max(120 s, 60 × 5 s) = 300 s) → `EscrowFinish` with preflight's Fee (sized for the fulfillment) + LastLedgerSequence. Each finish blob is signed right after its own preflight (under the submitter's account lock) and submitted **pre-signed**: the engine may resubmit that blob, never re-sign it (security review H3). If the submit throws `retriable: true` (nothing can apply), it **re-runs preflight and rebuilds once**; a refusal on that second preflight is `XrplTxError("preflight_refused_after_submit")`, not `unsafe_release`, so `unsafe_release` from a finish always means the fulfillment never left the process. `deps` (`preflightFinish`, `prepare`, `submitBlob`) for offline tests (`test/finish.test.ts`). Short-lived spike escrows: pass `lastLedgerMargin: 20, marginS: 60`. |
 | `cancelEscrow` | Reads escrow + close time from one validated ledger (`getEscrowAtLedger`). `now ≤ CancelAfter` → shared **`TooSoonError`**, nothing submitted. Escrow gone → `XrplTxError tecNO_TARGET` (local, no hash → `not_found`). An on-ledger `tecNO_PERMISSION` is mapped to `TooSoonError` with `txHash`. |
 | `finishWithWrongFulfillment` / `tryFinishWithWrongFulfillment` | Random 32-byte preimage (never matches), condition check skipped, but refuses (`UnsafeReleaseError`, nothing submitted) when the escrow is missing, past/within 30 s of CancelAfter, before FinishAfter, frozen/unauthorized, or the submitter is unfunded (`wrongFinishBlockers`). Resolves with the validated tec `TxResult`; throws if the tx never reached the ledger. |
 | `loanPayMultisig({..., mode?, overpayment?})` (`loan.ts`) | `submitWithSigner` on the SPV: per-account lock through validation, re-sign on transient failures, local quorum check first (`tefBAD_QUORUM`/`tefBAD_SIGNATURE`, nothing submitted). |
@@ -528,11 +549,11 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 
 | File | Concern |
 |---|---|
-| `config.ts` | env (`XRPL_WS_URL`, `XRPL_FAUCET_HOST`, `WALLETS_FILE`, `DATA_DIR`), mainnet guard, RLUSD hex code |
+| `config.ts` | env (`XRPL_WS_URL`, `XRPL_FAUCET_HOST`, `WALLETS_FILE`, `DATA_DIR`), RLUSD hex code. Mainnet guard: a non-devnet URL/label denylist at load, and on every connect `server_info.network_id` must be devnet's **2** (`XRPL_NETWORK_ID` for another custom network ≥ 2; 0/1 never). `WALLETS_FILE` / `DATA_DIR` inside the repo must be git-ignored (under `.data/`, or named `wallets.json`), else the package refuses to load |
 | `client.ts` | shared `Client` (+`reconnect`), `signAndSubmit`, `submitWithSigner`, `submitBlob`, `withAccountLock`, `ledgerTime`, `waitForLedgerTimeAfter`, `createdNodeId` |
 | `submit.ts` | retry engine: per-account lock, result classification, `submitReliably` (network-free, see Submission semantics) |
 | `errors.ts` | `XrplTxError`, `toErrorCode` → shared `ErrorCode`, `toLedgerError` / `withLedgerErrors` → shared `LedgerError` |
-| `wallets.ts` | wallet store (`WALLETS_FILE`), roles, pure `migrateWalletFile` / `rlusdTopUpPlan`, faucet funding, role resolution |
+| `wallets.ts` | wallet store (`WALLETS_FILE`; written atomically, 0600), roles, pure `migrateWalletFile` / `rlusdTopUpPlan`, faucet funding, role resolution |
 | `rlusd.ts` | issuer flags, trust lines, issue/pay, balances |
 | `vault.ts` | closed-ended `VaultCreate`, deposit/withdraw, share balance, phase |
 | `loan.ts` | `LoanBrokerSet` (default rates), `LoanBrokerCoverDeposit`, dual-signed `LoanSet` (platform account lock), multisig `LoanPay` |
@@ -566,3 +587,42 @@ snapshot and every tx hash. Preimages are **only** in `.data/prestage-preimages.
 projectId → milestoneId → `{condition, preimage}`), the release-service stand-in until CORE-12 generates them;
 `parsePrestageFile` rejects any file carrying a `preimage`/`fulfillment`/`seed` field. Env knobs: header of
 `scripts/demo.ts` / `scripts/prestage.ts`. Devnet tx tables: `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`.
+
+## Stage check (XRPL-16)
+
+`pnpm --filter @xrlp/xrpl stage:check` is the read-only go/no-go for the 30 minutes before the slot. It submits **no**
+transaction and funds nothing (the faucet only gets a `HEAD`). It reads the wallet file (addresses only),
+`.data/prestage.json`, `.data/prestage-preimages.json` and **one validated ledger**: every `account_info`,
+`account_lines`, `account_objects` and `ledger_entry` is pinned to that ledger's index, and time is its `close_time`.
+It prints one row per beat (~3 s) with the exact fix command:
+
+| Beat | NO-GO unless it holds (WARN where marked) |
+|---|---|
+| every beat | devnet reachable, `network_id` 2, validated ledger fresh (WARN > 30 s, NO-GO > 120 s), `REQUIRED_AMENDMENTS` enabled in that ledger's Amendments object (SingleAssetVault, LendingProtocol, LendingProtocolV1_1, TokenEscrow, Credentials, PermissionedDomains, BatchV1_1; IDs = `amendmentId(name)`, SHA-512Half; `feature` only as a fallback); wallet file holds all 12 roles; `prestage.json` parses (`parsePrestageFile`) and belongs to the wallet file (network, RLUSD issuer, every role's account); the issuer exists. rippled ≠ 3.4.1 → WARN |
+| D1 verified builder | builder holds an accepted `VERIFIED_BUILDER` and ≥ 250 RLUSD (fee); builder + platform can pay fees |
+| D2 locked state | A: vault in Investment for the whole window, loan open, 3/3 escrows on the ledger and unexpired (each `CancelAfter` ≥ 300 s + window away, else WARN), SPV liquid ≤ 1 RLUSD (WARN); investor1/2 hold an accepted `KYC_INVESTOR`, investor3 none; platform RLUSD ≥ the first-loss cover of a live lock-terms on A's terms (`lockTermsCover`, XRPL-04 sizing: 3395.579039 for 30 000 @ 10 %, 6 × 30 d); faucet down → WARN |
+| D3 release | A m1 through `evaluatePreflight`, exactly as the release service submits it (margin `RELEASE_MARGIN_S` = 300 s = `FINISH_LLS_MARGIN` 60 × 5 s), at ledger now **and** at now + window (only now → WARN): escrow present, destination = builder, Condition = `prestage.json`'s, builder RLUSD line (exists, headroom, not frozen/unauthorized), releaseService funded. A m1's preimage hashes to the on-ledger Condition. A's assigned inspector is one of ours and holds `VERIFIED_INSPECTOR`. aiAgent funded |
+| D4 fraud held | A m2 still on the ledger and not expiring inside the window (WARN) |
+| D5 ledger says no | `wrongFinishBlockers(evaluatePreflight(…))` for the platform's random-fulfillment `EscrowFinish` on A m2 is empty, now and at now + window |
+| D6 stall → refund | B's `expired` escrow is still on the ledger and `cancelReadiness` is ok (cancellable inside the window → WARN); `planLoanPayment({amount: escrow + SPV RLUSD, source: "escrow_refund"})` accepts it **on time** now and at now + window (a LoanPay without `tfLoanLatePayment` after `NextPaymentDueDate` is `tecEXPIRED`; `GracePeriod` only delays a default); B's SPV can pay the fee; releaseService funded |
+| withdraw (C) | C vault in Redemption (opens inside the window → WARN), `AssetsAvailable` > 0, every C investor holds shares (only some → WARN) |
+| advisory, WARN only | `prestage.json` older than `--max-age-min`; preimages file mode ≠ 600; a missing or mismatched preimage for an escrow the demo doesn't release (A m2/m3, B); an unassigned inspector without `VERIFIED_INSPECTOR`; a role under 30 XRP (bootstrap's top-up line); trustee unfunded (multisig signers need no account) |
+
+Exit **0 = no NO-GO** (GO, or GO with warnings), **1 = NO-GO**, **2** = the check itself failed. Flags: `--json` prints only
+the `StageReport` JSON on stdout (use `pnpm -s --filter @xrlp/xrpl stage:check --json` so pnpm's banner stays off stdout),
+`--verbose` lists every check, `--window-min=60` (`STAGE_WINDOW_MIN`; every time gate must hold until ledger now + window),
+`--max-age-min=60` (`STAGE_MAX_AGE_MIN`), `--prestage <file>`, `--preimages <file>` (relative paths resolve against the repo
+root, like `WALLETS_FILE`). Fix commands are exact and carry the env that picked the files
+(`WALLETS_FILE=… pnpm --filter @xrlp/xrpl prestage --only B`). `fixes` merges them: one `bootstrap [--pre-verify-builder]`,
+one `prestage --only <union>` (all three = plain `prestage`), then `chmod 600`. `suggestions` holds the warnings' fixes
+that `fixes` doesn't already cover.
+
+Secrets: `summarizePreimages` reduces the preimages file to `{storedCondition, derivedCondition}` per escrow (the preimage
+never leaves that function), and `walletAddresses` reduces the wallet file to addresses. JSON parse errors of either file
+are reported without content, since a parser excerpt would quote a seed or a preimage. A `StageSnapshot` holds no secret.
+
+Pure core: `evaluateStage(snapshot, now, opts?) → StageReport` `{version: 1, ok, status, ledger, files, prestage, beats:
+[{beat, title, status, details, fixes}], checks: [{id, status, message, beats, fix?}], fixes, suggestions, counts}`, with
+offline tests (one fixture per NO-GO reason, `test/stage-check.test.ts`). `renderStageReport(report, {verbose})` renders the
+table. All of it is exported from `@xrlp/xrpl`. Devnet runs (GO, a mangled preimage → D3 NO-GO, a rehearsal's
+`EscrowCancel` of B → D6 NO-GO → `prestage --only B` → GO): `packages/xrpl/proof/xrpl-16-stage-check-2026-10-25.md`.

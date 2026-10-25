@@ -90,6 +90,45 @@ export function toAdapterError(e: unknown, context?: string): LedgerError {
   return new XrplLedgerError(apiCode, message, { ...opts, ...(typeof reason === "string" ? { reason } : {}), cause: e });
 }
 
+// ---------------------------------------------------------------- which key may sign what (security review M4)
+
+const INVESTORS = ["investor1", "investor2", "investor3"] as const;
+const INSPECTORS = ["inspector1", "inspector2", "inspector3"] as const;
+
+/**
+ * Demo roles whose key may sign for each adapter input. Core passes addresses (some straight from HTTP, e.g.
+ * registerInvestor), and the store holds every demo key: without this an "investor" equal to the issuer's address
+ * would make the issuer sign a VaultDeposit of freshly minted RLUSD.
+ */
+export const SIGNING_ROLES = {
+  investor: INVESTORS,
+  builder: ["builder"],
+  KYC_INVESTOR: INVESTORS,
+  VERIFIED_BUILDER: ["builder"],
+  VERIFIED_INSPECTOR: INSPECTORS,
+  /** shared `AttestSigner`: platform-held attestation keys. */
+  attest: ["aiAgent", "platform", "releaseService"],
+} as const;
+
+/** Keys never picked as SPV multisig signers (security review M6), even if an on-ledger list named them. */
+export const NEVER_SPV_SIGNERS = ["aiAgent", "releaseService", "issuer"] as const;
+
+/** The store's wallets that may countersign for an SPV: every role but NEVER_SPV_SIGNERS. Pure. */
+export function spvSignerCandidates<W>(wallets: Record<string, W>): W[] {
+  return Object.entries(wallets).flatMap(([role, w]) => ((NEVER_SPV_SIGNERS as readonly string[]).includes(role) ? [] : [w]));
+}
+
+/**
+ * The wallet of one of `allowed` roles whose address is `address`. An address that belongs to another role → validation
+ * error naming it ("refusing to sign as investor"); an unknown address → validation error. Nothing is signed either way.
+ */
+export function keyForRole<W extends { classicAddress: string }>(wallets: Record<string, W>, address: string, allowed: readonly string[], label: string, store = "the wallet store"): W {
+  for (const role of allowed) if (wallets[role]?.classicAddress === address) return wallets[role]!;
+  const other = Object.entries(wallets).find(([, w]) => w.classicAddress === address)?.[0];
+  if (other) throw new XrplLedgerError("validation", `${label} ${address} is the demo ${other} key; refusing to sign as ${label} (allowed roles: ${allowed.join(", ")})`);
+  throw new XrplLedgerError("validation", `no key for ${label} ${address} in ${store} (devnet demo: every signing account must be a bootstrapped wallet)`);
+}
+
 // ---------------------------------------------------------------- SPV signers
 
 /**

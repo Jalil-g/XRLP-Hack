@@ -13,6 +13,7 @@ import {
   type ErrorCode,
   type Evidence,
   type InspectorAudit,
+  type ChecksStatus,
 } from "./types.ts";
 
 export type ApiMode = "mock" | "http";
@@ -105,10 +106,30 @@ export const api = {
     return http(InspectorTask.array(), `/api/inspectors/${enc(address)}/queue`);
   },
 
+  /** Discover assigned projects via route 18 (including needs:none), then read their audits/checks via route 2. */
+  async getAuditHistory(address: string): Promise<ProjectDetail[]> {
+    const tasks = await api.getQueue(address);
+    const projectIds = [...new Set(tasks.map((task) => task.projectId))];
+    // Reject a partial refresh: usePoll retains the last complete snapshot and displays the error.
+    return Promise.all(projectIds.map((id) => api.getProject(id)));
+  },
+
   /** Route 2 — full project read model (checks panel outcome, audits, attestations, events). */
   getProject(projectId: string): Promise<ProjectDetail> {
     if (API_MODE === "mock") return viaMock(() => mock.getProject(projectId));
     return http(ProjectDetail, `/api/projects/${enc(projectId)}`);
+  },
+
+  /** One-shot review snapshot. A prior audit also identifies a new evidence round labelled `audit` by core. */
+  async getAuditReview(address: string, projectId: string, milestoneId: string): Promise<{ task: InspectorTask; checks?: ChecksStatus } | null> {
+    const tasks = await api.getQueue(address);
+    const task = tasks.find((t) => t.projectId === projectId && t.milestone?.id === milestoneId);
+    if (!task) return null;
+    if (task.needs === "re_audit" || task.priorAudits.some((a) => a.inspector === address)) {
+      const detail = await api.getProject(projectId);
+      return { task, checks: detail.checks[milestoneId] };
+    }
+    return { task };
   },
 
   /** Route 10 — file the signed audit. Core attests it on-chain (or submits `signedTxBlob`) and returns the event. */
