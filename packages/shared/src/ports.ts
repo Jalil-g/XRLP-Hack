@@ -22,11 +22,14 @@ export interface TxResult {
   kind?: ChainEventKind;
   /** Ledger close time (ISO). */
   at?: ISO;
+  /** Txs the same call submitted before this one (e.g. repayLoan source "builder": the builder -> SPV Payment). */
+  preceding?: TxResult[];
 }
 
 /** Thrown by LedgerPort for failed/refused transactions. */
 export class LedgerError extends Error {
-  readonly code: "too_soon" | "ledger_error" | "unsafe_release";
+  /** not_found = vault/loan/escrow missing on-ledger; validation = rejected client-side before anything was submitted. */
+  readonly code: "too_soon" | "ledger_error" | "unsafe_release" | "not_found" | "validation";
   readonly txResult?: string;
   readonly txHash?: string;
   constructor(code: LedgerError["code"], message: string, opts: { txResult?: string; txHash?: string } = {}) {
@@ -97,6 +100,16 @@ export interface EscrowSnapshot {
   cancelAfter?: ISO;
 }
 
+/** LoanManage default outcome, read from the tx metadata. Investors lose `vaultLoss` = defaultAmount - defaultCovered. */
+export interface LoanDefaultResult extends TxResult {
+  /** Exposure written off (principal outstanding on a cash-basis vault). */
+  defaultAmount: Rlusd;
+  /** First-loss cover moved from the LoanBroker into the vault. */
+  defaultCovered: Rlusd;
+  vaultLoss: Rlusd;
+  alreadyDefaulted: boolean;
+}
+
 export interface LedgerPort {
   readonly mode: "fake" | "devnet";
 
@@ -138,6 +151,12 @@ export interface LedgerPort {
   cancelEscrow(p: { owner: XrplAddress; offerSequence: number }): Promise<TxResult>;
   /** LoanPay from the SPV (multisig). "escrow_refund" = money returned by a cancelled escrow. */
   repayLoan(p: { project: Project; amount: Rlusd; source: "builder" | "escrow_refund" }): Promise<TxResult>;
+  /** LoanManage tfLoanDefault from the LoanBroker owner. Throws TooSoonError before the grace period has run out.
+   *  Idempotent: an already-defaulted loan resolves with the original tx and `alreadyDefaulted: true`.
+   *  Optional until FakeLedger and the devnet adapter both implement it (#133). */
+  defaultLoan?(p: { project: Project }): Promise<LoanDefaultResult>;
+  /** LoanManage tfLoanImpair / tfLoanUnimpair: book or reverse the paper loss (ChainEvent `loan_impaired`). Optional (#133). */
+  impairLoan?(p: { project: Project; action: "impair" | "unimpair" }): Promise<TxResult>;
   /** Memo attestation tx (`xrlp/attest/v1`) signed by a platform-held key, sent to the SPV. */
   attest(p: { signer: AttestSigner; spv: XrplAddress; memo: AttestMemo }): Promise<TxResult>;
   /** Submit an attestation the inspector app signed itself (attest-signer SoftwareSigner). */
