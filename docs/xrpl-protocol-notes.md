@@ -216,6 +216,12 @@ Observations:
   (spike passes `lastLedgerMargin: 20`; default 60). Submitter = releaseService, as in Direction v2.
 - Client-side refusals were proven by the submitting account's `Sequence` staying put: nothing reached the ledger, so the
   TooSoon / amount errors cost no fee and leak nothing.
+- **Re-run on main after merging XRPL-06 and the hardening follow-ups (locked `submitMultisigned` for LoanPay, `planLoanClose`)**,
+  2026-10-25 ~00:34 UTC, same numbers, 0 retries: wrong fulfillment [44C99ACC…](https://devnet.xrpl.org/transactions/44C99ACC8C811B0D19F067FC4C52C4ABDD9FEB22BEE26AAFB7C589E81C215C3A) `tecCRYPTOCONDITION_ERROR` ·
+  finish [8175B5F2…](https://devnet.xrpl.org/transactions/8175B5F240E36FC93AB8DC9829F3F135380207A9DAA1F316F544E6F532C8E79F) · builder LoanPay [3F36268E…](https://devnet.xrpl.org/transactions/3F36268EC995EC3076006442D4262CB7805AE964023416C9119D95F6DF103E0D) ·
+  cancel [5206FBF3…](https://devnet.xrpl.org/transactions/5206FBF347522B5C25B1D4FBDAEEB0048954668857ACD6C91A0F1CF0AE75B046) · refund overpayment [FCC906F7…](https://devnet.xrpl.org/transactions/FCC906F7BB8F68F1C1DAF5FD1EC3424BEF2E1C251F9382766F48E51A27179A8A) ·
+  withdraw [D68D6A4C…](https://devnet.xrpl.org/transactions/D68D6A4C58B0A8A1742F90EF609FA2E6A87DE2BC926D945FE372444FE10C598F). Bootstrap first hit
+  `Decimal precision out of range` topping up investor1 from 35 999.99999987428 (left by run 1's withdraw); fixed in `topUpRlusd` (round the shortfall up to 6 dp).
 
 ---
 
