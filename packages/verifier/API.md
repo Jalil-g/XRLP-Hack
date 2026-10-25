@@ -11,6 +11,8 @@ pnpm --filter @xrlp/verifier typecheck
 pnpm --filter @xrlp/verifier test
 VERIFIER_MODE=mock pnpm --filter @xrlp/verifier demo
 pnpm --filter @xrlp/verifier fixtures
+pnpm --filter @xrlp/verifier eval --mode mock --repeat 3
+pnpm --filter @xrlp/verifier eval --mode live --repeat 3 --output .data/live-eval.json
 ```
 
 Mock mode is deterministic and needs no API key. Its judgement reasons are labeled [mock]; stage
@@ -108,6 +110,16 @@ also exported; it rejects cycles and non-finite/non-JSON data. Neither helper si
 
 ## Project verification
 
+## Invoice reconciliation (VER-05)
+
+Standard-risk invoice totals within +/-10% of the milestone amount pass; mismatch up to +/-25%
+requires review; beyond 25% fails. High-risk/high-value policy narrows the pass band. Boundaries use
+integer cross-multiplication, so a one-cent excess cannot hide behind a rounded display percentage.
+Unreadable/malformed totals need review. Text/JSON parsing is deterministic; PDFs/images use live
+extraction and are explicitly labeled LLM-extracted. No live PDF extraction result was measured here.
+
+## Project verification
+
 verifyProject({ project, builder, sov, documents, history?, now?, mode?, registry?, dataDir? }) returns
 shared ProjectVerification with local inspectorPreVisitRequired and registryIsMock flags.
 Identity checks licence/insurance expiry and name consistency plus entity information. Feasibility
@@ -119,7 +131,14 @@ The default licence/insurance registry, NYC residential cost proportions and fix
 MOCK. They do not prove real-world licensing, entity/sanctions status, site existence, permit
 authenticity, construction quality or quantities. Live mode adds bounded structured Claude judgement
 (20 seconds, no retries); unavailable/refused/low-confidence review requires a human, and cannot
-override deterministic contradictions. Project manifest: fixtures/project-manifest.json.
+override deterministic contradictions. Project manifest: fixtures/projects/manifest.json.
+
+The eval harness recursively discovers fixtures/**/manifest.json for milestone and project cases.
+It checks expected decisions AND every declared failing/warning check, serially. Live mode disables
+the review cache; three repetitions must independently match before claiming stability. Missing keys,
+unknown fixture builders, exceptions and mismatches cannot score green. Exit codes: 0 matched,
+1 mismatch, 2 configuration/unavailable. Reports contain results/timings/hashes, never credentials.
+Mock validation completed 24/24 scenario runs; no real live evaluation has been measured here.
 
 ## Inspector assignment
 

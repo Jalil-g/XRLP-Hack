@@ -105,7 +105,7 @@ test("invoice_matches_budget: within tolerance, shortfall, overrun, unreadable",
   const short = checkInvoiceMatchesBudget(ctx, [inv("18400.00")], policy);
   assert.equal(short.result, "fail");
   assert.match(short.reason, /73\.6%/);
-  assert.equal(checkInvoiceMatchesBudget(ctx, [inv("40000.00")], policy).result, "warn");
+  assert.equal(checkInvoiceMatchesBudget(ctx, [inv("40000.00")], policy).result, "fail");
   assert.equal(checkInvoiceMatchesBudget(ctx, [inv()], policy).result, "warn");
   const unread = inv();
   assert.equal(checkInvoiceMatchesBudget(ctx, [unread], policy, { [unread.evidence.id]: "25000.00" }).result, "pass", "LLM total used");
