@@ -29,8 +29,8 @@ export interface MilestoneJudge {
 export const LlmMilestoneOutput = z.object({
   stage_visually_consistent: z.object({
     result: z.enum(["pass", "fail", "warn"]),
-    confidence: z.number().describe("0..1, your confidence in this result"),
-    reason: z.string().describe("One or two sentences a lender can read. Cite photo ids."),
+    confidence: z.number().min(0).max(1).describe("0..1, your confidence in this result"),
+    reason: z.string().min(1).describe("One or two sentences a lender can read. Cite photo ids."),
     criteria_observed: z.array(z.string()),
     criteria_missing: z.array(z.string()),
     photos: z.array(
@@ -43,8 +43,8 @@ export const LlmMilestoneOutput = z.object({
   }),
   document_consistency: z.object({
     result: z.enum(["pass", "fail", "warn"]),
-    confidence: z.number(),
-    reason: z.string(),
+    confidence: z.number().min(0).max(1),
+    reason: z.string().min(1),
     documents: z.array(
       z.object({
         evidence_id: z.string(),
@@ -56,6 +56,10 @@ export const LlmMilestoneOutput = z.object({
         issues: z.array(z.string()),
       }),
     ),
+  }),
+  audit_matches_evidence: z.object({
+    result: z.enum(["pass", "fail", "warn"]), confidence: z.number().min(0).max(1),
+    reason: z.string().min(1), checklist_conflicts: z.array(z.string()),
   }),
 });
 export type LlmMilestoneOutput = z.infer<typeof LlmMilestoneOutput>;
