@@ -8,7 +8,7 @@ export function TxLink({ hash, label, className }: { hash: string; label?: strin
   const text = label ?? shortHash(hash);
   if (API_MODE === "mock") {
     return (
-      <span title={`Mock transaction ${hash}: not on the ledger`} className={cn("font-mono text-caption text-ink-2", className)}>
+      <span title={`Mock transaction ${hash}: not on the ledger`} className={cn("font-mono text-[12px] text-ink-2", className)}>
         {text}
       </span>
     );
@@ -19,7 +19,7 @@ export function TxLink({ hash, label, className }: { hash: string; label?: strin
       target="_blank"
       rel="noreferrer"
       title={`Open ${hash} on the XRPL devnet explorer`}
-      className={cn("inline-flex items-center gap-0.5 font-mono text-caption text-link hover:underline", className)}
+      className={cn("inline-flex items-center gap-0.5 font-mono text-[12px] text-link hover:underline", className)}
     >
       {text}
       <ArrowUpRight className="size-3" aria-hidden />
@@ -30,13 +30,13 @@ export function TxLink({ hash, label, className }: { hash: string; label?: strin
 export function Address({ address, className }: { address: string; className?: string }) {
   if (API_MODE === "mock") {
     return (
-      <span title={`${address} (mock account)`} className={cn("font-mono text-caption text-ink-2", className)}>
+      <span title={`${address} (mock account)`} className={cn("font-mono text-[12px] text-ink-2", className)}>
         {shortAddress(address)}
       </span>
     );
   }
   return (
-    <a href={explorerAccountUrl(address)} target="_blank" rel="noreferrer" title={address} className={cn("font-mono text-caption text-link hover:underline", className)}>
+    <a href={explorerAccountUrl(address)} target="_blank" rel="noreferrer" title={address} className={cn("font-mono text-[12px] text-link hover:underline", className)}>
       {shortAddress(address)}
     </a>
   );
