@@ -160,13 +160,17 @@ export class FakeVerifier implements VerifierPort {
     // photo_fresh
     const stale = escrowCreatedAt ? photos.filter((p) => p.meta.takenAt && p.meta.takenAt < escrowCreatedAt) : [];
     const noDate = photos.filter((p) => !p.meta.takenAt);
-    const daysBefore = (p: Evidence) => Math.round((new Date(escrowCreatedAt!).getTime() - new Date(p.meta.takenAt!).getTime()) / 86_400_000);
+    const daysBefore = (p: Evidence) => Math.floor((new Date(escrowCreatedAt!).getTime() - new Date(p.meta.takenAt!).getTime()) / 86_400_000);
+    const howLongBefore = (p: Evidence) => {
+      const d = daysBefore(p);
+      return d < 1 ? "taken before this escrow existed" : `taken ${d} day${d === 1 ? "" : "s"} before this escrow existed`;
+    };
     checks.push(
       check(
         "photo_fresh",
         stale.length ? "fail" : noDate.length ? "warn" : "pass",
         stale.length
-          ? stale.map((p) => `${p.filename} taken ${daysBefore(p)} days before this escrow existed`).join("; ")
+          ? stale.map((p) => `${p.filename} ${howLongBefore(p)}`).join("; ")
           : noDate.length
             ? `${noDate.length} photos without EXIF time`
             : "All photos taken after the escrow was created",
@@ -175,12 +179,12 @@ export class FakeVerifier implements VerifierPort {
     );
 
     // no_duplicate_photo (sha256 + pHash across ALL projects)
-    const seen = new Map<string, Evidence & { projectId?: string }>();
+    const seen = new Map<string, Evidence & { projectId?: string; projectName?: string }>();
     for (const p of priorEvidence) {
       seen.set(p.sha256, p);
       if (p.meta.perceptualHash) seen.set(`p:${p.meta.perceptualHash}`, p);
     }
-    const dupes: { e: Evidence; of: Evidence & { projectId?: string } }[] = [];
+    const dupes: { e: Evidence; of: Evidence & { projectId?: string; projectName?: string } }[] = [];
     for (const p of photos) {
       const of = seen.get(p.sha256) ?? (p.meta.perceptualHash ? seen.get(`p:${p.meta.perceptualHash}`) : undefined);
       if (of) dupes.push({ e: p, of });
@@ -190,7 +194,7 @@ export class FakeVerifier implements VerifierPort {
         "no_duplicate_photo",
         dupes.length ? "fail" : "pass",
         dupes.length
-          ? dupes.map((d) => `${d.e.filename} matches ${d.of.filename}${d.of.projectId && d.of.projectId !== project.id ? ` from project ${d.of.projectId}` : ""} (distance 0/64)`).join("; ")
+          ? dupes.map((d) => `${d.e.filename} matches ${d.of.filename}${d.of.projectId && d.of.projectId !== project.id ? ` from project ${d.of.projectName ?? d.of.projectId}` : ""} (distance 0/64)`).join("; ")
           : `${photos.length} photos unique across all projects`,
         dupes.map((d) => d.e.id),
       ),

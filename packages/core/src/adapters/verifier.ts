@@ -3,7 +3,7 @@
 // "/api/files/<fileId>", and the verifier needs the server-owned inspector assignment (never from audit notes).
 import { join } from "node:path";
 import type { Evidence, InspectorAssignment, Milestone, Project, ProjectVerification, ReleasePolicy, Verdict, VerifierPort, VerifyMilestoneInput, VerifyProjectInput } from "@xrlp/shared";
-import { ClaudeVerifierAdapter } from "@xrlp/verifier";
+import { ClaudeVerifierAdapter, type PriorEvidence } from "@xrlp/verifier";
 import { assignedInspectors } from "../read-models.ts";
 import type { Store } from "../store.ts";
 
@@ -32,6 +32,14 @@ export class CoreVerifierAdapter implements VerifierPort {
     return this.opts.dataDir ? { ...e, uri: evidencePath(e.uri, this.opts.dataDir) } : e;
   }
 
+  /** Core's prior-evidence records carry projectId/milestoneId/projectName: hand them over as @xrlp/verifier PriorEvidence
+   *  (plain Evidence reads as "previously submitted evidence" from project "unknown"). */
+  private prior(e: Evidence): PriorEvidence | Evidence {
+    const { projectId, milestoneId, projectName, round: _r, ...evidence } = e as Evidence & { projectId?: string; milestoneId?: string; projectName?: string; round?: number };
+    if (!projectId || !milestoneId) return this.local(e);
+    return { evidence: this.local(evidence as Evidence), projectId, milestoneId, ...(projectName ? { projectName } : {}) };
+  }
+
   verifyProject(input: VerifyProjectInput): Promise<ProjectVerification> {
     return this.inner.verifyProject(input);
   }
@@ -43,7 +51,7 @@ export class CoreVerifierAdapter implements VerifierPort {
     return this.inner.verifyMilestone({
       ...input,
       evidence: input.evidence.map((e) => this.local(e)),
-      priorEvidence: input.priorEvidence.map((e) => this.local(e)),
+      priorEvidence: input.priorEvidence.map((e) => this.prior(e)),
       audits: input.audits.map((a) => ({ ...a, photos: a.photos.map((p) => this.local(p)) })),
       assignedInspectors: assigned,
     });

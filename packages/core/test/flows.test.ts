@@ -297,7 +297,7 @@ describe("docs/04-demo-script.md end to end (fake mode)", () => {
     assert.equal(r2.release, undefined);
     const dup = r2.verdict.checks.find((c) => c.check === "no_duplicate_photo")!;
     assert.equal(dup.result, "fail");
-    assert.match(dup.reason, /IMG_2231\.jpg matches oak-ave-framing\.jpg from project oak-ave-renovation/);
+    assert.match(dup.reason, /IMG_2231\.jpg matches oak-ave-framing\.jpg from project Oak Ave Renovation /);
     assert.ok(await core.ledger.getEscrow(m2!.escrow!.owner, m2!.escrow!.offerSequence), "escrow still locked");
 
     // Beat 5: ledger says no

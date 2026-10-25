@@ -908,7 +908,8 @@ export class CoreService implements CoreApi {
           evidence: roundEvidence(db, mid, round).map(stripEvidence),
           audits: roundAudits(db, mid, round),
           // ALL projects' evidence except this milestone's own submissions (cross-project duplicate detection)
-          prior: db.evidence.filter((e) => e.milestoneId !== mid),
+          // projectName: verdict reasons say "from project Elm St ADU", not the raw id.
+          prior: db.evidence.filter((e) => e.milestoneId !== mid).map((e) => ({ ...e, projectName: db.projects.find((x) => x.id === e.projectId)?.name })),
           assigned: assignedInspectors(db, id),
         };
       });
