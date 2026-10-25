@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-25T07:10:00Z",
+  "title": "Design System: Drawproof Finance Workspace",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "brand", "displayName": "Chartreuse selection, not success" },
+      "capital": { "role": "primary", "displayName": "Capital green" },
+      "workspace": { "role": "neutral", "displayName": "Warm workspace" }
+    },
+    "typographyMeta": { "financial": { "displayName": "Financial amount", "purpose": "Actual, explicitly labeled capital with tabular numerals." } },
+    "shadows": [
+      { "name": "surface", "value": "0 2px 8px -4px rgb(23 37 28 / .12)", "purpose": "Subtle working-surface separation." },
+      { "name": "overlay", "value": "0 20px 48px -12px rgb(0 0 0 / .22), 0 4px 12px -4px rgb(0 0 0 / .08)", "purpose": "Protected-focus review dialogs." }
+    ],
+    "motion": [{ "name": "feedback", "value": "150ms cubic-bezier(.22,1,.36,1)", "purpose": "Hover and disclosure, suppressed with reduced motion." }],
+    "breakpoints": [{ "name": "compact-table", "value": "768px" }, { "name": "detail-context", "value": "900px" }, { "name": "wide-checks", "value": "1280px" }]
+  },
+  "components": [
+    { "name": "Primary button", "kind": "button", "refersTo": "button-primary", "description": "Explicit commitment on a light working surface.", "html": "<button class='dp-button'>Review deposit</button>", "css": ".dp-button{min-height:44px;padding:8px 16px;border:0;border-radius:10px;background:#17251c;color:#fff;font:500 15px/22px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}.dp-button:hover{background:#2b4232}.dp-button:focus-visible{outline:2px solid #285d3c;outline-offset:3px}" },
+    { "name": "Milestone selection", "kind": "nav", "description": "Chartreuse indicates the current task, not a passed check.", "html": "<nav class='dp-milestone' aria-label='Milestones'><strong>1. Foundation</strong><span>36,000 RLUSD · Ready for checks</span></nav>", "css": ".dp-milestone{display:grid;gap:8px;padding:16px;border:1px solid #17251c;border-radius:10px;background:#d8f36a;color:#17251c;font:15px/22px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}.dp-milestone span{font-size:13px}" }
+  ],
+  "narrative": {
+    "northStar": "Capital in focus. Proof within reach.",
+    "overview": "Warm neutral workspaces, dark capital summaries, precise financial typography and useful evidence surfaces. Shared with the inspector role through apps/styles/drawproof.css.",
+    "keyCharacteristics": ["Labeled real financial values", "White working surfaces", "Chartreuse selection", "Review before commitment"],
+    "rules": [{ "name": "Status is not branding", "body": "Use semantic words and colors for release, failure and hold; chartreuse is selection only.", "section": "colors" }],
+    "dos": ["Preserve evidence-version checks and durable receipts", "Show mock mode and genuine devnet proofs"],
+    "donts": ["Invent performance charts", "Use unrelated site imagery", "Treat an inspector signature as a release"]
+  }
+}

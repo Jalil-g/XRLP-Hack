@@ -56,7 +56,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const audits = (selected && d.audits[selected.id]) ?? [];
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <AutoRefresh ms={3000} />
 
       <div>
@@ -68,8 +68,20 @@ export default async function ProjectPage({ params, searchParams }: Props) {
           title={p.name}
           meta={<Tag tone={status.tone}>{status.label}</Tag>}
           description={`${builder.name} · ${p.siteAddress}`}
-          action={
-            p.status === "funding" && session.investor ? (
+        />
+      </div>
+
+      <section className="capital-summary project-capital" aria-label="Project capital">
+        <div>
+          <p className="text-small text-capital-muted">{p.status === "funding" ? "Raised toward project funding" : "Project loan principal"}</p>
+          <p className="financial-amount mt-3">{formatAmount(p.status === "funding" ? fromCents(raised) : p.terms.principal)} <span>RLUSD</span></p>
+          <p className="mt-3 text-small text-capital-muted">{p.status === "funding" ? `${formatAmount(p.terms.principal)} RLUSD target · funding closes ${formatDate(p.terms.fundingDeadline)}` : `${formatAmount(fromCents(sum(["released"])))} RLUSD released · ${formatAmount(fromCents(sum([...LOCKED_MILESTONE_V2])))} RLUSD in milestone escrows`}</p>
+        </div>
+        <div className="capital-detail">
+          <div><span>Annual interest rate</span><strong>{formatBps(p.terms.interestRateBps)}</strong></div>
+          <div><span>Loan term</span><strong>{Math.round(p.terms.termDays / 30.4)} months</strong></div>
+          <div><span>Milestones</span><strong>{p.milestones.filter((milestone) => milestone.status === "released").length} of {p.milestones.length} released</strong></div>
+          {p.status === "funding" && session.investor && (
               <InvestDialog
                 projectId={p.id}
                 projectName={p.name}
@@ -78,26 +90,15 @@ export default async function ProjectPage({ params, searchParams }: Props) {
                 investor={session.investor}
                 redemptionDate={d.vault?.redemptionDate}
               />
-            ) : undefined
-          }
-        />
-      </div>
+          )}
+        </div>
+      </section>
 
       <section className="space-y-5">
         <MilestoneTabs milestones={p.milestones} selectedId={selected?.id} />
         {selected && (
-          <>
-            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-caption text-ink-2">
-              <span>
-                Pays for SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
-                {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}, then the money can only go back`}
-              </span>
-              {selected.escrow && (
-                <span>
-                  EscrowCreate <TxLink hash={selected.escrow.createTx} />
-                </span>
-              )}
-            </div>
+          <div className="project-workspace">
+          <div className="min-w-0 space-y-5">
             <ChecksPanel
               key={selected.id}
               milestone={selected}
@@ -110,8 +111,26 @@ export default async function ProjectPage({ params, searchParams }: Props) {
               names={names}
               run={{ projectId: p.id, pinHref: `?m=${encodeURIComponent(selected.id)}` }}
             />
+            <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-caption text-ink-2">
+              <span>
+                Pays for SoV {(selected.sovCodes ?? []).join(", ") || "n/a"}
+                {selected.cancelAfter && ` · escrow expires ${formatDate(selected.cancelAfter)}, then the money can only go back`}
+              </span>
+              {selected.escrow && <span>EscrowCreate <TxLink hash={selected.escrow.createTx} /></span>}
+            </div>
             <EvidenceStrip evidence={d.evidence?.[selected.id] ?? []} audit={audits[audits.length - 1]} results={[...checks.required, ...checks.optional]} />
-          </>
+          </div>
+          <aside className="project-context" aria-label="Milestone financial context">
+            <h2 className="text-heading">This draw</h2>
+            <dl>
+              <div><dt>Milestone</dt><dd>{selected.title}</dd></div>
+              <div><dt>Draw amount</dt><dd>{formatAmount(selected.amount)} <span className="text-caption font-normal">RLUSD</span></dd></div>
+              <div><dt>Destination</dt><dd className="text-small">{builder.name}</dd></div>
+              <div><dt>Release requirement</dt><dd className="text-small font-normal">Signed inspector audit and all required checks passed.</dd></div>
+            </dl>
+            <p className="mt-4 text-caption text-ink-2">The platform release service finishes the escrow. An audit signature alone does not release funds.</p>
+          </aside>
+          </div>
         )}
       </section>
 
@@ -144,7 +163,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
         </Section>
       )}
 
-      <div className="grid gap-12 border-t border-line pt-10 md:grid-cols-3">
+      <div className="finance-surface grid gap-8 md:grid-cols-3">
         <Section title="Loan">
           <Properties
             labelWidth={124}

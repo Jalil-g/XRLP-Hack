@@ -7,7 +7,7 @@ import { cn, formatAmount } from "@/lib/utils";
 
 export function MilestoneTabs({ milestones, selectedId }: { milestones: Milestone[]; selectedId?: string }) {
   return (
-    <nav aria-label="Milestones" className="flex overflow-x-auto border-b border-line">
+    <nav aria-label="Milestones" className="flex gap-2 overflow-x-auto pb-2">
       {milestones.map((m, i) => {
         const active = m.id === selectedId;
         const st = MILESTONE_STATUS[m.status];
@@ -18,9 +18,8 @@ export function MilestoneTabs({ milestones, selectedId }: { milestones: Mileston
             scroll={false}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "-mb-px flex min-w-[190px] flex-1 flex-col gap-1.5 border-b-2 px-1 pt-1 pb-3 transition-colors duration-150",
-              active ? "border-ink" : "border-transparent hover:border-line-2",
-              i > 0 && "pl-5",
+              "flex min-w-[190px] flex-1 flex-col gap-1.5 rounded-control border px-4 py-3 transition-colors duration-150",
+              active ? "border-ink bg-accent" : "border-line bg-surface hover:border-line-2",
             )}
           >
             <span className={cn("text-small font-semibold", active ? "text-ink" : "text-ink-2")}>

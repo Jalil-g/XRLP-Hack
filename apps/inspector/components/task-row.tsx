@@ -38,14 +38,14 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const title = m ? `M${m.index + 1} · ${m.title}` : "Site visit before verification";
 
   return (
-    <li className={cn("py-5 transition-colors duration-150", fresh && "bg-brand-50")}>
+    <li className={cn("px-5 py-6 transition-colors duration-150 sm:px-6", fresh && "bg-brand-50")}>
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <div className="min-w-0 flex-1">
-          <SectionLabel className="flex items-center gap-2">
+        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
+          <SectionLabel className="flex items-center gap-2 text-body font-semibold text-ink">
             {task.projectName}
             {fresh && <Badge tone="brand">New</Badge>}
           </SectionLabel>
-          <p className="mt-0.5 text-small font-semibold">
+          <p className="mt-1 text-small">
             {href ? (
               <Link href={href} className="hover:text-brand hover:underline">
                 {title}
@@ -56,7 +56,7 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="tabular text-small font-medium text-ink-2">{formatRlusd(taskAmount(task))}</span>
+          <div className="text-right"><span className="block tabular text-body font-semibold">{formatRlusd(taskAmount(task))}</span><span className="text-caption text-muted">{m ? "Milestone amount" : "Project amount"}</span></div>
           <Badge tone={NEEDS[task.needs].tone} dot>
             {NEEDS[task.needs].label}
           </Badge>

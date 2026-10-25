@@ -83,7 +83,7 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
   };
 
   return (
-    <div className="overflow-hidden rounded-panel border border-line">
+    <div className="overflow-hidden rounded-panel border border-line bg-surface">
       <OutcomeBanner
         outcome={revealing && ran ? "running" : outcomeOf(m, running)}
         milestone={m}

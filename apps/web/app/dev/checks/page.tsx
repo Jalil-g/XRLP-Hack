@@ -60,12 +60,15 @@ export default function DevChecksPage() {
   ];
 
   return (
-    <div className="space-y-14">
+    <div className="space-y-8">
       <PageHeader title="Checks panel states" description="Every state of the milestone checks panel, rendered from the mock fixtures. For review only; not linked from the app." />
-      {states.map((s) => (
-        <Section key={s.title} title={s.title} aside={s.note}>
+      <nav aria-label="Jump to a fixture state" className="rounded-panel bg-capital p-5 text-capital-text"><h2 className="text-body font-semibold">Mock state gallery</h2><div className="mt-3 flex flex-wrap gap-x-5 gap-y-1">{states.map((state, index) => <a key={state.title} href={`#state-${index}`} className="inline-flex min-h-11 items-center text-small text-accent underline underline-offset-4">{state.title}</a>)}</div><p className="mt-3 text-caption text-capital-muted">Fixture transactions only. This page makes no ledger requests.</p></nav>
+      {states.map((s, index) => (
+        <div key={s.title} id={`state-${index}`} className="scroll-mt-24">
+        <Section title={s.title} aside={s.note}>
           <ChecksPanel {...s.props} />
         </Section>
+        </div>
       ))}
     </div>
   );

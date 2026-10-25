@@ -38,7 +38,7 @@ export default async function VerificationPage({ params }: Props) {
   const decision = v ? ({ pass: { tone: "pass", label: "Verified" }, fail: { tone: "fail", label: "Rejected" }, needs_human: { tone: "review", label: "Needs an inspector visit" } } as const)[v.decision] : undefined;
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-8">
       <div>
         <nav className="flex gap-2 text-caption text-ink-2">
           <Link href="/" className="hover:text-ink">
@@ -57,7 +57,12 @@ export default async function VerificationPage({ params }: Props) {
         />
       </div>
 
-      <dl className="grid gap-x-10 gap-y-4 border-y border-line py-5 sm:grid-cols-3">
+      <section className="grid gap-6 rounded-[20px] bg-capital p-6 text-capital-text sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8" aria-label="Project verification summary">
+        <div><h2 className="text-heading">{p.name}</h2><p className="mt-2 text-body text-capital-muted">{builder.name}</p><p className="mt-5 max-w-[65ch] text-small text-capital-muted">{v ? "Read the findings below before moving to the next stage. Project verification is not approval of a milestone draw." : "Verification has not run. Pay the fee, then review the identity, feasibility and capability findings here."}</p></div>
+        <div className="border-t border-capital-muted/30 pt-4 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-6"><p className="text-small text-capital-muted">Requested financing</p><p className="mt-2 break-words text-[36px] leading-tight font-semibold tracking-[-0.035em] tabular-nums">{formatAmount(p.terms.principal, { cents: true })}</p><p className="mt-1 text-small text-capital-muted">RLUSD · {decision?.label ?? "Awaiting verification"}</p></div>
+      </section>
+
+      <dl className="grid gap-x-10 gap-y-5 rounded-panel border border-line bg-surface p-5 sm:grid-cols-3 sm:p-6">
         <Fact
           label="Verification fee"
           value={fee ? `${formatAmount(fee.amount ?? "250")} RLUSD paid by ${builder.name}` : "Not paid yet"}
@@ -94,10 +99,18 @@ export default async function VerificationPage({ params }: Props) {
       )}
 
       {v ? (
-        <div className="grid items-start gap-8 lg:grid-cols-3">
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,2fr)_minmax(240px,1fr)]">
+          <div className="space-y-6">
           <Group title="Identity" note="Licence, insurance, entity" checks={v.identity} />
           <Group title="Feasibility" note="Schedule of Values, permits, site" checks={v.feasibility} />
           <Group title="Capability" note="Track record and workload" checks={v.capability} />
+          </div>
+          <aside className="space-y-4 rounded-panel bg-band p-6">
+            <h2 className="text-heading">What happens next</h2>
+            <p className="text-small text-ink-2">{v.decision === "pass" ? "The platform locks the project terms and assigns an inspector before funding. Every milestone will still need evidence and a signed audit." : v.decision === "fail" ? "Review the failed findings with the platform. This report does not approve the project for funding." : "The assigned inspector completes a pre-construction visit. Their signed report returns to the verifier for a final decision."}</p>
+            <Link href={`/projects/${p.id}`} className="inline-flex min-h-11 items-center text-small font-medium text-link underline underline-offset-4">Return to project</Link>
+            <p className="border-t border-line pt-4 text-caption text-ink-2">Registry, cost-table and KYC checks use mock sources in this prototype. A mock finding is not a real-world certification.</p>
+          </aside>
         </div>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-6 rounded-panel bg-band px-6 py-5">
@@ -115,7 +128,7 @@ export default async function VerificationPage({ params }: Props) {
 function Group({ title, note, checks }: { title: string; note: string; checks: CheckResult[] }) {
   const failed = checks.filter((c) => c.result === "fail").length;
   return (
-    <section className="overflow-hidden rounded-panel border border-line">
+    <section className="overflow-hidden rounded-panel border border-line bg-surface">
       <header className="flex items-baseline justify-between gap-4 border-b border-line bg-band px-5 py-3">
         <h2 className="text-body font-semibold">{title}</h2>
         <span className="text-caption text-ink-2">{failed ? `${failed} failed` : `${checks.length} passed`}</span>

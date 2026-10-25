@@ -5,13 +5,14 @@ import { ChevronDown, RefreshCw } from "lucide-react";
 import { useIdentity } from "@/components/identity";
 import { NEEDS, TaskRow } from "@/components/task-row";
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
 import { api, API_MODE } from "@/lib/api";
 import { ACTIONABLE, arrivedKeys, groupTasks, taskKey } from "@/lib/queue";
 import type { InspectorTask } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
-import { BRAND, cn, explorerAccountUrl, shortAddress } from "@/lib/utils";
+import { cn, explorerAccountUrl, shortAddress } from "@/lib/utils";
 
 const POLL_MS = 5_000;
 /** How long a task that arrived on a poll stays highlighted. */
@@ -25,8 +26,8 @@ export default function QueuePage() {
   const fresh = useArrivals(queue.data);
   const now = useNow(queue.updatedAt);
 
-  if (status === "error") return <p className="text-small text-bad">Could not load the inspector panel: {error}</p>;
-  if (!inspector) return <p className="text-small text-muted">Loading…</p>;
+  if (status === "error") return <p role="alert" className="text-small text-bad">Could not load the inspector panel: {error}</p>;
+  if (!inspector) return <LoadingState label="Loading inspector credentials…" />;
 
   const groups = queue.data ? groupTasks(queue.data) : null;
   const actionable = groups ? ACTIONABLE.reduce((n, k) => n + groups[k].length, 0) : 0;
@@ -36,13 +37,17 @@ export default function QueuePage() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-title">Assigned audits</h1>
-          <p className="mt-2 max-w-2xl text-body text-muted">{BRAND.tagline}</p>
+          <p className="mt-2 max-w-2xl text-body text-muted">Review the evidence. Record what you see. Sign your judgment.</p>
         </div>
         <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
       </div>
 
-      <Card className="border-y border-line">
-        <CardContent className="flex flex-wrap items-center gap-4">
+      <section aria-label="Your assignment and credentials" className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <div className="flex items-center gap-4 border-b border-line pb-6 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
+          <span className="text-[52px] leading-none font-semibold tracking-[-0.035em] tabular">{groups ? actionable : "—"}</span>
+          <div><h2 className="text-small font-semibold">Awaiting your review</h2><p className="mt-1 text-caption text-muted">Audits, re-audits and site visits</p></div>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">{inspector.name}</span>
@@ -52,26 +57,17 @@ export default function QueuePage() {
               {inspector.licenseNumber} · {inspector.trades.join(", ")}
             </p>
           </div>
-          {groups && (
-            <div className="ml-auto flex flex-wrap gap-1.5">
-              {ACTIONABLE.map((n) => (
-                <Badge key={n} tone={groups[n].length ? NEEDS[n].tone : "neutral"}>
-                  {groups[n].length} {NEEDS[n].label.toLowerCase()}
-                </Badge>
-              ))}
-            </div>
-          )}
-          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="font-mono text-caption text-muted hover:text-brand">
+          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="ml-auto font-mono text-caption text-muted underline underline-offset-4 hover:text-brand">
             {shortAddress(inspector.address, 8, 6)}
           </a>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {!groups ? (
         queue.error ? (
-          <p className="text-small text-bad">{queue.error}</p>
+          <Card role="alert"><CardContent className="space-y-3"><h2 className="text-heading">Assignments could not load</h2><p className="text-small text-bad">{queue.error}</p><p className="text-small text-muted">Your reports are unchanged. Use Refresh queue to try again.</p></CardContent></Card>
         ) : (
-          <p className="text-small text-muted">Loading queue…</p>
+          <LoadingState label="Loading assigned audits…" />
         )
       ) : (
         <>

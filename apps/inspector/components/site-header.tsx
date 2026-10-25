@@ -28,17 +28,17 @@ export function SiteHeader() {
   const pathname = usePathname();
   const { inspector } = useIdentity();
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-page">
-      <div className="mx-auto flex min-h-14 max-w-[1184px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-1.5 sm:px-8">
-        <Link href="/" className="text-body font-semibold tracking-[-0.01em] text-ink" aria-label="Drawproof inspector home">{BRAND.name}</Link>
-        <nav aria-label="Inspector navigation" className="order-3 flex w-full items-center gap-5 border-t border-line sm:order-none sm:w-auto sm:border-0">
+    <header className="sticky top-0 z-40 border-b border-line bg-surface">
+      <div className="mx-auto flex min-h-16 max-w-[1264px] flex-wrap items-center gap-x-6 gap-y-0 px-4 sm:px-8">
+        <Link href="/" className="text-[21px] font-semibold tracking-[-0.035em] text-ink" aria-label="Drawproof inspector home">{BRAND.name}</Link>
+        <nav aria-label="Inspector navigation" className="order-3 flex w-full items-center gap-5 overflow-x-auto border-t border-line md:order-none md:w-auto md:border-0">
           {[{ href: "/", label: "Assigned audits" }, { href: "/history", label: "Audit history" }].map(({ href, label }) => {
             const active = href === "/" ? pathname !== "/history" : pathname === href;
             return <Link key={href} href={href} aria-current={active ? "page" : undefined}
-              className={cn("flex min-h-11 items-center border-b-2 text-small transition-colors duration-150", active ? "border-action text-ink font-medium" : "border-transparent text-muted hover:text-ink")}>{label}</Link>;
+              className={cn("flex min-h-11 shrink-0 items-center border-b-2 text-small transition-colors duration-150 md:min-h-16", active ? "border-action text-ink font-medium" : "border-transparent text-muted hover:text-ink")}>{label}</Link>;
           })}
         </nav>
-        <div className="ml-auto flex max-w-full flex-wrap items-center gap-2">
+        <div className="ml-auto flex min-h-16 max-w-full items-center gap-2">
           <span className={cn("rounded-tag px-2 py-1 text-caption font-medium", API_MODE === "mock" ? "bg-review-bg text-review" : "text-ink-2")}
             title={API_MODE === "mock" ? "Fixture data. No ledger transactions." : "Connected to core; verify ledger and model modes before signing."}>
             {API_MODE === "mock" ? "Mock data" : "Live API"}
@@ -58,4 +58,9 @@ export function SiteHeader() {
       </div>
     </header>
   );
+}
+
+export function InspectorMockNote() {
+  if (API_MODE !== "mock") return null;
+  return <p role="note" className="mb-6 text-caption text-muted">Standalone inspector sample. Amounts and evidence are independent of the investor/builder mock workspace.</p>;
 }

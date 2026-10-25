@@ -4,7 +4,7 @@ import { Camera, FileText, MapPinOff, Receipt } from "lucide-react";
 import { formatDistance } from "@/components/audit/site-map";
 import { Badge } from "@/components/ui/badge";
 import { geoVerdict } from "@/lib/audit";
-import { api } from "@/lib/api";
+import { api, API_MODE } from "@/lib/api";
 import type { Evidence, SiteGeo } from "@/lib/types";
 import { formatDateTime, formatRlusd } from "@/lib/utils";
 
@@ -16,11 +16,11 @@ export function EvidenceGallery({ evidence, site, browserExif }: { evidence: Evi
   return (
     <div className="space-y-4">
       {photos.length > 0 && (
-        <ul className="grid min-w-0 grid-cols-1 sm:grid-cols-2 gap-3">
+        <ul className="grid min-w-0 grid-cols-1 gap-4">
           {photos.map((p) => (
             <li key={p.id} className="overflow-hidden rounded-lg border border-line bg-surface">
               <a href={api.fileUrl(p)} target="_blank" rel="noreferrer" className="block aspect-[4/3] bg-subtle">
-                <img src={api.fileUrl(p)} alt={p.filename} className="size-full object-cover" loading="lazy" />
+                <img src={api.fileUrl(p)} alt={p.filename} className="size-full object-contain" loading="lazy" />
               </a>
               <PhotoCaption evidence={p} site={site} browserRead={browserExif?.has(p.id)} />
             </li>
@@ -35,7 +35,7 @@ export function EvidenceGallery({ evidence, site, browserExif }: { evidence: Evi
               <li key={f.id}>
                 <a href={api.fileUrl(f)} target="_blank" rel="noreferrer" className="flex items-center gap-3 px-3 py-2.5 text-small hover:bg-subtle">
                   <Icon className="size-4 shrink-0 text-muted" />
-                  <span className="min-w-0 flex-1 truncate">{f.filename}</span>
+                  <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{f.filename}</span>
                   {f.meta.invoiceTotal && <span className="tabular text-caption text-ink-2">{formatRlusd(f.meta.invoiceTotal)}</span>}
                   <Badge>{f.kind}</Badge>
                 </a>
@@ -53,6 +53,7 @@ export function PhotoCaption({ evidence, site, browserRead }: { evidence: Eviden
   const geo = geoVerdict(site, evidence.meta.gps);
   return (
     <div className="space-y-1 px-2.5 py-2 text-caption leading-tight">
+      {API_MODE === "mock" && evidence.uri?.startsWith("data:image/svg+xml") && <p className="font-medium text-muted">Mock evidence illustration</p>}
       <p className="truncate font-medium text-ink-2" title={evidence.filename}>
         <Camera className="mr-1 inline size-3 text-faint" />
         {evidence.filename}

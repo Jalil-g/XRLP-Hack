@@ -10,9 +10,10 @@ import { SigningPanel } from "@/components/audit/signing-panel";
 import { SiteMap } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, SectionLabel } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { taskAmount } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, type InspectorKey } from "@/lib/signing";
@@ -41,7 +42,7 @@ export default function SiteVisitPage() {
   const params = useParams();
   const raw = Array.isArray(params.projectId) ? params.projectId[0] : params.projectId;
   const projectId = raw ? decodeURIComponent(raw) : "";
-  const { inspector } = useIdentity();
+  const { inspector, status, error: identityError } = useIdentity();
   const [task, setTask] = useState<InspectorTask | null>();
   const [error, setError] = useState<string>();
 
@@ -63,8 +64,9 @@ export default function SiteVisitPage() {
       <ArrowLeft className="size-4" /> Queue
     </Link>
   );
+  if (status === "error") return <div className="space-y-4">{back}<p role="alert" className="text-small text-bad">Could not load inspector credentials: {identityError}</p></div>;
   if (error) return <div className="space-y-4">{back}<p role="alert" className="text-small text-bad">Could not load the queue: {error}</p></div>;
-  if (!inspector || task === undefined) return <div className="space-y-4">{back}<p className="text-small text-muted">Loading…</p></div>;
+  if (!inspector || task === undefined) return <div className="space-y-4">{back}<LoadingState label="Loading your site visit assignment…" /></div>;
   if (task === null) {
     return <div className="space-y-4">{back}<p className="text-small text-muted">No pre-construction visit is due from {inspector.name} for this project.</p></div>;
   }
@@ -164,11 +166,11 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
         {back}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <SectionLabel>{task.projectName}</SectionLabel>
             <h1 className="text-title">Pre-construction site visit</h1>
+            <p className="mt-2 text-small text-muted">{task.projectName} · Confirm conditions before project verification</p>
           </div>
           <div className="flex items-center gap-3 text-small">
-            <span className="tabular font-medium">{formatRlusd(taskAmount(task))}</span>
+            <div className="text-right"><p className="text-caption text-muted">Project amount</p><span className="tabular font-medium">{formatRlusd(taskAmount(task))}</span></div>
             <Badge tone="info" dot>
               Pre-construction visit
             </Badge>
@@ -181,7 +183,11 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <ol aria-label="Site visit workflow" className="workflow-rail">
+        <li aria-current="step">Record site conditions</li><li>Add site photos</li><li>Review & sign</li>
+      </ol>
+
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="space-y-6">
           <Card>
             <CardHeader>
@@ -195,7 +201,7 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                 const a = draft.answers[q.key];
                 const missing = showErrors && (!a.answer || (a.answer !== "yes" && !a.note.trim()));
                 return (
-                  <li key={q.key} id={`answers.${q.key}`} className={cn("space-y-2.5 px-5 py-4", missing && "bg-bad-bg/60")}>
+                  <li key={q.key} id={`answers.${q.key}`} className={cn("space-y-3 px-5 py-5 sm:px-6", missing && "bg-bad-bg/60")}>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-small font-semibold">{q.label}</p>
@@ -219,17 +225,21 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                         ))}
                       </div>
                     </div>
-                    <input
+                    <label className="block space-y-2">
+                      <span className="text-caption font-medium">{a.answer && a.answer !== "yes" ? "Explain your finding (required)" : "Observation note (optional)"}</span>
+                      <input
                       type="text"
                       value={a.note}
                       onChange={(e) => setAnswer(q.key, { note: e.target.value })}
                       placeholder={a.answer && a.answer !== "yes" ? "Required: what did you find?" : "Note (optional)"}
                       aria-label={`${q.label} note`}
+                      aria-invalid={Boolean(missing && a.answer && a.answer !== "yes")}
                       className={cn(
-                        "w-full rounded-md border bg-surface px-3 py-1.5 text-small placeholder:text-faint focus:ring-2 focus:border-brand",
+                        "min-h-11 w-full rounded-control border bg-surface px-3 py-1.5 text-small placeholder:text-faint focus:ring-2 focus:border-brand",
                         missing && a.answer && a.answer !== "yes" ? "border-bad" : "border-line",
                       )}
-                    />
+                      />
+                    </label>
                   </li>
                 );
               })}

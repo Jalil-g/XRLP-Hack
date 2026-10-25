@@ -51,9 +51,10 @@ export default async function DemoPage() {
   const failedCheck = m2 && a?.checks[m2.id]?.required.find((c) => c.result === "fail");
   const bExpired = b?.project.milestones.find((m) => m.status === "expired");
   const bRefunded = b?.project.milestones.find((m) => m.status === "refunded");
+  const nextScene = !a ? undefined : !a.builder.verified ? 1 : !m1?.escrow ? 2 : m1.status !== "released" ? 3 : 4;
 
   return (
-    <div className="space-y-12">
+    <div className="space-y-8">
       <AutoRefresh ms={2500} />
       <PageHeader
         title="Demo control room"
@@ -63,18 +64,24 @@ export default async function DemoPage() {
             <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>
               Open inspector app
             </a>
-            <ActionButton variant="secondary" action={{ kind: "resetDemo" }}>
-              Reset demo
-            </ActionButton>
           </div>
         }
       />
 
-      {!a && <p className="rounded-panel bg-review-bg px-5 py-4 text-small text-review">No pre-staged demo project found. Run Reset demo, or pre-stage Project A (XRPL-11).</p>}
+      <section className="rounded-[20px] bg-capital p-6 text-capital-text sm:p-8" aria-label="Current demo scene">
+        <div className="grid items-start gap-6 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <div><h2 className="text-heading">{a?.project.name ?? "Prepare the demo project"}</h2><p className="mt-2 max-w-[65ch] text-small text-capital-muted">{!a ? "Reset or pre-stage the demo before recording." : m2?.status === "failed" && m1?.status === "released" ? "Release and hold are both visible. Open the project to show the proof and financial outcome." : `Next scene: ${nextScene === 1 ? "verify the builder" : nextScene === 2 ? "show the locked escrows" : nextScene === 3 ? "review evidence and release" : "show the failed check and held funds"}.`}</p></div>
+          {m1 && <div><p className="text-small text-capital-muted">{m1.title} · {m1.status === "released" ? "released" : "scheduled draw"}</p><p className="mt-2 text-[36px] leading-tight font-semibold tracking-[-0.035em] tabular-nums sm:text-[52px]">{formatAmount(m1.amount, { cents: true })} <span className="text-body tracking-normal text-capital-muted">RLUSD</span></p></div>}
+        </div>
+        <p className="mt-6 border-t border-capital-muted/30 pt-4 text-small text-capital-muted">100-second story · Signed audit + AI checks → release or hold. Mock sources remain labelled; no audit signature alone releases money.</p>
+      </section>
 
-      <ol className="divide-y divide-line border-y border-line">
+      {!a && <div className="flex flex-wrap items-center justify-between gap-4 rounded-panel bg-review-bg px-5 py-4"><p className="text-small text-review">No pre-staged demo project found. Reset the demo, or pre-stage Project A (XRPL-11).</p><ActionButton variant="secondary" action={{ kind: "resetDemo" }}>Reset demo</ActionButton></div>}
+
+      <ol className="divide-y divide-line rounded-panel border border-line bg-surface px-4 sm:px-6" aria-label="Recording sequence">
         <Scene
           n={1}
+          current={nextScene === 1}
           title="Verified project"
           body="The builder paid to be checked; the AI verified identity, feasibility and capability; the credential is on the ledger."
           state={a && (a.builder.verified ? <Tag tone="pass">Builder verified</Tag> : <Tag>Not verified</Tag>)}
@@ -82,6 +89,7 @@ export default async function DemoPage() {
         />
         <Scene
           n={2}
+          current={nextScene === 2}
           title="Locked state"
           body="Investors funded the vault, the loan went to the project account, and every milestone sits in its own escrow."
           state={a && <Tag tone={PROJECT_STATUS[a.project.status].tone}>{PROJECT_STATUS[a.project.status].label}</Tag>}
@@ -90,6 +98,7 @@ export default async function DemoPage() {
         />
         <Scene
           n={3}
+          current={nextScene === 3}
           title="Review evidence and release"
           body="The inspector's signed audit plus the AI's checks run on the first milestone. All green, so the release service finishes the escrow."
           state={m1 && <MilestoneTag m={m1} />}
@@ -99,6 +108,7 @@ export default async function DemoPage() {
         />
         <Scene
           n={4}
+          current={nextScene === 4}
           title="Failed check: funds stay locked"
           body="The second milestone includes a photo reused from another project. One check fails and the money stays locked."
           state={m2 && <MilestoneTag m={m2} />}
@@ -111,6 +121,7 @@ export default async function DemoPage() {
       <details className="space-y-4">
         <summary className="min-h-11 cursor-pointer py-2 text-heading">Extended walkthrough and engineering checks</summary>
         <p className="text-small text-ink-2">Outside the timed pitch. Use these controls for preparation or technical Q&A.</p>
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-panel border border-line bg-surface p-5"><p className="text-small text-ink-2">Reset replaces the demo state. Finish recording before using it.</p><ActionButton variant="secondary" action={{ kind: "resetDemo" }}>Reset demo</ActionButton></div>
         <ol className="divide-y divide-line border-y border-line">
         <Scene
           title="Ledger says no"
@@ -219,6 +230,7 @@ function OnboardScene({ d, platform, investor }: { d: ProjectDetail; platform?: 
 
 function Scene({
   n,
+  current,
   title,
   body,
   state,
@@ -227,6 +239,7 @@ function Scene({
   screen,
 }: {
   n?: number;
+  current?: boolean;
   title: string;
   body: string;
   state?: React.ReactNode;
@@ -235,8 +248,8 @@ function Scene({
   screen?: React.ReactNode;
 }) {
   return (
-    <li className="grid grid-cols-[32px_minmax(0,1fr)_auto] items-start gap-x-4 py-5">
-      <span className="tabular pt-0.5 text-body text-ink-2">{n ?? ""}</span>
+    <li aria-current={current ? "step" : undefined} className="grid grid-cols-[32px_minmax(0,1fr)] items-start gap-x-4 gap-y-3 py-6 xl:grid-cols-[32px_minmax(0,1fr)_auto]">
+      <span className={`flex size-8 items-center justify-center rounded-control text-small font-medium tabular-nums ${current ? "bg-accent text-ink" : "text-ink-2"}`}>{n ?? ""}</span>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-3">
           <h3 className="text-body font-semibold">{title}</h3>
@@ -245,7 +258,7 @@ function Scene({
         <p className="mt-1 max-w-[72ch] text-small text-ink-2">{body}</p>
         {detail && <p className="mt-1.5 text-small font-medium text-ink">{detail}</p>}
       </div>
-      <div className="flex flex-col items-end gap-2">
+      <div className="col-start-2 flex flex-wrap items-center gap-3 xl:col-start-3 xl:max-w-[420px] xl:justify-end">
         {action}
         {screen}
       </div>
@@ -255,7 +268,7 @@ function Scene({
 
 function ScreenLink({ href, label }: { href: string; label: string }) {
   return (
-    <Link href={href} className="text-caption text-link hover:underline">
+    <Link href={href} className="inline-flex min-h-11 items-center text-small text-link underline underline-offset-4">
       Show {label}
     </Link>
   );

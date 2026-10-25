@@ -34,11 +34,11 @@ export function PhotoPicker({ photos, onChange, site }: { photos: DraftPhoto[]; 
   return (
     <div className="space-y-3">
       {photos.length > 0 && (
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {photos.map((p) => (
             <li key={p.evidence.sha256} className="group relative overflow-hidden rounded-lg border border-line bg-surface">
               <div className="aspect-[4/3] bg-subtle">
-                {previews.get(p.file) && <img src={previews.get(p.file)} alt={p.evidence.filename} className="size-full object-cover" />}
+                {previews.get(p.file) && <img src={previews.get(p.file)} alt={p.evidence.filename} className="size-full object-contain" />}
               </div>
               <PhotoCaption evidence={p.evidence} site={site} />
               <button

@@ -22,8 +22,8 @@ export function AuditHistoryCard({ entry }: { entry: AuditHistoryEntry }) {
     <Card>
       <CardHeader className="flex-wrap">
         <div>
-          <p className="text-caption font-medium text-muted">{project.name} · M{milestone.index + 1}</p>
-          <h2 className="mt-1 text-lg font-semibold">{milestone.title}</h2>
+          <h2 className="text-heading">{project.name}</h2>
+          <p className="mt-1 text-small font-medium">M{milestone.index + 1} · {milestone.title}</p>
           <p className="mt-1 text-caption text-muted">Filed {formatDateTime(audit.at)} · {formatRlusd(milestone.amount)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -41,9 +41,9 @@ export function AuditHistoryCard({ entry }: { entry: AuditHistoryEntry }) {
         <section aria-label="Checks that use inspector audits" className="space-y-2">
           <h3 className="text-small font-semibold">What your audit feeds</h3>
           <p className="text-caption text-muted">These checks use inspector reports. Results below are the latest for this milestone, shared across its audits.</p>
-          <ul className="grid gap-3 md:grid-cols-3">
+          <ul className="divide-y divide-line">
             {fed.map(({ id, result }) => (
-              <li key={id} className="space-y-2 rounded-lg border border-line p-3">
+              <li key={id} className="space-y-2 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-caption font-semibold">{auditCheckNames[id]}</span>
                   {result ? <Badge tone={tone[result.result]}>{label[result.result]}</Badge> : <Badge>No result</Badge>}

@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-25T12:00:00-04:00",
+  "title": "Design System: Drawproof Inspector",
+  "extensions": {
+    "colorMeta": {},
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Labeled contextual amount, never decorative queue capital." },
+      "title": { "displayName": "Page Title", "purpose": "Task orientation." },
+      "heading": { "displayName": "Section Heading", "purpose": "Working surface hierarchy." },
+      "body": { "displayName": "Body", "purpose": "Evidence interpretation and report instructions." },
+      "small": { "displayName": "Small", "purpose": "Controls and task rows." },
+      "caption": { "displayName": "Caption", "purpose": "Supporting provenance and metadata." }
+    },
+    "shadows": [
+      { "name": "overlay", "value": "0 20px 48px -12px rgb(0 0 0 / 0.22), 0 4px 12px -4px rgb(0 0 0 / 0.08)", "purpose": "Dialogs and account popovers only." }
+    ],
+    "motion": [
+      { "name": "feedback", "value": "150ms", "purpose": "Control feedback within the approved 140–200ms range; respect reduced motion." },
+      { "name": "ease-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Shared state transition easing." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Default consequential action on light work.",
+      "html": "<button class=\"ds-primary\">Review audit</button>",
+      "css": ".ds-primary{font-family:var(--font-sans);font-size:15px;font-weight:500;min-height:44px;padding:0 16px;border:0;border-radius:var(--radius-control);background:var(--color-action);color:var(--color-surface);cursor:pointer;transition:background-color 150ms}.ds-primary:hover{background:var(--color-action-hover)}.ds-primary:active{background:var(--color-action-press)}.ds-primary:focus-visible{outline:2px solid var(--color-link);outline-offset:3px}.ds-primary:disabled{opacity:.5;cursor:default}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Back/edit action with strong visible boundary; small targets remain at least 44px.",
+      "html": "<button class=\"ds-secondary\">Back to edit</button>",
+      "css": ".ds-secondary{font-family:var(--font-sans);font-size:15px;font-weight:500;min-height:44px;padding:0 16px;border:1px solid var(--color-line-2);border-radius:var(--radius-control);background:var(--color-surface);color:var(--color-ink);cursor:pointer;transition:background-color 150ms}.ds-secondary:hover,.ds-secondary:active{background:var(--color-band)}.ds-secondary:focus-visible{outline:2px solid var(--color-link);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none}}"
+    },
+    {
+      "name": "Labeled Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Persistent report label and retained observations.",
+      "html": "<label class=\"ds-field\">Observation<input class=\"ds-input\" placeholder=\"Record what you observed\"></label>",
+      "css": ".ds-field{font-family:var(--font-sans);font-size:15px;display:grid;gap:8px;color:var(--color-ink)}.ds-input{font-family:var(--font-sans);font-size:16px;min-height:44px;padding:8px 12px;border:1px solid var(--color-line-2);border-radius:var(--radius-control);color:var(--color-ink);background:var(--color-surface)}.ds-input:hover{border-color:var(--color-ink)}.ds-input:focus-visible{outline:2px solid var(--color-link);outline-offset:3px}"
+    },
+    {
+      "name": "Inspector Navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Labeled active destination; separate scrollable row when narrow.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Inspector navigation\"><a href=\"#\" aria-current=\"page\">Assigned audits</a><a href=\"#\">Audit history</a></nav>",
+      "css": ".ds-nav{font-family:var(--font-sans);font-size:15px;display:flex;gap:20px;overflow-x:auto;background:var(--color-surface)}.ds-nav a{display:flex;align-items:center;min-height:64px;white-space:nowrap;color:var(--color-ink-2);text-decoration:none;border-bottom:2px solid transparent}.ds-nav a[aria-current]{border-color:var(--color-action);color:var(--color-ink);font-weight:500}.ds-nav a:hover{color:var(--color-ink)}.ds-nav a:focus-visible{outline:2px solid var(--color-link);outline-offset:3px}"
+    },
+    {
+      "name": "Review Status",
+      "kind": "chip",
+      "refersTo": "status-review",
+      "description": "Attention state carries words, not brand color alone.",
+      "html": "<span class=\"ds-status\">Needs human review</span>",
+      "css": ".ds-status{font-family:var(--font-sans);font-size:13px;display:inline-flex;padding:2px 8px;border-radius:var(--radius-tag);background:var(--color-review-bg);color:var(--color-review);border:1px solid var(--color-review)}"
+    },
+    {
+      "name": "Working Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Quiet white working surface.",
+      "html": "<section class=\"ds-panel\"><h3>Inspection report</h3><p>Record observations before reviewing your audit.</p></section>",
+      "css": ".ds-panel{font-family:var(--font-sans);font-size:16px;padding:24px;border:1px solid var(--color-line);border-radius:var(--radius-panel);background:var(--color-surface);color:var(--color-ink)}.ds-panel h3{margin:0 0 8px;font-size:22px}.ds-panel p{margin:0;color:var(--color-ink-2)}"
+    },
+    {
+      "name": "Audit Context",
+      "kind": "custom",
+      "refersTo": "audit-context",
+      "description": "Dark context labels the financial measure without implying release.",
+      "html": "<section class=\"ds-context\"><h3>Project · Current milestone</h3><p>Milestone amount · Not available</p><p>Review evidence before signing your judgment.</p></section>",
+      "css": ".ds-context{font-family:var(--font-sans);font-size:16px;padding:24px;border-radius:20px;background:var(--color-capital);color:var(--color-capital-text)}.ds-context h3{margin:0 0 12px;font-size:22px}.ds-context p{margin:8px 0;color:var(--color-capital-muted)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Capital in focus. Proof within reach.",
+    "overview": "A serious finance workspace organized around evidence, recorded judgment, review and a durable receipt. Warm canvas, white working panels, dark project context and selective chartreuse connect inspection with the investor and builder experience without turning the queue into an investment dashboard.",
+    "keyCharacteristics": [
+      "Evidence-first working density, not dashboard theater.",
+      "Labeled financial context without decorative capital totals.",
+      "Explicit identity, evidence version and signing consequence.",
+      "Shared primitives with task-specific composition."
+    ],
+    "rules": [
+      { "name": "The Brand Is Not Outcome Rule", "body": "Chartreuse is not success. Passed, held, failed and pending states always carry words and distinct semantic treatment.", "section": "colors" },
+      { "name": "The Labeled Amount Rule", "body": "Every prominent amount names what it measures. Project amount and milestone amount are not balances available to withdraw.", "section": "typography" },
+      { "name": "The Evidence Before Effects Rule", "body": "Motion clarifies real state changes; it never simulates verification or financial completion.", "section": "elevation" },
+      { "name": "The Signature Is Not Release Rule", "body": "An inspector signs a judgment. The platform release service evaluates the milestone suite separately; audit submitted, checks passed, release pending and funds released are distinct states.", "section": "components" }
+    ],
+    "dos": [
+      "Do keep task count and credentials above the queue, without capital totals.",
+      "Do label amounts, retain RLUSD units and preserve domain precision.",
+      "Do show full uncropped evidence with provenance and original-file access.",
+      "Do preserve review/back, evidence-version checks, signing guards and durable receipts.",
+      "Do prioritize 1280×720 projector and 1440×900 desktop acceptance.",
+      "Do reconcile this token snapshot with shared CSS after concurrent work settles."
+    ],
+    "donts": [
+      "Don't restore blue-primary actions or the stale white-everywhere direction.",
+      "Don't invent metrics, site photographs, release claims or Devnet connectivity.",
+      "Don't use chartreuse as success, white text on chartreuse, or light-surface muted text on dark context.",
+      "Don't replace history rows with repeated check-card grids or crop inspection photographs.",
+      "Don't add gradients, glass, neon, fake checks or financial-completion theater.",
+      "Don't weaken validation, stale-evidence, signing-key, identity or duplicate-submit protections."
+    ]
+  }
+}

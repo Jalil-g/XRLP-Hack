@@ -20,6 +20,8 @@ export function EvidenceUploader({
   projectId,
   milestoneId,
   milestoneTitle,
+  projectName,
+  builderName,
   requirements,
   submitLabel = "Upload",
   fixture,
@@ -27,6 +29,8 @@ export function EvidenceUploader({
   projectId: string;
   milestoneId: string;
   milestoneTitle: string;
+  projectName: string;
+  builderName: string;
   requirements: EvidenceRequirement[];
   /** Verb on the submit button, e.g. "Resubmit". */
   submitLabel?: string;
@@ -87,7 +91,7 @@ export function EvidenceUploader({
     try {
       const r = await api.submitEvidence(projectId, milestoneId, files.map((f) => ({ file: f.file, filename: f.file.name, kind: f.kind })));
       toast.success(`${r.evidence.length} file${r.evidence.length === 1 ? "" : "s"} added to ${milestoneTitle}`, { description: "Next: the inspector audits the site, then run the checks." });
-      setReceipt(`${r.evidence.length} files submitted for ${milestoneTitle}. Next: the inspector reviews the evidence.`);
+      setReceipt(`${r.evidence.length} file${r.evidence.length === 1 ? "" : "s"} submitted for ${milestoneTitle}. Next: the inspector reviews the evidence. Your saved files remain in Evidence received above.`);
       setReviewing(false);
       setFiles([]);
       router.refresh();
@@ -104,10 +108,11 @@ export function EvidenceUploader({
   return (
     <div className="grid gap-8 md:grid-cols-[minmax(0,1fr)_280px]">
       <div className="space-y-3">
-        <p className="text-small font-medium">{reviewing ? "Step 2 of 2 · Review evidence" : "Step 1 of 2 · Choose evidence"}</p>
+        <h4 className="text-heading">{reviewing ? "Review evidence" : "Prepare your evidence"}</h4>
+        <p className="text-small text-ink-2">{reviewing ? "Step 2 of 2 · Confirm before submitting" : "Step 1 of 2 · Photos, invoices and supporting documents"}</p>
         {receipt && <p role="status" className="rounded-control bg-pass-bg p-3 text-small text-pass">{receipt}</p>}
         {error && <p role="alert" className="rounded-control bg-fail-bg p-3 text-small text-fail">{error}</p>}
-        {reviewing && <p className="text-small text-ink-2">Submit these {files.length} files for {milestoneTitle}. Check file names and types below. This sends evidence for review; it does not release funds.</p>}
+        {reviewing && <div className="rounded-control bg-band p-4 text-small"><p className="font-semibold">{projectName} · {milestoneTitle}</p><p className="mt-1 text-ink-2">Submitting as {builderName}. Check these {files.length} file names and types below. This sends evidence for review; it does not release funds.</p></div>}
         {!reviewing && <button
           type="button"
           onClick={() => input.current?.click()}
@@ -122,7 +127,7 @@ export function EvidenceUploader({
             add(e.dataTransfer.files);
           }}
           className={cn(
-            "flex w-full flex-col items-center justify-center rounded-panel border border-dashed px-6 py-10 text-center transition-colors duration-150",
+            "flex min-h-52 w-full flex-col items-center justify-center rounded-panel border border-dashed px-6 py-10 text-center transition-colors duration-150",
             dragging ? "border-action bg-info-bg" : "border-line-2 hover:border-ink-3 hover:bg-band/60",
           )}
         >
@@ -134,14 +139,14 @@ export function EvidenceUploader({
         {files.length > 0 && (
           <ul className="divide-y divide-line border-y border-line">
             {files.map((f) => (
-              <li key={f.key} className="flex items-center gap-3 py-2">
+              <li key={f.key} className="flex flex-wrap items-center gap-3 py-3">
                 <span className="size-10 shrink-0 overflow-hidden rounded-control bg-band">
                   {f.preview && (
                     // eslint-disable-next-line @next/next/no-img-element -- local object URL preview
                     <img src={f.preview} alt="" className="size-full object-cover" />
                   )}
                 </span>
-                <span className="min-w-0 flex-1 truncate text-small">{f.file.name}</span>
+                <span className="min-w-24 flex-1 break-all text-small">{f.file.name}</span>
                 <select
                   disabled={reviewing || busy}
                   value={f.kind}
@@ -164,7 +169,7 @@ export function EvidenceUploader({
         )}
         <div className="flex flex-wrap items-center gap-2">
           {reviewing && <Button variant="secondary" disabled={busy} onClick={() => setReviewing(false)}>Back to files</Button>}
-          <Button disabled={!files.length || busy} onClick={() => reviewing ? void upload() : setReviewing(true)}>
+          <Button disabled={!files.length || busy || loading} onClick={() => reviewing ? void upload() : setReviewing(true)}>
             {busy && <Loader2 className="animate-spin" aria-hidden />}
             {busy ? "Submitting…" : reviewing ? `${submitLabel} ${files.length} file${files.length === 1 ? "" : "s"}` : "Review evidence"}
           </Button>
@@ -177,7 +182,7 @@ export function EvidenceUploader({
         </div>
       </div>
 
-      <div>
+      <aside className="border-t border-line pt-5 md:border-t-0 md:border-l md:pt-0 md:pl-6">
         <h3 className="text-small font-semibold">Required for {milestoneTitle}</h3>
         <p className="mt-0.5 text-caption text-ink-2">Set by the locked Schedule of Values. Not editable.</p>
         <ul className="mt-3 space-y-2">
@@ -191,7 +196,9 @@ export function EvidenceUploader({
             </li>
           ))}
         </ul>
-      </div>
+        {!requirements.length && <p className="mt-3 text-small text-ink-2">No file requirements are listed for this milestone. Review the project schedule before submission.</p>}
+        <p className="mt-4 text-caption text-ink-2">Fixture files are demo evidence, not new site observations.</p>
+      </aside>
     </div>
   );
 }

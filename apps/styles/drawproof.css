@@ -1,55 +1,61 @@
-/* Drawproof design tokens. See DESIGN.md. Apple/Notion bar: quiet chrome, exact type, color only for state. */
+/* Drawproof finance workspace. Canonical tokens consumed by both applications. */
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
-  --color-page: #ffffff;
-  --color-band: #f5f5f7;
-  --color-band-2: #ebebef;
-  --color-ink: #1d1d1f;
-  --color-ink-2: #6e6e73;
-  --color-ink-3: #86868b;
-  --color-line: #e5e5ea;
-  --color-line-2: #d2d2d7;
+  --color-page: #f5f5ef;
+  --color-surface: #ffffff;
+  --color-band: #ebede5;
+  --color-band-2: #dde2d8;
+  --color-ink: #17251c;
+  --color-ink-2: #59645b;
+  --color-ink-3: #626d64;
+  --color-line: #dde2d8;
+  --color-line-2: #8c978c;
+  --color-capital: #17251c;
+  --color-capital-text: #f7f8f2;
+  --color-capital-muted: #c2ccbe;
+  --color-accent: #d8f36a;
+  --color-accent-hover: #c9e65a;
 
-  --color-action: #0071e3;
-  --color-action-hover: #0066cc;
-  --color-action-press: #006edb;
-  --color-link: #0066cc;
+  --color-action: #17251c;
+  --color-action-hover: #2b4232;
+  --color-action-press: #0c1910;
+  --color-link: #285d3c;
 
-  --color-pass: #1a7f37;
-  --color-pass-bg: #e6f4ea;
-  --color-fail: #cf222e;
-  --color-fail-bg: #fdecea;
-  --color-review: #8a5a00;
-  --color-review-bg: #fdf3d7;
+  --color-pass: #226442;
+  --color-pass-bg: #e7f2e9;
+  --color-fail: #a72e35;
+  --color-fail-bg: #fbeaec;
+  --color-review: #805716;
+  --color-review-bg: #fff2d6;
   --color-review-icon: #bf8700;
   --color-neutral: #57606a;
   --color-neutral-bg: #f0f0f2;
-  --color-info: #0b5cad;
-  --color-info-bg: #e8f1fb;
+  --color-info: #285e8c;
+  --color-info-bg: #eaf1f8;
 
-  --text-display: 2.5rem;
-  --text-display--line-height: 2.75rem;
+  --text-display: 3.25rem;
+  --text-display--line-height: 3.5rem;
   --text-display--letter-spacing: -0.025em;
   --text-display--font-weight: 600;
-  --text-title: 1.75rem;
-  --text-title--line-height: 2.125rem;
+  --text-title: 2.125rem;
+  --text-title--line-height: 2.5rem;
   --text-title--letter-spacing: -0.02em;
   --text-title--font-weight: 600;
-  --text-heading: 1.25rem;
-  --text-heading--line-height: 1.625rem;
+  --text-heading: 1.375rem;
+  --text-heading--line-height: 1.75rem;
   --text-heading--letter-spacing: -0.01em;
   --text-heading--font-weight: 600;
-  --text-body: 1.0625rem;
-  --text-body--line-height: 1.625rem;
+  --text-body: 1rem;
+  --text-body--line-height: 1.5rem;
   --text-small: 0.9375rem;
   --text-small--line-height: 1.375rem;
   --text-caption: 0.8125rem;
   --text-caption--line-height: 1.125rem;
 
-  --radius-control: 8px;
-  --radius-panel: 12px;
+  --radius-control: 10px;
+  --radius-panel: 16px;
   --radius-tag: 6px;
 
   --shadow-overlay: 0 20px 48px -12px rgb(0 0 0 / 0.22), 0 4px 12px -4px rgb(0 0 0 / 0.08);
@@ -75,11 +81,11 @@
     text-wrap: pretty;
   }
   ::selection {
-    background: #cfe3fb;
+    background: var(--color-accent);
     color: var(--color-ink);
   }
   :focus-visible {
-    outline: 2px solid var(--color-action);
+    outline: 2px solid var(--color-link);
     outline-offset: 3px;
     border-radius: 4px;
   }

@@ -16,6 +16,7 @@ import { SiteMap, type MapPin } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
 import { NEEDS } from "@/components/task-row";
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/ui/loading-state";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +25,7 @@ import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, withBrowserE
 import { evidenceStatus } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
 import type { ChecksStatus, Inspector, InspectorTask, SubmitAuditResult } from "@/lib/types";
-import { BRAND, cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
+import { cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
 import { isAuditSubmitShortcut } from "@/lib/shortcuts";
 
 type AuditTask = InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> };
@@ -42,8 +43,9 @@ export default function AuditPage() {
   const params = useParams();
   const projectId = param(params.projectId);
   const milestoneId = param(params.milestoneId);
-  const { inspector } = useIdentity();
-  if (!inspector) return <p className="text-small text-muted">Loading inspector…</p>;
+  const { inspector, status, error } = useIdentity();
+  if (status === "error") return <p role="alert" className="text-small text-bad">Could not load inspector credentials: {error}</p>;
+  if (!inspector) return <LoadingState label="Loading inspector credentials…" />;
   return <AuditLoader key={`${inspector.address}:${projectId}:${milestoneId}`} inspector={inspector} projectId={projectId} milestoneId={milestoneId} />;
 }
 
@@ -90,7 +92,7 @@ function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspect
   );
 
   if (loadError) return <Shell back={back}><p role="alert" className="text-small text-bad">Could not load the review: {loadError}</p><Button onClick={() => setReloads((n) => n + 1)}>Retry review</Button></Shell>;
-  if (!inspector || task === undefined) return <Shell back={back}><p className="text-small text-muted">Loading…</p></Shell>;
+  if (!inspector || task === undefined) return <Shell back={back}><LoadingState label="Loading milestone evidence and audit context…" /></Shell>;
   if (task === null) {
     return (
       <Shell back={back}>
@@ -232,17 +234,17 @@ function AuditForm({
 
   return (
     <div className="space-y-6">
-      <div className="space-y-3">
+      <div className="audit-context space-y-4">
         {back}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="mb-2 text-small text-muted">{task.projectName}</p>
             <h1 className="text-title">
               {isReAudit && "Re-audit: "}M{m.index + 1} · {m.title}
             </h1>
+            <p className="mt-2 text-small text-muted">{task.projectName} · Inspector {inspectorName}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-small">
-            <span className="tabular font-medium">{formatRlusd(m.amount)}</span>
+            <div><p className="text-caption text-muted">Milestone amount</p><p className="mt-1 tabular text-heading font-semibold">{formatRlusd(m.amount)}</p></div>
             {m.cancelAfter && (
               <span className="flex items-center gap-1 text-caption text-muted">
                 <CalendarClock className="size-3.5" /> escrow expires {formatDateTime(m.cancelAfter)}
@@ -253,8 +255,14 @@ function AuditForm({
             </Badge>
           </div>
         </div>
-        <p className="max-w-3xl text-small text-muted">{BRAND.tagline}</p>
+        <p className="max-w-3xl text-small text-muted">Your signed observations inform the milestone checks. An audit alone does not release funds.</p>
       </div>
+
+      <ol aria-label="Audit workflow" className="workflow-rail">
+        <li aria-current="step">Inspect evidence & complete report</li>
+        <li>Review evidence version</li>
+        <li>Sign & submit</li>
+      </ol>
 
       <ReviewDialog open={reviewing} title="Review and submit audit" busy={busy}
         confirmLabel={phase === "signing" ? "Signing…" : phase === "filing" ? "Submitting…" : canSign ? "Sign and submit audit" : "Submit audit (core signs)"}
@@ -272,9 +280,9 @@ function AuditForm({
         <p className="text-caption text-muted">Evidence version: {bundle ? shortHash(bundle) : "Preparing…"}. {canSign ? "Signed with your loaded browser key." : "Browser signing is unavailable for this report. Core will sign on your behalf."}</p>
       </ReviewDialog>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
         {/* Left: what the builder claims. */}
-        <div className="min-w-0 space-y-6 lg:sticky lg:top-24 lg:self-start">
+        <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader>
               <div>
@@ -305,7 +313,7 @@ function AuditForm({
           <Card id="checklist">
             <CardHeader>
               <div>
-                <CardTitle>Checklist</CardTitle>
+                <CardTitle>Milestone checklist</CardTitle>
                 <CardDescription>{isReAudit ? "Record fresh observations for every SoV line; previous answers are not copied." : "One line per Schedule of Values item this milestone pays for."}</CardDescription>
               </div>
             </CardHeader>

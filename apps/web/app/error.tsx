@@ -9,7 +9,7 @@ export default function ErrorPage({ error, reset }: { error: Error & { digest?: 
   useEffect(() => console.error(error), [error]);
   const feedback = errorFeedback(error);
   return (
-    <div className="mx-auto max-w-[560px] py-20 text-center">
+    <div className="finance-surface mx-auto max-w-[640px] py-12 text-center">
       <h1 className="text-title">{feedback.title}</h1>
       <p className="mt-3 text-body text-ink-2">
         {feedback.description}

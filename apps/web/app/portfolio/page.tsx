@@ -31,24 +31,32 @@ export default async function PortfolioPage() {
         meta={investor.kyc ? <Tag tone="pass">KYC verified</Tag> : <Tag tone="review">No KYC credential</Tag>}
         description={`${investor.name}. Value is your vault shares at today's share price.`}
         action={
-          investor.kyc ? (
-            <div className="text-right">
-              <div className="text-caption text-ink-2">Total value</div>
-              <div className="tabular text-title">{formatAmount(fromCents(total), { cents: true })} RLUSD</div>
-            </div>
-          ) : (
+          !investor.kyc ? (
             <ActionButton action={{ kind: "kyc", investor: investor.address }}>Issue KYC credential</ActionButton>
-          )
+          ) : undefined
         }
       />
+
+      {positions.length > 0 && <section className="capital-summary" aria-label="Portfolio value">
+        <div>
+          <p className="text-small text-capital-muted">Current vault share value</p>
+          <p className="financial-amount mt-3">{formatAmount(fromCents(total), { cents: true })} <span>RLUSD</span></p>
+          <p className="mt-3 text-small text-capital-muted">{positions.length} project {positions.length === 1 ? "position" : "positions"} · share value rises as interest is repaid</p>
+        </div>
+        <div className="capital-detail">
+          <div><span>In redemption-phase holdings</span><strong>{formatAmount(fromCents(positions.filter((position) => position.phase === "redemption").reduce((amount, position) => amount + toCents(position.value), 0)), { cents: true })} RLUSD</strong></div>
+          <div><span>In locked holdings</span><strong>{formatAmount(fromCents(positions.filter((position) => position.phase !== "redemption").reduce((amount, position) => amount + toCents(position.value), 0)), { cents: true })} RLUSD</strong></div>
+        </div>
+      </section>}
 
       {positions.length === 0 ? (
         <Empty title="No positions yet">
           Pick a verified project on the <Link href="/" className="text-link hover:underline">Projects</Link> page and invest.
         </Empty>
       ) : (
-        <div className="overflow-x-auto" role="region" aria-label="Portfolio positions table" tabIndex={0}>
-        <table className="w-full min-w-[660px] border-collapse text-left">
+        <section className="finance-surface">
+        <h2 className="mb-5 text-heading">Your holdings</h2>
+        <table className="responsive-finance-table w-full border-collapse text-left">
           <thead>
             <tr className="border-y border-line bg-band text-caption text-ink-2">
               <th className="px-4 py-2.5 font-medium">Project</th>
@@ -61,17 +69,17 @@ export default async function PortfolioPage() {
           <tbody>
             {positions.map((pos) => (
               <tr key={pos.projectId} className="border-b border-line">
-                <td className="px-4 py-4">
+                <td data-label="Project" className="px-4 py-5">
                   <Link href={`/projects/${pos.projectId}`} className="text-body font-medium text-ink hover:text-link">
                     {pos.projectName}
                   </Link>
                 </td>
-                <td className="tabular px-4 py-4 text-right text-small">{Number(pos.shares).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
-                <td className="tabular px-4 py-4 text-right text-small font-medium">{formatAmount(pos.value, { cents: true })}</td>
-                <td className="px-4 py-4">
+                <td data-label="Shares" className="tabular px-4 py-5 text-right text-small">{Number(pos.shares).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
+                <td data-label="Value · RLUSD" className="tabular px-4 py-5 text-right text-body font-semibold">{formatAmount(pos.value, { cents: true })}</td>
+                <td data-label="Vault" className="px-4 py-5">
                   <Tag tone={pos.phase === "redemption" ? "pass" : pos.phase === "subscription" ? "info" : "neutral"}>{VAULT_PHASE[pos.phase]}</Tag>
                 </td>
-                <td className="px-4 py-4 text-right">
+                <td data-label="Withdrawals" className="px-4 py-5 text-right">
                   {pos.phase === "redemption" ? (
                     <ActionButton size="sm" variant="secondary" context={pos.projectName} action={{ kind: "withdraw", projectId: pos.projectId, investor: investor.address, amount: pos.value }}>
                       Withdraw {formatAmount(pos.value)}
@@ -84,7 +92,7 @@ export default async function PortfolioPage() {
             ))}
           </tbody>
         </table>
-        </div>
+        </section>
       )}
     </div>
   );

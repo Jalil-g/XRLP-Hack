@@ -4,7 +4,6 @@
 /* Compatibility names for inspector components; values come from the shared theme. */
 @theme inline {
   --color-canvas: var(--color-page);
-  --color-surface: var(--color-page);
   --color-subtle: var(--color-band);
   --color-line-strong: var(--color-line-2);
   --color-muted: var(--color-ink-2);
@@ -27,9 +26,62 @@
   --color-lock-bg: var(--color-neutral-bg);
   --color-lock-line: var(--color-line-2);
 }
+
+.audit-context {
+  border-radius: 20px;
+  background: var(--color-capital, #17251c);
+  color: var(--color-capital-text, #f7f8f2);
+  padding: 24px;
+}
+
+.audit-context .text-muted {
+  color: var(--color-capital-muted, #c2ccbe);
+}
+
+.audit-context h1 {
+  color: inherit;
+}
+
+.audit-context a {
+  color: var(--color-capital-text, #f7f8f2);
+}
+
+.audit-context :focus-visible {
+  outline-color: var(--color-accent, #d8f36a);
+}
+
+.workflow-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  border-bottom: 1px solid var(--color-line);
+  padding-bottom: 16px;
+  font-size: 15px;
+  color: var(--color-muted);
+}
+
+.workflow-rail [aria-current="step"] {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.workflow-rail [aria-current="step"]::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 2px;
+  background: var(--color-accent, #d8f36a);
+  outline: 1px solid var(--color-capital, #17251c);
+}
+
+@media (min-width: 768px) {
+  .audit-context { padding: 32px; }
+}
 html[data-projector="true"] {
-  font-size: 20px;
-  --color-ink-2: #45454a;
-  --color-ink-3: #55555b;
-  --color-line: #c7c7ce;
+  font-size: 18px;
+  --color-ink-2: #424e44;
+  --color-ink-3: #424e44;
+  --color-line: #c7cec2;
 }

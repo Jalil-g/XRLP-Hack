@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { EvidenceUploader } from "@/components/builder/evidence-uploader";
+import { EvidenceReceipt } from "@/components/builder/evidence-receipt";
 import { TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
 import { buttonClass } from "@/components/ui/button";
@@ -9,7 +10,7 @@ import { Empty, PageHeader, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, sovLinesFor } from "@/lib/display";
+import { MILESTONE_STATUS, PROJECT_STATUS, sovLinesFor } from "@/lib/display";
 import { MAPLE_FIXTURE_SETS } from "@/lib/fixture-files";
 import { getSession } from "@/lib/session";
 import { formatAmount, toCents } from "@/lib/utils";
@@ -20,12 +21,13 @@ export const metadata = { title: "Builder" };
 export default async function BuilderPage() {
   const session = await getSession();
   const builder = session.builder;
+  if (session.directoryUnavailable) throw new Error("Builder accounts are temporarily unavailable. Try loading the workspace again.");
   if (!builder) return <Empty title="No builder accounts">Core did not return any builders.</Empty>;
   const summaries = (await api.listProjects()).filter((s) => (s.builderId ? s.builderId === builder.id : s.builderName === builder.name));
   const details = await Promise.all(summaries.map((s) => api.getProject(s.id)));
 
   return (
-    <div className="space-y-14">
+    <div className="space-y-8">
       <AutoRefresh ms={4000} />
       <PageHeader
         action={
@@ -48,7 +50,7 @@ export default async function BuilderPage() {
         }
       />
 
-      {details.length === 0 && <Empty title="No projects yet">Submit a project with its Schedule of Values to get it verified and listed.</Empty>}
+      {details.length === 0 && <Empty title="Your next project starts here" action={<Link href="/builder/new" className={buttonClass()}>Create a project</Link>}>Submit a Schedule of Values, verify the project, then collect evidence for each construction draw.</Empty>}
 
       {details.map((d) => (
         <BuilderProject key={d.project.id} d={d} />
@@ -76,6 +78,24 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
         </Link>
       }
     >
+      <div className="mb-6 grid gap-6 rounded-[20px] bg-capital p-6 text-capital-text sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8">
+        <div className="min-w-0">
+          <p className="text-small text-capital-muted">{current ? `${current.title} · scheduled draw` : "Project financing"}</p>
+          <p className="mt-2 break-words text-[36px] leading-[1.1] font-semibold tracking-[-0.035em] tabular-nums sm:text-[52px]">{formatAmount(current?.amount ?? p.terms.principal, { cents: true })} <span className="text-body font-medium tracking-normal text-capital-muted">RLUSD</span></p>
+          <p className="mt-3 max-w-[65ch] text-small text-capital-muted">{current ? STEP[current.status] ?? (current.status === "failed" ? "A check failed. Review the flagged evidence and resubmit; funds remain locked." : "Follow the milestone below for the next action.") : "Verification comes before funding. Each construction draw has its own evidence requirements."}</p>
+        </div>
+        <dl className="space-y-3 border-t border-capital-muted/30 pt-4 text-small sm:border-t-0 sm:border-l sm:pt-0 sm:pl-6">
+          <div><dt className="text-capital-muted">Builder</dt><dd className="mt-1 font-medium">{builder.name}</dd></div>
+          <div><dt className="text-capital-muted">Project principal</dt><dd className="mt-1 tabular-nums">{formatAmount(p.terms.principal, { cents: true })} RLUSD</dd></div>
+        </dl>
+      </div>
+      <ol aria-label={`${p.name} milestone schedule`} className="mb-8 grid divide-y divide-line border-y border-line sm:grid-cols-2 sm:divide-y-0 lg:flex">
+        {p.milestones.map((milestone) => <li key={milestone.id} aria-current={current?.id === milestone.id ? "step" : undefined} className={`min-w-0 flex-1 px-3 py-4 ${current?.id === milestone.id ? "bg-accent/25" : ""}`}>
+          <p className="text-small font-medium">{milestone.index + 1}. {milestone.title}</p>
+          <p className="mt-1 text-caption text-ink-2">{MILESTONE_STATUS[milestone.status].label}</p>
+        </li>)}
+      </ol>
+      <EvidenceReceipt detail={d} />
       {p.status === "draft" && (
         <NextStep
           title="Pay the verification fee"
@@ -162,6 +182,8 @@ function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
       projectId={p.id}
       milestoneId={m.id}
       milestoneTitle={m.title}
+      projectName={p.name}
+      builderName={builder.name}
       requirements={sovLinesFor(p, m).flatMap((l) => l.evidence)}
       submitLabel={m.status === "failed" ? "Resubmit" : "Upload"}
       fixture={fixture}
@@ -182,7 +204,7 @@ function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
     />
   );
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 rounded-panel border border-line bg-surface p-4 sm:p-6">
       <div>
         <h3 className="text-body font-semibold">
           Milestone {m.index + 1}: {m.title} · {formatAmount(m.amount)} RLUSD

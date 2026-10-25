@@ -16,9 +16,9 @@ export function SiteHeader({ session }: { session: Session }) {
         : null;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-page">
-      <div className="mx-auto flex min-h-14 max-w-[1184px] flex-wrap items-center gap-x-6 gap-y-2 px-4 py-1.5 sm:px-8">
-        <Link href="/" className="text-body font-semibold tracking-[-0.01em] text-ink">
+    <header className="sticky top-0 z-40 border-b border-line bg-surface">
+      <div className="mx-auto flex min-h-16 max-w-[1264px] flex-wrap items-center gap-x-8 gap-y-2 px-4 py-2 sm:px-8">
+        <Link href="/" className="text-[21px] font-semibold tracking-[-0.035em] text-ink">
           {BRAND.name}
         </Link>
         <NavLinks role={session.role} />
@@ -40,7 +40,7 @@ export function SiteHeader({ session }: { session: Session }) {
               <span className="capitalize">{session.role}</span><ChevronDown className="size-3.5 shrink-0 text-ink-2" aria-hidden />
               <span className="hidden truncate text-ink-2 lg:inline">{session.role === "investor" ? session.investor?.name : session.role === "builder" ? session.builder?.name : "Operator"}</span>
             </summary>
-            <div className="absolute right-0 z-50 mt-2 w-[min(360px,calc(100vw-2rem))] space-y-4 rounded-panel border border-line bg-page p-4 shadow-overlay">
+            <div className="absolute right-0 z-50 mt-2 w-[min(360px,calc(100vw-2rem))] space-y-4 rounded-panel border border-line bg-surface p-4 shadow-overlay">
               <p className="text-small font-medium">Demo account</p>
               <RoleSwitcher role={session.role} identities={identities} />
               <ProjectorToggle />

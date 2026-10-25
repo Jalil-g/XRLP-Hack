@@ -9,6 +9,7 @@ import { MILESTONE_TEMPLATES } from "@xrlp/shared";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select, Textarea } from "@/components/ui/form";
 import { Tag } from "@/components/ui/tag";
+import { validAmount } from "./amount";
 import { ApiError, api } from "@/lib/api";
 import type { BuilderDocument, ProjectType, SovLine } from "@/lib/contract";
 import { PROJECT_TYPE } from "@/lib/display";
@@ -65,21 +66,27 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
   const [docs, setDocs] = useState(() => new Set(DOCUMENTS.map((d) => d.kind)));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
 
-  const principalCents = toCents(principal.replace(/[^\d.]/g, ""));
-  const totalCents = useMemo(() => rows.reduce((a, r) => a + toCents(r.line.amount), 0), [rows]);
+  const principalCents = validAmount(principal) ? toCents(principal) : 0;
+  const totalCents = useMemo(() => rows.reduce((total, row) => total + (validAmount(row.line.amount) ? toCents(row.line.amount) : 0), 0), [rows]);
   const diff = totalCents - principalCents;
   const problems = [
     !name.trim() && "Name the project",
     !siteAddress.trim() && "Add the site address",
-    principalCents <= 0 && "Set the principal",
+    !validAmount(principal) && "Enter a positive principal with at most two decimal places",
+    (!Number.isFinite(Number(rate)) || !rate.trim() || Number(rate) < 0 || Number(rate) > 100) && "Enter an annual rate between 0 and 100%",
+    (!Number.isInteger(Number(months)) || Number(months) <= 0 || Number(months) > 120) && "Enter a whole loan term between 1 and 120 months",
+    (!Number.isFinite(Date.parse(deadline)) || Date.parse(`${deadline}T16:00:00Z`) <= Date.now()) && "Choose a future funding deadline",
     rows.length === 0 && "Add at least one Schedule of Values line",
+    rows.some((row) => !validAmount(row.line.amount) || !row.line.title.trim() || !row.line.code.trim() || !row.line.trade.trim()) && "Give every schedule line a code, work description, trade and positive amount with at most two decimals",
     diff !== 0 && principalCents > 0 && `Lines total ${formatAmount(fromCents(totalCents))} RLUSD; they must equal the principal`,
   ].filter(Boolean) as string[];
 
   const update = (id: number, patch: Partial<SovLine>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, line: { ...r.line, ...patch } } : r)));
 
   const submit = async () => {
+    if (busy || problems.length || !reviewing) return;
     setBusy(true);
     setError(null);
     try {
@@ -107,9 +114,26 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
     }
   };
 
+  if (reviewing) return <section className="mx-auto max-w-[760px] space-y-6 rounded-panel border border-line bg-surface p-5 sm:p-8">
+    <div><h2 className="text-heading">Review {name}</h2><p className="mt-2 text-small text-ink-2">Submitted as {builderName}. Creating this project starts onboarding; it does not charge the verification fee or release any funds.</p></div>
+    <dl className="grid grid-cols-[1fr_1fr] gap-4 border-y border-line py-5 text-small">
+      <dt className="text-ink-2">Site</dt><dd className="break-words">{siteAddress}</dd>
+      <dt className="text-ink-2">Principal</dt><dd className="font-semibold tabular-nums">{formatAmount(principal, { cents: true })} RLUSD</dd>
+      <dt className="text-ink-2">Annual rate / term</dt><dd>{rate}% / {months} months</dd>
+      <dt className="text-ink-2">Funding closes</dt><dd>{deadline}</dd>
+      <dt className="text-ink-2">Mock documents</dt><dd>{docs.size} selected</dd>
+    </dl>
+    <div><h3 className="text-body font-semibold">Schedule of Values</h3><ul className="mt-2 divide-y divide-line">{rows.map((row) => <li key={row.id} className="flex justify-between gap-4 py-3 text-small"><span>{row.line.title}</span><span className="shrink-0 tabular-nums">{formatAmount(row.line.amount, { cents: true })} RLUSD</span></li>)}</ul></div>
+    <p className="text-small text-ink-2">Next: pay the 250 RLUSD verification fee. Registries, documents and site coordinates are demo fixtures in this prototype.</p>
+    {error && <p role="alert" className="rounded-control bg-fail-bg p-4 text-small text-fail">{error}</p>}
+    <div className="flex flex-wrap gap-3"><Button variant="secondary" disabled={busy} onClick={() => setReviewing(false)}>Back to project</Button><Button disabled={busy || problems.length > 0} onClick={() => void submit()}>{busy ? "Creating project…" : "Create project"}</Button></div>
+  </section>;
+
   return (
     <div className="space-y-12">
-      <section className="grid max-w-[760px] gap-5">
+      <div className="rounded-[20px] bg-capital p-6 text-capital-text sm:p-8"><h2 className="text-heading">Build a funding plan</h2><p className="mt-2 max-w-[65ch] text-small text-capital-muted">Define the work, match every draw to the principal, then review before creating your project.</p><ol className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-small"><li className="text-accent">1. Project & terms</li><li>2. Schedule & documents</li><li>3. Review</li></ol></div>
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <section className="grid gap-5 rounded-panel border border-line bg-surface p-5 sm:p-6">
         <h2 className="text-heading">Project</h2>
         <Field label="Name" id="name">
           <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Cedar Ln ADU" />
@@ -141,9 +165,9 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
         </Field>
       </section>
 
-      <section className="grid max-w-[760px] gap-5">
+      <section className="grid gap-5 rounded-panel border border-line bg-surface p-5 sm:p-6">
         <h2 className="text-heading">Loan terms</h2>
-        <div className="grid gap-5 sm:grid-cols-4">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
           <Field label="Principal (RLUSD)" id="principal">
             <Input id="principal" inputMode="decimal" className="tabular" value={principal} onChange={(e) => setPrincipal(e.target.value)} />
           </Field>
@@ -158,6 +182,7 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
           </Field>
         </div>
       </section>
+      </div>
 
       <section className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
@@ -207,7 +232,7 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
                     inputMode="decimal"
                     className="tabular h-11 text-right text-small"
                     value={r.line.amount}
-                    onChange={(e) => update(r.id, { amount: e.target.value.replace(/[^\d.]/g, "") || "0" })}
+                    onChange={(e) => update(r.id, { amount: e.target.value })}
                   />
                 </td>
                 <td className="px-3 py-2 text-caption text-ink-2" title={r.line.visualCriteria.length ? `Visual criteria: ${r.line.visualCriteria.join("; ")}` : undefined}>
@@ -227,7 +252,7 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
                 <td className="py-2 pr-1">
                   <button
                     onClick={() => setRows((rs) => rs.filter((x) => x.id !== r.id))}
-                    className="mt-1.5 rounded-control p-1.5 text-ink-3 transition-colors hover:bg-band hover:text-ink"
+                    className="flex size-11 items-center justify-center rounded-control text-ink-2 transition-colors hover:bg-band hover:text-ink"
                     aria-label={`Remove ${r.line.title}`}
                   >
                     <X className="size-4" />
@@ -282,9 +307,9 @@ export function NewProjectForm({ builderId, builderName }: { builderId: string; 
       </section>
 
       <section className="flex flex-wrap items-center gap-4 border-t border-line pt-6">
-        <Button size="lg" disabled={problems.length > 0 || busy} onClick={submit}>
+        <Button size="lg" disabled={problems.length > 0 || busy} onClick={() => setReviewing(true)}>
           {busy && <Loader2 className="animate-spin" aria-hidden />}
-          Create project
+          Review project
         </Button>
         <p className="text-small text-ink-2">
           {problems[0] ?? `Submitted as ${builderName}. Next: pay the 250 RLUSD verification fee.`}

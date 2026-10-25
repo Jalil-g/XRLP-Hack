@@ -1,76 +1,106 @@
-> Redesign in progress: the canonical target is [shared frontend guide](../../docs/ideas/shared-frontend-style.md), revised 2026-10-25 for the user-selected Ramp/Robinhood/Apple finance direction. The implementation notes below describe the prior system and must be replaced as the new system ships. Conflicting aesthetic restrictions below are superseded.
+---
+name: Drawproof Finance Workspace
+description: Capital in focus. Proof within reach.
+colors:
+  workspace: "#F5F5EF"
+  surface: "#FFFFFF"
+  subtle: "#EBEDE5"
+  ink: "#17251C"
+  secondary: "#59645B"
+  divider: "#DDE2D8"
+  strong-border: "#8C978C"
+  capital: "#17251C"
+  capital-text: "#F7F8F2"
+  capital-secondary: "#C2CCBE"
+  accent: "#D8F36A"
+  link: "#285D3C"
+  success: "#226442"
+  attention: "#805716"
+  failure: "#A72E35"
+typography:
+  financial:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif"
+    fontSize: "52px"
+    fontWeight: 600
+    lineHeight: 1.077
+    letterSpacing: "-0.035em"
+  title:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif"
+    fontSize: "34px"
+    fontWeight: 600
+    lineHeight: 1.176
+    letterSpacing: "-0.02em"
+  body:
+    fontFamily: "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif"
+    fontSize: "16px"
+    fontWeight: 400
+    lineHeight: 1.5
+rounded:
+  control: "10px"
+  panel: "16px"
+  capital: "20px"
+  badge: "6px"
+spacing:
+  compact: "8px"
+  control: "16px"
+  panel: "24px"
+  section: "32px"
+  major: "48px"
+components:
+  button-primary:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.surface}"
+    rounded: "{rounded.control}"
+    height: "44px"
+    padding: "8px 16px"
+  capital-summary:
+    backgroundColor: "{colors.capital}"
+    textColor: "{colors.capital-text}"
+    rounded: "{rounded.capital}"
+    padding: "32px"
+---
 
-# Design
+# Drawproof Finance Workspace
 
-Drawproof web. Bar: Apple's and Notion's web design, played straight (user decision 2026-10-24). Operate surfaces:
-familiar controls, quiet chrome, exact type. Color is reserved for state. Canonical tokens and base styles live in `../styles/drawproof.css`, imported by both apps. App-specific layouts remain in `app/globals.css`.
+## Overview
 
-## Type
+Capital in focus. Proof within reach. This implemented system replaces the former Apple/Notion white-and-blue UI. The pinned Ramp/Robinhood/Apple intent means confident finance typography, disciplined working surfaces, and coherent guided tasks—not trading theater. The canonical cross-role brief is `../../docs/ideas/shared-frontend-style.md`; actual shared tokens live in `../styles/drawproof.css`.
 
-- One family: the system UI face (`-apple-system`, SF Pro on the demo Mac; Segoe UI / Roboto elsewhere). Mono only for
-  hashes, addresses and amounts in tx detail: `ui-monospace` (SF Mono).
-- Roles (fixed rem, ratio ≈ 1.2): `display` 40/44 600 −0.025em · `title` 28/34 600 −0.02em · `heading` 20/26 600 −0.01em ·
-  `body` 17/26 400 (Apple's body size; projector-legible) · `small` 15/22 · `caption` 13/18 secondary.
-- Checks panel rows use `body` (17px) for names and reasons: it is the projector hero.
-- Numbers are tabular (`tabular` utility). Headings `text-wrap: balance`, prose `text-wrap: pretty`.
-- No uppercase tracked labels, no eyebrows above headings.
+## Colors
 
-## Color
+Warm workspace surrounds white evidence, financial tables, and forms. A near-black green capital summary anchors overview pages. Chartreuse selects the active milestone and the investment action on dark surfaces; it never means passed. Green, amber, red, and blue remain semantic statuses, always paired with words. Dark metadata uses capital-secondary, never light-surface secondary ink.
 
-| Role | Token | Value |
-|---|---|---|
-| Page | `--color-page` | `#ffffff` |
-| Band (secondary surface, table header, hover) | `--color-band` | `#f5f5f7` |
-| Ink | `--color-ink` | `#1d1d1f` |
-| Secondary text | `--color-ink-2` | `#6e6e73` |
-| Icons, disabled (not for text: 3.6:1) | `--color-ink-3` | `#86868b` |
-| Hairline | `--color-line` | `#e5e5ea` |
-| Strong rule / input border | `--color-line-2` | `#d2d2d7` |
-| Action (buttons, links, focus) | `--color-action` | `#0071e3` |
-| Pass / released | `--color-pass` | `#1a7f37` on `#e6f4ea` |
-| Fail | `--color-fail` | `#cf222e` on `#fdecea` |
-| Needs review / expired | `--color-review` | `#8a5a00` on `#fdf3d7` |
-| Pending / neutral tag | `--color-neutral` | `#57606a` on `#f0f0f2` |
-| Info tag (in progress) | `--color-info` | `#0b5cad` on `#e8f1fb` |
+## Typography
 
-Blue means "you can act". Green / red / amber mean a verdict and always come with a word ("Released", "Failed").
-
-## Shape and depth
-
-- Radius: 8px controls, 12px panels, 6px tags. Full pill only for the segmented role control.
-- No shadows on page content. Only overlays (dialog, toast) get a soft offset shadow.
-- Group with space and 1px hairlines, not boxes. A panel border is allowed where a region is one object (the checks panel).
-  Never nest bordered panels.
+One local system sans stack. Financial values use tabular numerals, not monospace: 52/56px on desktop, 36/40px on compact screens. Page titles are 34/40px, sections 22/28px, body 16/24px, controls 15/22px, metadata 13/18px. Hashes and addresses alone use mono. Desktop and 1280×720 projector readability are the primary acceptance targets; no remote font dependency.
 
 ## Layout
 
-- Content column 1120px max, 32px gutters. Header 56px, white, hairline bottom, not translucent.
-- Notion-style properties: label column 160px in secondary text, value in ink.
-- Tables: band-colored header row, hairline row separators, 48px rows, numbers right-aligned.
-- Vertical rhythm: 48px between sections, 16px heading → content, 8px inside groups.
+64px shared header, 1200px content inside a 1264px wrapper with 32px gutters. Main content uses 32–48px between task regions. Marketplace is a capital overview followed by a precise project collection with explicit destinations. Portfolio separates vault share value, redemption-phase holdings, and locked holdings; no fabricated profit line. Project detail links capital summary → labeled milestone rail → checks/evidence plus a compact draw-context column. Builder workspaces foreground the current draw and its next action. Setup and verification narrow to focused form widths, while the demo separates its release/hold story from engineering controls.
+
+Tables become structured lists on compact screens. Wide Schedule of Values is intentionally contained in a labeled scroll region. Projector mode increases base text to 18px without hiding environment or proof. Responsive safeguards remain, but mobile-specific polish was deprioritized by the user.
+
+## Elevation & Depth
+
+White surfaces have a fine divider and at most `0 2px 8px -4px rgb(23 37 28 / .12)`. Review dialogs use the shared overlay shadow and a solid surface. No gradients, glass, glows, or decorative charts.
+
+## Shapes
+
+20px capital panels; 16px working surfaces; 10px controls; 6px semantic tags. Fields have persistent labels and visible boundaries. Controls retain a 44px minimum target. Focus is a green 2px outline with 3px offset; dark summaries use chartreuse focus.
 
 ## Components
 
-- `Button`: primary (action blue fill), secondary (band fill, ink text), quiet (text only). 44px primary controls; compact controls are 36px on desktop and 44px on mobile. One primary per screen.
-- `Tag`: Notion-style soft chip, 13px medium, tinted background + dark text, no border, no dot.
-- `ChecksPanel` (`components/checks/`): GitHub checks. `OutcomeBanner` (Released / Failed / Needs review / Ready / Waiting / Expired) → `AuditRow` (inspector's signed audit, always first) → `CheckRow`s (failures first; flagged photos inline) → `VerdictRow` (decision, confidence, attestation). Review every state at `/dev/checks`.
-- `TxLink`: mono short hash + ↗ to devnet explorer; in mock mode plain text with "mock" title, never a link.
+Primary buttons are dark on light and chartreuse only in capital summaries. Secondary buttons are bordered white. Milestone rail labels include sequence, title, amount and state. Checks preserve outcome → signed audit → individual results → attestation, with evidence directly below. Money-location rows use actual ledger snapshots. Unknown balances are not invented.
 
-## Motion
+Investment and other money actions retain enter → review → submit → receipt. Builder evidence retains choose → review → submit → receipt; the receipt survives refreshed milestone transitions. Back keeps drafts. Inspector signatures, evidence-version re-review and software-key semantics remain unchanged. Mock hashes are plain text and never explorer links. Error, empty, loading and pending states explain recovery without presenting skeletons as actual amounts.
 
-150–200ms ease-out on hover/press and on state changes. One authored moment: after "Run checks" every row shows running, then rows resolve top to bottom 110ms apart (skipped under `prefers-reduced-motion`). The reveal starts only when real results arrive; it never stands in for progress.
-State feedback: a money-map node flashes once (1.4s) when its amount changes, so a release or refund is seen moving.
-No page-load choreography, no pulsing dots.
+Hover/disclosure transitions are 150–200ms. Real money changes may briefly emphasize their location. Reduced motion suppresses nonessential motion; there are no animated balances or fake completion sequences.
 
-## Don't
+## Do's and Don'ts
 
-Gradients, glass/blur, glowing dots, hero metric tiles, icon-plus-heading card grids, eyebrow labels, colored side borders,
-emoji, decorative icons, dark mode for the projector.
-
-## Shared shell and guided actions
-
-Both apps use a solid 56px desktop header, matching navigation and environment labels, and a compact account menu for role/identity/projector controls. Mobile navigation moves to a second row. Both layouts include a keyboard skip link and 16px mobile gutters.
-
-Deposits, verification payments, repayments, and withdrawals show a review before submission. Evidence uploads use choose → review → submit; inspector audits and site visits use edit → review → sign → receipt. Back preserves the draft. Do not bypass the inspector's evidence-version checks or imply audit submission released funds.
-
-Checks stack status, explanation, and proof on mobile. Wide Schedule of Values tables scroll within labeled keyboard-focusable regions. Respect reduced motion. The demo control room leads with the 100-second recording flow; extended engineering checks are disclosed separately.
+- Label what each amount represents; escrowed money is not available cash.
+- Keep project, milestone, acting identity and environment around consequential actions.
+- Preserve review, Back, evidence-version protection, explicit signing and receipts.
+- Keep failed or held outcomes unmistakably red/amber even beside chartreuse.
+- Do not add fabricated performance, unrelated construction imagery, or autonomous ledger-enforcement claims.
+- Do not restore the discarded blue-and-white palette or flatten every region into anonymous sections.

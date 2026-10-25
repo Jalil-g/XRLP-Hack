@@ -26,14 +26,14 @@ export function MoneyMap({ nodes }: { nodes: MoneyNode[] }) {
   }, [nodes]);
 
   return (
-    <ol className="grid items-stretch gap-2" style={{ gridTemplateColumns: nodes.map(() => "minmax(0,1fr)").join(" 24px ") }} aria-label="Money map">
+    <ol className="money-map grid items-stretch gap-2" style={{ gridTemplateColumns: nodes.map(() => "minmax(0,1fr)").join(" 24px ") }} aria-label="Money map">
       {nodes.flatMap((n, i) => [
         ...(i > 0 ? [<ChevronRight key={`arrow-${n.key}`} className="size-5 self-center justify-self-center text-ink-3" aria-hidden />] : []),
         <li
           key={n.key}
           className={cn(
-            "rounded-panel px-4 py-3.5 transition-colors duration-700 ease-out",
-            flash[n.key] ? (n.tone === "pass" ? "bg-pass-bg" : "bg-info-bg") : "bg-band",
+            "rounded-panel border border-line px-4 py-5 transition-colors duration-700 ease-out",
+            flash[n.key] ? (n.tone === "pass" ? "bg-pass-bg" : "bg-info-bg") : "bg-surface",
           )}
         >
           <p className="text-caption text-ink-2">{n.label}</p>

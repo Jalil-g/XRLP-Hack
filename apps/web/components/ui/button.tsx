@@ -3,13 +3,13 @@ import { cn } from "@/lib/utils";
 
 const variants = {
   primary: "bg-action text-white hover:bg-action-hover active:bg-action-press",
-  secondary: "bg-band text-ink hover:bg-band-2",
+  secondary: "border border-line-2 bg-surface text-ink hover:bg-band",
   quiet: "text-link hover:bg-band",
   danger: "bg-band text-fail hover:bg-fail-bg",
 } as const;
 
 const sizes = {
-  sm: "min-h-11 sm:min-h-9 px-3 text-caption font-medium gap-1.5",
+  sm: "min-h-11 px-3 text-caption font-medium gap-1.5",
   md: "min-h-11 px-4 text-small font-medium gap-2",
   lg: "min-h-11 px-5 py-2 text-body font-medium gap-2",
 } as const;

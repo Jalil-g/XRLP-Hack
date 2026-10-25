@@ -28,7 +28,7 @@ export function Checklist({
         const needsNote = entry.status && entry.status !== "done";
         const missing = showErrors && (!entry.status || (needsNote && !entry.note.trim()));
         return (
-          <li key={line.code} id={`checklist.${line.code}`} className={cn("space-y-2.5 py-4", missing && "bg-bad-bg/60")}>
+          <li key={line.code} id={`checklist.${line.code}`} className={cn("space-y-3 px-5 py-5 sm:px-6", missing && "bg-bad-bg/60")}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-small font-semibold">
@@ -62,17 +62,22 @@ export function Checklist({
                 ))}
               </ul>
             )}
-            <input
+            <label className="block space-y-2">
+              <span className="text-caption font-medium">{needsNote ? "Explain your finding (required)" : "Observation note (optional)"}</span>
+              <input
               type="text"
               value={entry.note}
               onChange={(e) => onChange(line.code, { ...entry, note: e.target.value })}
               placeholder={needsNote ? `Required: what is ${entry.status === "partial" ? "missing" : "not done"}?` : "Note (optional)"}
               aria-label={`${line.code} note`}
+              aria-invalid={Boolean(missing && needsNote)}
+              required={Boolean(needsNote)}
               className={cn(
                 "min-h-11 w-full rounded-control border bg-surface px-3 py-1.5 text-small placeholder:text-faint focus:ring-2 focus:border-brand",
                 missing && needsNote ? "border-bad" : "border-line",
               )}
-            />
+              />
+            </label>
           </li>
         );
       })}
