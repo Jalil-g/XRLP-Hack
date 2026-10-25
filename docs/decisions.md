@@ -34,7 +34,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   and builder capability; inspectors only when the AI escalates (`needs_human` → pre-construction site visit). `VERIFIED_BUILDER` on first pass. (Jalil)
 - [10-24] **Schedule of Values** (AIA G702/G703) defines milestones for any project size; residential templates are pre-filled SoVs. Demo = Maple St. (Jalil)
 - [10-24] **Inspector assignment fully automated by AI** from a verified panel (`VERIFIED_INSPECTOR`), at lock-terms. Roadmap: robots/sensors through the same signed-audit interface. (Jalil)
-- [10-24] **No hardware-wallet (Ledger device) work.** Software inspector key; `packages/ledger-signer` keeps the interface. (Jalil)
+- [10-24] **No hardware-wallet (Ledger device) work.** Software inspector key; `packages/ledger-signer` keeps the interface (→ renamed `packages/attest-signer`, device code removed, INS-04). (Jalil)
 - [10-24] Sponsor stance: Lending & Borrowing track; AWS only as Bedrock provider swap if confirmed at booth; no Quicknode (no devnet), no Mastercard AP4M. (Jalil)
 - [10-24] Marketplace framing kept: KYC'd investors choose verified projects; institutional lender = same rail, one depositor. (Jalil)
 - [10-24] **Name: Drawproof.** (Jalil)
