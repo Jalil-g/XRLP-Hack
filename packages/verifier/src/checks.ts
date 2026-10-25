@@ -154,6 +154,10 @@ export function checkNoDuplicatePhoto(
   const warns: string[] = [];
   const failIds = new Set<string>();
   const warnIds = new Set<string>();
+  const validHash = (hash: string | undefined): hash is string => !!hash && /^[0-9a-f]{16}$/i.test(hash);
+  for (const old of others.filter((p) => p.evidence.kind === "photo" && p.evidence.meta?.perceptualHash && !validHash(p.evidence.meta.perceptualHash))) {
+    warns.push(`Prior photo ${old.evidence.filename} has an invalid perceptual hash; reprocessing required`);
+  }
   const where = (p: PriorEvidence) =>
     p.projectId === "unknown"
       ? "previously submitted evidence"
@@ -184,7 +188,7 @@ export function checkNoDuplicatePhoto(
         continue;
       }
       const oh = o.evidence.meta?.perceptualHash;
-      if (!oh || !p.meta.perceptualHash) continue;
+      if (!validHash(oh) || !validHash(p.meta.perceptualHash)) continue;
       const d = hammingDistance(p.meta.perceptualHash, oh);
       if (d <= failD) {
         fails.push(`${name(p)} is a re-used copy of ${o.evidence.filename} from ${where(o)} (perceptual distance ${d}/64)`);
