@@ -1,6 +1,7 @@
 // Offline: XRPL-13b atomic escrows in the close path + recovery (resumeEscrowCreation).
-// Recorded devnet data: test/fixtures/batch-*.json + history-xrpl13.json (scripts/capture-batch-fixtures.ts), from the
-// XRPL-13 spike (docs/xrpl-protocol-notes.md §2d): a rolled-back Batch (C) and an applied 3 × EscrowCreate Batch (E2).
+// Recorded devnet data (scripts/capture-batch-fixtures.ts): from the XRPL-13 spike (docs/xrpl-protocol-notes.md §2d) a
+// rolled-back Payment Batch (C), an applied 3 × EscrowCreate Batch (E2) and its SPV's history; from the XRPL-13b spike
+// (§2e) the rolled-back 3 × EscrowCreate Batch of project B (the SPV's RLUSD line was frozen after LoanSet).
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -24,7 +25,6 @@ import {
   type AtomicMilestone,
   type BatchResult,
   type InnerLookup,
-  type InnerResult,
   type SubmitBatchParams,
 } from "../src/batch.ts";
 import type { TxResult } from "../src/client.ts";
@@ -162,15 +162,22 @@ test("batch path: a malformed or duplicate condition, bad CancelAfter or amount 
 
 // ---------------------------------------------------------------- rollback detection
 
-test("recorded rollback: outer tesSUCCESS, but no inner tx in the Batch's own ledger (searched_all) → rolled_back", () => {
-  const r = batchResultFrom(fixture("batch-payments-rolled-back.json"));
-  assert.equal(r.tx.result, "tesSUCCESS");
-  assert.deepEqual(r.inners.map((i) => i.result), ["not_applied", "not_applied"]);
-  assert.equal(r.outcome, "rolled_back");
-  assert.equal(r.allApplied, false);
-  // The outer metadata alone can't tell: it only touches the outer account (fee + Sequence), applied or not.
-  assert.equal((r.tx.meta.AffectedNodes as unknown[]).length, 1);
+test("recorded rollbacks: outer tesSUCCESS, but no inner tx in the Batch's own ledger (searched_all) → rolled_back", () => {
+  for (const [name, n] of [["batch-payments-rolled-back.json", 2], ["batch-escrows-rolled-back.json", 3]] as const) {
+    const r = batchResultFrom(fixture(name));
+    assert.equal(r.tx.result, "tesSUCCESS", name);
+    assert.deepEqual(r.inners.map((i) => i.result), Array(n).fill("not_applied"), name);
+    assert.equal(r.outcome, "rolled_back", name);
+    assert.equal(r.allApplied, false, name);
+    // The outer metadata alone can't tell: it only touches the outer account (fee + Sequence), applied or not.
+    assert.equal((r.tx.meta.AffectedNodes as unknown[]).length, 1, name);
+  }
   assert.equal((batchResultFrom(applied).tx.meta.AffectedNodes as unknown[]).length, 1);
+  // The rolled-back escrow Batch consumed only the outer Sequence; its inners' Sequences stayed free.
+  const rb = fixture("batch-escrows-rolled-back.json").outer;
+  const acct = rb.meta.AffectedNodes[0].ModifiedNode;
+  assert.equal(acct.FinalFields.Sequence - acct.PreviousFields.Sequence, 1);
+  assert.deepEqual(rb.tx_json.RawTransactions.map((x: Json) => x.RawTransaction.Sequence), [rb.tx_json.Sequence + 1, rb.tx_json.Sequence + 2, rb.tx_json.Sequence + 3]);
 });
 
 test("recorded applied escrow Batch: inners tesSUCCESS with ParentBatchID; escrows come from each inner's metadata", () => {
@@ -203,26 +210,26 @@ test("constructed metadata: incomplete search / foreign ParentBatchID / other le
   assert.equal(batchOutcome([]), "unknown");
 });
 
-/** The recorded escrow Batch with every inner lookup turned into "not found, searched_all": a constructed rollback. */
-function rolledBackEscrowBatch(): BatchResult {
-  const r = batchResultFrom(applied);
-  const inners: InnerResult[] = r.inners.map(({ hash, explorerUrl, transactionType, account, sequence }) => ({ hash, explorerUrl, transactionType, account, sequence, result: "not_applied" }));
-  return { ...r, inners, allApplied: false, outcome: "rolled_back" };
-}
-
-test("rollback in batch mode → BatchNotAppliedError → CloseLoanPartialError with every milestone pending", async () => {
-  const rolled = rolledBackEscrowBatch();
+test("recorded escrow-Batch rollback → BatchNotAppliedError → CloseLoanPartialError with every milestone pending", async () => {
+  const rec = fixture("batch-escrows-rolled-back.json");
+  const rolled = batchResultFrom(rec);
+  const raw = (rec.outer.tx_json.RawTransactions as Json[]).map((r) => r.RawTransaction as Json);
+  const spv: string = rec.outer.tx_json.Account;
+  const milestones: AtomicMilestone[] = raw.map((t, i) => ({ milestoneId: `m${i + 1}`, amount: t.Amount.value, condition: t.Condition, cancelAfter: t.CancelAfter }));
+  const planned: PlannedEscrow[] = milestones.map((m, index) => ({ ...m, index }));
   let prepared: { hash: string; lastLedgerSequence: number } | undefined;
+  let signed: SubmitBatchParams | undefined;
   const err = await createEscrowsAtomic({
-    spv: SPV,
-    builder: BUILDER,
-    issuer: ISSUER,
-    milestones: recordedMilestones,
+    spv,
+    builder: raw[0]!.Destination,
+    issuer: raw[0]!.Amount.issuer,
+    milestones,
     spvSigners: quorum,
     onPrepared: (b) => (prepared = b),
     deps: {
       submitBatch: async (p) => {
-        p.onPrepared?.({ hash: rolled.tx.hash, lastLedgerSequence: 6391591, batch: {} as Batch });
+        signed = p;
+        p.onPrepared?.({ hash: rolled.tx.hash, lastLedgerSequence: rec.outer.tx_json.LastLedgerSequence, batch: {} as Batch });
         return rolled;
       },
     },
@@ -233,17 +240,19 @@ test("rollback in batch mode → BatchNotAppliedError → CloseLoanPartialError 
   assert.ok(err instanceof BatchNotAppliedError && err instanceof XrplTxError);
   assert.equal(err.engineResult, "inner_failed");
   assert.equal(err.hash, rolled.tx.hash);
-  assert.match(err.message, /EscrowCreate#6391539=not_applied.*outcome rolled_back \(tfAllOrNothing: nothing applied\)/);
+  assert.match(err.message, new RegExp(`EscrowCreate#${raw[0]!.Sequence}=not_applied.*outcome rolled_back \\(tfAllOrNothing: nothing applied\\)`));
   assert.equal(isUncertainSubmitFailure(err), false, "a validated rollback is definite");
+  // What was signed = what the recorded Batch carried (same inner EscrowCreates, in milestone order).
+  assert.deepEqual(signed!.inners.map((t) => (t as { Condition?: string }).Condition), raw.map((t) => t.Condition));
 
-  const pe = closePartialError({ loanId: "LOAN", loanSetTx: "AB".repeat(32), created: [], failure: err, context: { spv: SPV, builder: BUILDER, issuer: ISSUER, escrowMode: "batch", planned: recordedPlanned }, ...(prepared ? { prepared } : {}) });
+  const pe = closePartialError({ loanId: "LOAN", loanSetTx: "AB".repeat(32), created: [], failure: err, context: { spv, builder: raw[0]!.Destination, escrowMode: "batch", planned }, ...(prepared ? { prepared } : {}) });
   assert.ok(pe instanceof CloseLoanPartialError && pe instanceof LedgerError);
   assert.equal(pe.code, "ledger_error");
   assert.deepEqual(pe.pending, ["m1", "m2", "m3"]);
   assert.deepEqual(pe.created, []);
   assert.equal(pe.txResult, "inner_failed");
   assert.equal(pe.txHash, rolled.tx.hash);
-  assert.deepEqual(pe.context?.batch, { hash: rolled.tx.hash, lastLedgerSequence: 6391591, ledgerIndex: 6391573, outcome: "rolled_back" });
+  assert.deepEqual(pe.context?.batch, { hash: rolled.tx.hash, lastLedgerSequence: rec.outer.tx_json.LastLedgerSequence, ledgerIndex: rec.outer.ledger_index, outcome: "rolled_back" });
   assert.equal(pe.context?.uncertain, undefined);
   assert.match(pe.message, /loan LOAN.*the EscrowCreate Batch for milestones \[m1, m2, m3\] did not apply.*pending: \[m1, m2, m3\]\. Recover with resumeEscrowCreation/);
 });
