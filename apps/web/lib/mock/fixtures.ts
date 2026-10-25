@@ -392,11 +392,11 @@ export function seed(): { db: MockDb; script: MockScript } {
     (attestations[m.id] ??= []).push({ milestoneId: m.id, role: "inspector", kind: "audit", hash: fakeHash(`audit:${m.id}`).toLowerCase(), signer: insp.address, decision: "approve", notes, txHash: ce.txHash, at });
   };
   /** Records a played-back pass + release (history for B and C). */
-  const released = (p: Project, m: Milestone, builderAddr: XrplAddress, at: string, result: ChecksStatus) => {
+  const released = (p: Project, m: Milestone, at: string, result: ChecksStatus) => {
     checks[m.id] = result;
     const v = push({ projectId: p.id, milestoneId: m.id, kind: "verdict_attested", actor: AI_AGENT.address, at });
     (attestations[m.id] ??= []).push({ milestoneId: m.id, role: "ai_agent", kind: "verdict", hash: fakeHash(`verdict:${m.id}`).toLowerCase(), signer: AI_AGENT.address, decision: "approve", notes: result.verdict?.summary ?? "", txHash: v.txHash, at });
-    const fin = push({ projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: builderAddr, amount: m.amount, at });
+    const fin = push({ projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: RELEASE_SERVICE.address, amount: m.amount, at });
     (attestations[m.id] ??= []).push({ milestoneId: m.id, role: "release_service", kind: "release", hash: fakeHash(`release:${m.id}`).toLowerCase(), signer: RELEASE_SERVICE.address, decision: "approve", notes: "Suite green; escrow finished", txHash: fakeHash(`att-release:${m.id}`), at });
     m.status = "released";
     m.escrow!.finishTx = fin.txHash;
@@ -541,7 +541,7 @@ export function seed(): { db: MockDb; script: MockScript } {
     { sovCode: "02-410", status: "done" },
     { sovCode: "22-050", status: "done" },
   ], [], "Rough-in passed town inspection Sep 9.");
-  released(birch, bm1, CATSKILL.address, iso("2026-09-10T14:20:00Z"), genericPassFor(birch, bm1, iso("2026-09-10T14:19:00Z")));
+  released(birch, bm1, iso("2026-09-10T14:20:00Z"), genericPassFor(birch, bm1, iso("2026-09-10T14:19:00Z")));
   checks[bm2.id] = pending();
 
   // ======================================================== C · Oak Ave Townhouse (repaid, redemption open)
@@ -583,7 +583,7 @@ export function seed(): { db: MockDb; script: MockScript } {
       }),
     ];
     audit(oak, m, MARCUS, at, (oak.sov ?? []).filter((l) => (m.sovCodes ?? []).includes(l.code)).map((l) => ({ sovCode: l.code, status: "done" as const })), [], "Complete per plans.");
-    released(oak, m, RIDGELINE.address, at, genericPassFor(oak, m, at));
+    released(oak, m, at, genericPassFor(oak, m, at));
   });
   push({ projectId: oak.id, kind: "loan_payment", actor: oak.chain.spv, amount: "96480.00", at: iso("2026-10-06T15:00:00Z") });
 

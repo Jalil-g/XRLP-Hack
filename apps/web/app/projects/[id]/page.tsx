@@ -8,13 +8,14 @@ import { Activity } from "@/components/project/activity";
 import { EvidenceStrip } from "@/components/project/evidence-strip";
 import { InvestDialog } from "@/components/project/invest-dialog";
 import { MilestoneTabs } from "@/components/project/milestone-tabs";
+import { MoneyMap } from "@/components/project/money-map";
 import { SovTable } from "@/components/project/sov-table";
 import { PageHeader, Properties, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { LOCKED_MILESTONE_V2 } from "@xrlp/shared";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, VAULT_PHASE, focusMilestone, namer } from "@/lib/display";
+import { PROJECT_STATUS, VAULT_PHASE, focusMilestone, namer, roleNamer } from "@/lib/display";
 import { getSession } from "@/lib/session";
 import { formatAmount, formatBps, formatDate, fromCents, toCents } from "@/lib/utils";
 
@@ -113,6 +114,35 @@ export default async function ProjectPage({ params, searchParams }: Props) {
         )}
       </section>
 
+      {d.vault && (
+        <Section title="Where the money is" aside="Moves only by ledger transactions">
+          <MoneyMap
+            nodes={[
+              {
+                key: "vault",
+                label: "Vault",
+                amount: d.vault.assetsAvailable,
+                note: p.chain.loanId ? `available · ${formatAmount(d.vault.assetsTotal)} RLUSD total` : "deposits waiting for the loan to close",
+              },
+              { key: "spv", label: "Project account", amount: d.balances?.spv ?? "0", note: "3 of 4 signers · holds ≈ 0 by design" },
+              {
+                key: "escrows",
+                label: "Milestone escrows",
+                amount: fromCents(sum(LOCKED_MILESTONE_V2 as Milestone["status"][])),
+                note: `${p.milestones.filter((m) => (LOCKED_MILESTONE_V2 as readonly string[]).includes(m.status)).length} locked · pay the builder or go back`,
+              },
+              {
+                key: "builder",
+                label: builder.name,
+                amount: fromCents(sum(["released"])),
+                note: d.balances ? `received · balance ${formatAmount(d.balances.builder)} RLUSD` : "received from escrows",
+                tone: "pass",
+              },
+            ]}
+          />
+        </Section>
+      )}
+
       <div className="grid gap-12 border-t border-line pt-10 md:grid-cols-3">
         <Section title="Loan">
           <Properties
@@ -156,7 +186,6 @@ export default async function ProjectPage({ params, searchParams }: Props) {
                 value: d.inspectors.length ? <Val main={d.inspectors.map((i) => i.name).join(", ")} note="Assigned by the AI when terms locked" /> : <Val main="Not assigned yet" note="The AI assigns one when terms lock" />,
               },
               { label: "Releases", value: <Val main="Decided by the checks" note="Escrows pay the builder or go back" /> },
-              ...(d.balances ? [{ label: "Builder balance", value: <Val main={`${formatAmount(d.balances.builder)} RLUSD`} note={builder.name} /> }] : []),
             ]}
           />
         </Section>
@@ -170,21 +199,9 @@ export default async function ProjectPage({ params, searchParams }: Props) {
 
       <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_340px]">
         <Section title="Activity" aside="Every line is an XRPL transaction">
-          <Activity events={d.events} who={who} milestoneTitle={title} limit={14} />
+          <Activity events={d.events} who={who} roleOf={roleNamer(session.parties)} builderName={builder.name} milestoneTitle={title} limit={14} />
         </Section>
         <aside className="space-y-10">
-          {p.chain.loanId && (
-            <Section title="Where the money is">
-              <Properties
-                labelWidth={140}
-                items={[
-                  { label: "Locked in escrow", value: <span className="tabular">{formatAmount(fromCents(sum(LOCKED_MILESTONE_V2 as Milestone["status"][])))} RLUSD</span> },
-                  { label: "Released", value: <span className="tabular">{formatAmount(fromCents(sum(["released"])))} RLUSD</span> },
-                  { label: "Returned", value: <span className="tabular">{formatAmount(fromCents(sum(["refunded"])))} RLUSD</span> },
-                ]}
-              />
-            </Section>
-          )}
           <Section title="Builder">
             <Properties
               labelWidth={140}

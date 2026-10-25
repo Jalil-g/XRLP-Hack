@@ -140,7 +140,8 @@ function release(db: MockDb, p: Project, m: Milestone): { events: ChainEvent[]; 
     txHash: fakeHash(`att-release:${m.id}:${at}`),
     at,
   });
-  const fin = emit(db, { projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: b.address, amount: m.amount });
+  // The release service submits the finish; the builder is the escrow's fixed destination.
+  const fin = emit(db, { projectId: p.id, milestoneId: m.id, kind: "escrow_finished", actor: RELEASE_SERVICE.address, amount: m.amount });
   m.status = "released";
   if (m.escrow) m.escrow.finishTx = fin.txHash;
   addBalance(db, b.address, toCents(m.amount));
