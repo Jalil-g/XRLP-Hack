@@ -445,7 +445,7 @@ describe("CORE-07 devnet route 21 (stub ledger)", () => {
 
     const r2 = await svc.runChecks(fa.projectId, m2!.id); // IMG_2231.jpg re-uploaded from Project C
     assert.equal(r2.verdict.decision, "fail");
-    assert.ok(r2.verdict.checks.some((c) => c.check === "no_duplicate_photo" && c.result === "fail" && /IMG_2231.jpg matches .* from project ps-r1-c/.test(c.reason)));
+    assert.ok(r2.verdict.checks.some((c) => c.check === "no_duplicate_photo" && c.result === "fail" && /IMG_2231.jpg matches .* from project Elm St ADU /.test(c.reason)));
 
     const steal = await svc.tryStealDemo(fa.projectId, m2!.id);
     assert.equal(steal.result, "tecCRYPTOCONDITION_ERROR");
