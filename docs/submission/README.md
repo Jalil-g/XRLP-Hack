@@ -1,12 +1,16 @@
 # Drawproof
 
+> **Adopted pitch (2026-10-25):** [six-slide storyline](../08-pitch-storyline.md), [100-second recorded demo](../04-demo-script.md), [deck style guide](../ideas/pitch-3min-style-guide.md), and [Claude PowerPoint prompts](../ideas/pitch-3min-claude-prompts.md). These supersede older presentation timing and slide numbers below.
+
+Presentation deliverables: exactly six slides and a 100-second primary demo video. The deck and MP4 have not yet been produced by the documentation update; prompts and specifications are ready. Add real artifact links below after production.
+
 **Construction money that moves only when the building does.**
 XRPL Lending & Borrowing track · AI & Fintech XRPL Hackathon NYC, Oct 24–25 2026 · devnet prototype, not an offer to invest.
 
 | | |
 |---|---|
 | Code | https://github.com/Jalil-g/XRLP-Hack |
-| Demo video (≤ 3 min) | TODO(PITCH-08) |
+| Primary demo video (100 s) | TODO(PITCH-08) |
 | Pitch deck | TODO(PITCH-06) |
 | Every XRPL primitive we use: code + devnet proof | [xrpl-primitives.md](xrpl-primitives.md) |
 | What we don't claim | [what-we-dont-claim.md](what-we-dont-claim.md) |
@@ -19,8 +23,7 @@ pays to have a project verified (AI-first, with a licensed inspector when the AI
 project's native XRPL Vault. The Lending Protocol lends the principal to a project account that no single party controls, and that account
 immediately locks each milestone's money in its own escrow, which can only ever pay **this builder** or go back. Every milestone has a
 **test suite**: a licensed inspector's signed site audit plus the AI's checks over the builder's evidence. All required checks green → the
-escrow releases in seconds. One red → the money stays locked, and everyone can see which check failed. Every ledger step is a real
-devnet transaction with an explorer link.
+escrow releases in seconds. One red → the money stays locked, and everyone can see which check failed. The recording must disclose its actual ledger and verifier modes; real devnet transactions have explorer links, while fixtures and mock judgments remain labeled.
 
 ## Problem
 
@@ -119,7 +122,7 @@ pnpm --filter @xrlp/verifier demo       # the test suite over the Maple St fixtu
 ```bash
 pnpm --filter @xrlp/xrpl bootstrap      # 12 faucet-funded roles, mock RLUSD, credentials; idempotent (2nd run: 0 tx)
 pnpm --filter @xrlp/xrpl demo           # full money path, ~6 min: private vault, broker, cover, 3-of-4 LoanSet, escrows in one Batch, finish, cancel, refund
-pnpm --filter @xrlp/xrpl prestage       # stage projects A ready / B stalled / C repaid for the live demo (~13 min) → .data/prestage.json
+pnpm --filter @xrlp/xrpl prestage       # stage projects A ready / B stalled / C repaid for recording or an extended walkthrough (~13 min) → .data/prestage.json
 pnpm --filter @xrlp/xrpl compliance     # 3 credential types, domain + private vault, tecNO_AUTH, fee, attestations
 pnpm --filter @xrlp/xrpl spike:escrow   # tecCRYPTOCONDITION_ERROR, tecNO_LINE leak vs preflight refusal, tecNO_PERMISSION
 pnpm --filter @xrlp/xrpl spike:loanset  # 3-of-4 countersigned LoanSet, tecNO_PERMISSION, tecTOO_SOON

@@ -10,7 +10,9 @@ an XRPL Vault per project, the Lending Protocol lends to a per-project multisig 
 XRPL escrow released only when the milestone's **test suite** passes: a licensed inspector's signed audit + the AI's checks.
 
 Read in order: `docs/00-overview.md` → `docs/decisions.md` (**Direction v2**) → `docs/02-product.md` → `docs/03-architecture.md` →
-`docs/05-api.md` → your lane in `docs/06-tickets.md` → `docs/04-demo-script.md`. Launch steps: `docs/09-agent-launch.md`.
+`docs/05-api.md` → your lane in `docs/06-tickets.md` → `docs/08-pitch-storyline.md` (canonical six-slide, three-minute pitch) → `docs/04-demo-script.md` (100-second recording).
+Deck production: `docs/ideas/pitch-3min-style-guide.md` + `docs/ideas/pitch-3min-claude-prompts.md`.
+Shared visual direction for Brian and Roro: `docs/ideas/shared-frontend-style.md`. Launch steps: `docs/09-agent-launch.md`.
 
 ## Repo layout & ownership
 

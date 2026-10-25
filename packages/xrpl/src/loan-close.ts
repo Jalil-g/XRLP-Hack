@@ -4,9 +4,9 @@
 // XRPL-13b: escrow mode (one all-or-nothing Batch vs one EscrowCreate per milestone), the format gate batch.ts runs
 // before signing, the partial-close context, and the pure planner + ledger parsers behind resumeEscrowCreation.
 import { LedgerError } from "@xrlp/shared";
-import { isoTimeToRippleTime, rippleTimeToISOTime } from "xrpl";
+import { isoTimeToRippleTime, isValidClassicAddress, rippleTimeToISOTime } from "xrpl";
 import type { BatchOutcome } from "./batch.ts";
-import { normalizeCondition, PREIMAGE_CONDITION_RE } from "./condition.ts";
+import { describeConditionInput, normalizeCondition, PREIMAGE_CONDITION_RE } from "./condition.ts";
 import { LOANSET_REDEMPTION_MARGIN_S, toMicro } from "./lending-math.ts";
 import { toPlainDecimal } from "./reads.ts";
 
@@ -121,9 +121,37 @@ export class CloseValidationError extends Error {
 function conditionProblem(raw: unknown): string | undefined {
   if (raw == null) return "missing condition";
   if (typeof raw !== "string" || !PREIMAGE_CONDITION_RE.test(normalizeCondition(raw))) {
-    return `condition is not a 32-byte PREIMAGE-SHA-256 condition (A0258020<64 hex>810120, 78 hex chars): ${JSON.stringify(String(raw).slice(0, 90))}`;
+    return `condition is not a 32-byte PREIMAGE-SHA-256 condition (A0258020<64 hex>810120, 78 hex chars); got ${describeConditionInput(raw)}`;
   }
   return undefined;
+}
+
+/**
+ * Pure (security review M5): why `destination` must not receive the milestone escrows. The destination is fixed at
+ * EscrowCreate and every release pays it, so it is checked before the LoanSet: a classic address, not the SPV or the
+ * RLUSD issuer, not another known role's key (`otherRoles`: role → address), and, when the SPV's on-ledger signer list
+ * is given, one of its signers (the project's builder is one of the four). `exists: false` = no such account (tecNO_DST).
+ */
+export function escrowDestinationProblems(p: {
+  destination: unknown;
+  spv: string;
+  issuer?: string;
+  otherRoles?: Record<string, string>;
+  spvSigners?: string[];
+  exists?: boolean;
+}): string[] {
+  const d = p.destination;
+  if (typeof d !== "string" || !isValidClassicAddress(d)) {
+    return [`escrow destination is not a classic XRPL address (${typeof d === "string" ? `${d.length} chars` : typeof d}; value not echoed)`];
+  }
+  const issues: string[] = [];
+  if (d === p.spv) issues.push(`escrow destination ${d} is the SPV itself`);
+  if (p.issuer && d === p.issuer) issues.push(`escrow destination ${d} is the RLUSD issuer`);
+  const role = Object.entries(p.otherRoles ?? {}).find(([, a]) => a === d)?.[0];
+  if (role) issues.push(`escrow destination ${d} is the ${role} key, not the builder`);
+  if (p.spvSigners && !p.spvSigners.includes(d)) issues.push(`escrow destination ${d} is not on the SPV's signer list (the project's builder is one of its signers)`);
+  if (p.exists === false) issues.push(`escrow destination ${d} is not an account on the ledger (EscrowCreate would fail tecNO_DST after the LoanSet)`);
+  return issues;
 }
 
 /** Why `amount` is not a positive RLUSD amount with ≤ 6 decimals, or undefined. */

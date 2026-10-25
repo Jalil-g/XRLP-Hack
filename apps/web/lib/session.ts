@@ -1,7 +1,7 @@
 // Demo "session": which role and identity the presenter is acting as. Cookies set by the header role switcher. No auth.
 import { cookies } from "next/headers";
 import { api } from "./api";
-import type { Builder, Party } from "./contract";
+import { loadDirectory } from "./directory";
 
 export type Role = "investor" | "builder" | "platform";
 export const ROLES: Role[] = ["investor", "builder", "platform"];
@@ -9,13 +9,14 @@ export const SESSION_COOKIES = { role: "dp_role", investor: "dp_investor", build
 
 export async function getSession() {
   const jar = await cookies();
-  // Never throw from the layout: if core is down, pages show the error, the header just has no identities.
-  const [parties, builders] = await Promise.all([api.listParties().catch(() => [] as Party[]), api.listBuilders().catch(() => [] as Builder[])]);
+  // Keep the layout usable on failure; the header warns and pages distinguish unavailable from empty.
+  const { parties, builders, directoryUnavailable } = await loadDirectory(api);
   const investors = parties.filter((p) => p.role === "investor");
   const roleCookie = jar.get(SESSION_COOKIES.role)?.value as Role | undefined;
   const investorId = jar.get(SESSION_COOKIES.investor)?.value;
   const builderId = jar.get(SESSION_COOKIES.builder)?.value;
   return {
+    directoryUnavailable,
     role: roleCookie && ROLES.includes(roleCookie) ? roleCookie : ("investor" as Role),
     investor: investors.find((p) => p.address === investorId) ?? investors[0],
     builder: builders.find((b) => b.id === builderId) ?? builders[0],

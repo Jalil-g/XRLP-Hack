@@ -98,6 +98,17 @@ type LoanSnapshot = { principalOutstanding: Rlusd; totalValueOutstanding: Rlusd;
 - Status enums are a **superset** during migration: `MilestoneStatus` still accepts `ai_reviewed | inspected | rejected`
   (`LEGACY_MILESTONE_STATUSES`, deprecated). New code uses `MILESTONE_STATUSES_V2` and `MILESTONE_TRANSITIONS_V2` /
   `PROJECT_TRANSITIONS_V2` from `packages/shared/src/states.ts`. Legacy values are removed once core (CORE-03) and web stop emitting them.
+- **v2.1 (#133), all additive:**
+  - `LedgerError.code` adds `not_found` and `validation`, so caller mistakes become 404/400 instead of 502.
+  - Optional `defaultLoan({ project }) → LoanDefaultResult` (`defaultAmount`, `defaultCovered`, `vaultLoss`, `alreadyDefaulted`).
+  - Optional `impairLoan({ project, action })`.
+  - `TxResult.preceding?`: e.g. the builder→SPV Payment that a builder-sourced `repayLoan` submits before the LoanPay.
+  - `VaultSnapshot.lossUnrealized?` and `withdrawableSharePrice?`.
+  - New ChainEvent kinds:
+    - `release_attested`, which replaces `approval_attested` for releases.
+    - `loan_impaired`.
+    - `builder_payment`.
+  - `LoanSnapshot.nextPaymentDueDate` stays required; `""` means the loan is paid off.
 
 ```ts
 interface LedgerPort {

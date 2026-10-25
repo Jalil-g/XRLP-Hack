@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { ChevronDown } from "lucide-react";
 import type { Role } from "@/lib/session";
@@ -27,26 +27,27 @@ export function RoleSwitcher({
   identities: { cookie: "investor" | "builder"; current: string; options: { value: string; label: string }[] } | null;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [pending, start] = useTransition();
 
   return (
-    <div className={cn("flex items-center gap-2 transition-opacity", pending && "opacity-60")}>
-      <div className="flex rounded-full bg-band p-0.5" role="radiogroup" aria-label="Acting as">
+    <div className={cn("flex max-w-full flex-wrap items-center gap-2 transition-opacity", pending && "opacity-60")}>
+      <div className="flex rounded-full bg-band p-0.5" role="group" aria-label="Acting as">
         {ROLES.map((r) => (
           <button
             key={r.role}
-            role="radio"
-            aria-checked={r.role === role}
+            disabled={pending}
+            aria-pressed={r.role === role}
             onClick={() => {
               setCookie(COOKIE.role, r.role);
               start(() => {
-                router.push(r.home);
+                router.push(pathname.startsWith("/projects/") ? `${pathname}${window.location.search}` : r.home);
                 router.refresh();
               });
             }}
             className={cn(
-              "h-7 rounded-full px-3 text-caption font-medium transition-colors duration-150",
-              r.role === role ? "bg-page text-ink shadow-[0_1px_2px_rgb(0_0_0/0.12)]" : "text-ink-2 hover:text-ink",
+              "min-h-10 rounded-full px-3 text-caption font-medium transition-colors duration-150",
+              r.role === role ? "bg-page text-ink" : "text-ink-2 hover:text-ink",
             )}
           >
             {r.label}
@@ -62,7 +63,7 @@ export function RoleSwitcher({
               setCookie(COOKIE[identities.cookie], e.target.value);
               start(() => router.refresh());
             }}
-            className="h-8 max-w-[200px] appearance-none truncate rounded-control bg-transparent pr-6 pl-2 text-caption font-medium text-ink hover:bg-band focus:outline-none"
+            className="h-11 max-w-[180px] appearance-none truncate rounded-control bg-transparent pr-6 pl-2 text-caption font-medium text-ink hover:bg-band"
           >
             {identities.options.map((o) => (
               <option key={o.value} value={o.value}>

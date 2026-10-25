@@ -169,6 +169,19 @@ export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErr
 export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
 export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
 export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
+// Pipelined submission (XRPL-17, opt-in: XRPL_PIPELINE=1 or setSubmitMode("pipelined", { window }))
+export {
+  setSubmitMode,
+  getSubmitMode,
+  resetSubmitMode,
+  submitModeFromEnv,
+  usePipeline,
+  pipelineState,
+  submitPipelined,
+  DEFAULT_PIPELINE_WINDOW,
+  MAX_PIPELINE_WINDOW,
+} from "./submit.ts";
+export type { SubmitMode, SubmitModeName, PipelineIo, PipelineEvent, PipelinePolicy, PipelineRequest, PipelineState } from "./submit.ts";
 // Shared v2 alignment (#53): LedgerError conversion for the LedgerPort adapter, shared EscrowSnapshot read,
 // ledger-pinned fetch primitives (used by preflight).
 export { toLedgerError, withLedgerErrors } from "./errors.ts";
@@ -287,3 +300,40 @@ export type {
   PrestageScenario,
   PrestagePreimagesFile,
 } from "./prestage-types.ts";
+// XRPL-16: stage readiness (GO / WARN / NO-GO per beat). Pure; the CLI is `pnpm --filter @xrlp/xrpl stage:check [--json]`.
+export {
+  evaluateStage,
+  renderStageReport,
+  renderFix,
+  mergeFixes,
+  summarizePreimages,
+  walletAddresses,
+  lockTermsCover,
+  stageBeatLabel,
+  STAGE_BEATS,
+  STAGE_BEAT_TITLES,
+  STAGE_DEFAULTS,
+  REQUIRED_AMENDMENTS,
+  PROVEN_RIPPLED_VERSION,
+  RELEASE_MARGIN_S,
+  DEVNET_NETWORK_ID,
+  AMENDMENTS_LEDGER_INDEX,
+  amendmentId,
+} from "./stage-check.ts";
+export type {
+  StageReport,
+  StageCheck,
+  StageBeat,
+  StageBeatResult,
+  StageStatus,
+  StageFix,
+  StageFixStep,
+  StageSnapshot,
+  StageNow,
+  StageOptions,
+  StageRole,
+  StageAccount,
+  StageProjectLedger,
+  StageDevnet,
+  StagePreimage,
+} from "./stage-check.ts";

@@ -1,0 +1,117 @@
+/* Drawproof design tokens. See DESIGN.md. Apple/Notion bar: quiet chrome, exact type, color only for state. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-page: #ffffff;
+  --color-band: #f5f5f7;
+  --color-band-2: #ebebef;
+  --color-ink: #1d1d1f;
+  --color-ink-2: #6e6e73;
+  --color-ink-3: #86868b;
+  --color-line: #e5e5ea;
+  --color-line-2: #d2d2d7;
+
+  --color-action: #0071e3;
+  --color-action-hover: #0066cc;
+  --color-action-press: #006edb;
+  --color-link: #0066cc;
+
+  --color-pass: #1a7f37;
+  --color-pass-bg: #e6f4ea;
+  --color-fail: #cf222e;
+  --color-fail-bg: #fdecea;
+  --color-review: #8a5a00;
+  --color-review-bg: #fdf3d7;
+  --color-review-icon: #bf8700;
+  --color-neutral: #57606a;
+  --color-neutral-bg: #f0f0f2;
+  --color-info: #0b5cad;
+  --color-info-bg: #e8f1fb;
+
+  --text-display: 2.5rem;
+  --text-display--line-height: 2.75rem;
+  --text-display--letter-spacing: -0.025em;
+  --text-display--font-weight: 600;
+  --text-title: 1.75rem;
+  --text-title--line-height: 2.125rem;
+  --text-title--letter-spacing: -0.02em;
+  --text-title--font-weight: 600;
+  --text-heading: 1.25rem;
+  --text-heading--line-height: 1.625rem;
+  --text-heading--letter-spacing: -0.01em;
+  --text-heading--font-weight: 600;
+  --text-body: 1.0625rem;
+  --text-body--line-height: 1.625rem;
+  --text-small: 0.9375rem;
+  --text-small--line-height: 1.375rem;
+  --text-caption: 0.8125rem;
+  --text-caption--line-height: 1.125rem;
+
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --radius-tag: 6px;
+
+  --shadow-overlay: 0 20px 48px -12px rgb(0 0 0 / 0.22), 0 4px 12px -4px rgb(0 0 0 / 0.08);
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-page font-sans text-body text-ink;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  ::selection {
+    background: #cfe3fb;
+    color: var(--color-ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-action);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+  a {
+    text-underline-offset: 3px;
+  }
+  input,
+  textarea,
+  select {
+    caret-color: var(--color-action);
+  }
+  * {
+    scrollbar-color: var(--color-line-2) transparent;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Respect user motion preferences across feedback and loading states. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+@layer base {
+  :where(button, a, input, textarea, select) { -webkit-tap-highlight-color: transparent; }
+  :where(input, textarea)::placeholder { color: var(--color-ink-2); opacity: 1; }
+  :where(h1, h2, h3, p, dd) { overflow-wrap: anywhere; }
+  :where(section, [id]) { scroll-margin-top: 8rem; }
+}
