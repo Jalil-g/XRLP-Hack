@@ -64,6 +64,10 @@ export interface VaultSnapshot {
   subscriptionDate: string;
   redemptionDate: string;
   phase: "subscription" | "investment" | "redemption";
+  /** Paper loss from impaired loans (Vault.LossUnrealized); "0" when none. */
+  lossUnrealized?: Rlusd;
+  /** What one share pays out on withdraw today: (assetsTotal - lossUnrealized) / shares. Below sharePrice while impaired. */
+  withdrawableSharePrice?: string;
 }
 
 export interface LoanSnapshot {
@@ -71,6 +75,7 @@ export interface LoanSnapshot {
   totalValueOutstanding: Rlusd;
   periodicPayment: Rlusd;
   paymentRemaining: number;
+  /** "" once the loan is paid off (rippled drops the field). Kept required: xrpl's prestage file types depend on it. */
   nextPaymentDueDate: string;
 }
 
