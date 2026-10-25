@@ -556,6 +556,85 @@ What devnet showed:
   test fixture (`packages/xrpl/test/fixtures/devnet-attest-decision-tx.json`): it decodes, re-encodes to the same hash, and its
   signature verifies offline. API v2 `tx` responses show `DeliverMax`, not `Amount`, for Payments.
 
+### 3c. XRPL-15 devnet results (loan default + first-loss cover)
+
+`pnpm --filter @xrlp/xrpl spike:default` (`packages/xrpl/scripts/spike-default.ts`, 2026-10-25 ~01:05 UTC, fresh faucet wallets, ~5 min).
+rippled 3.4.1, with `fixCleanup3_4_0` and `LendingProtocolV1_1` enabled (`feature`). Code: `packages/xrpl/src/default.ts`. Sources:
+[XLS-66] §3.10 (LoanManage), [XLS-66.2](https://github.com/XRPLF/XRPL-Standards/blob/master/XLS-0066-lending-protocol/66.2/README.md)
+(fixCleanup3_4_0 timing), [XLS-65] §3.1.7.1 (exchange rate), rippled 3.4.1 `src/libxrpl/tx/transactors/lending/LoanManage.cpp` and
+`ledger/helpers/LendingHelpers.cpp`. Setup: closed-ended vault (`AssetsMaximum` 1000); LoanBroker with `CoverRateMinimum 10000`,
+`CoverRateLiquidation 100000` and `ManagementFeeRate 10000`; cover 110.000043 (`defaultCoverDeposit`); investor deposit 1000; LoanSet
+1000 RLUSD @ 10 %, 3 × 60 s, `GracePeriod` 60 s, origination fee 15, to a single-key borrower that never pays. Loan `7C5B9880…`:
+start 01:07:11, `NextPaymentDueDate` 01:08:11, default allowed after 01:09:11.
+
+Accounts: platform `rYYkLCVeSK1naw4oTm51FJLQwsgyYJgfk` · borrower `r942XfTDKxrn1BABbz7PZLMs6euSjE3WaL` · investor `rNJokgMEG2fqfid1ncDxD2b2XJEs4xJCnr` ·
+outsider `rEhTvcWYJCLVqDKCvyo91aUSpEP4sdbDat` · issuer `rDCgHTF927ivi7X7PvBEyagzNZh9GnKhHR`
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | VaultCreate closed-ended, `AssetsMaximum` 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/F147A43213B91B754080AEBC8DA51A47530AAC7506A2117E1C10A42DD473E334 |
+| 2 | LoanBrokerSet `CoverRateMinimum 10000`, `CoverRateLiquidation 100000` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/04D8F46DEE906B2915FE7F6F837CFC8166DE0B04BB45A8F3DE6EB6C020F5EB96 |
+| 3 | LoanBrokerCoverDeposit 110.000043 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/8030908D2334D186A6DB8DC35DD1E20311D3E6EE9A3DDB78A4DBD6E9481A7D04 |
+| 4 | VaultDeposit investor 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/985C9A9550198BDB92CAC279BF9AEE53AC54863CC5A54C020927651DFF698018 |
+| 5 | LoanSet 1000, 3 × 60 s, grace 60 s (single-key borrower) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/93125ADE96C337219D97930BBDB6987B9434A7DCE1C0EFA08DE748F848E42A95 |
+| 6 | `defaultLoan` before due + grace | **`LoanManageTooSoonError`** (client-side, platform Sequence unchanged) | — (nothing submitted) |
+| 7 | `impairLoan` before the due date | **`LoanManageTooSoonError`** (client-side) | — (nothing submitted) |
+| 8 | LoanManage `tfLoanImpair` before the due date (`skipGuard`) | **`tecTOO_SOON`** | https://devnet.xrpl.org/transactions/01BFDAA50AFF725EEE2EFF07E7538670494695ABA31B4AC7AF055C0D55BD9EA1 |
+| 9 | LoanManage `tfLoanDefault` before due + grace (`skipGuard`) | **`tecTOO_SOON`** | https://devnet.xrpl.org/transactions/061B0C469FF995A7943C46BA828440C2F852F8DCB5C6EDA1B588FE1950C6773D |
+| 10 | `tfLoanImpair`, payment overdue: `LossUnrealized` 0 → 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/9BE6ECDC18D7E9151390C17353E850F55300346B01A71E7913A2E9145E3C79F5 |
+| 11 | `tfLoanUnimpair`: `LossUnrealized` 1000 → 0 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/7E7BF819E4B6BAC8BC7994688C7CD6BF8597616C6B1E73EB89B509964D251DE3 |
+| 12 | `tfLoanImpair` again | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A76BBC82DB9ACA325947AA4C1D2DC3A0963C736641EBCA06A2BDF79154C78A9A |
+| 13 | `defaultLoan` by a non-owner | **`LoanManageRefusedError`** `not_broker_owner` (client-side, Sequence unchanged) | — (nothing submitted) |
+| 14 | LoanManage `tfLoanDefault` by a non-owner, after due + grace (`skipGuard`) | **`tecNO_PERMISSION`** | https://devnet.xrpl.org/transactions/4043CEF58A5E721017FEB844236705804B4176C403E802EE3C9F780A88B21FBD |
+| 15 | **LoanManage `tfLoanDefault` by the platform**, after due + grace | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/B3A32FB9CFF5A7F015CE7C61972BA1DF18E2371E3715DE8443B93B1FA8946568 |
+| 16 | `defaultLoan` again | replay: `alreadyDefaulted`, same tx, 0 txs | (row 15) |
+| 17 | LoanPay 333.333461 (one periodic payment) after the default | **`tecKILLED`** | https://devnet.xrpl.org/transactions/DD914351CA868D89D1E350FFFF20A4354A0840053B34578EB885F62764062FF4 |
+| 18 | LoanManage `tfLoanUnimpair` on the defaulted loan (platform, `skipGuard`) | **`tecNO_PERMISSION`** | https://devnet.xrpl.org/transactions/36540BBE5C3557DCD88B1C184DD7BFCE3BB8A2AEE38E9F910A09D3DAA99E120A |
+
+The default (row 15), read from its metadata (`parseDefaultOutcome`; the tx is a test fixture, `test/fixtures/devnet-loan-default-tx.json`):
+
+| | before | after |
+|---|---|---|
+| Loan `PrincipalOutstanding` / `TotalValueOutstanding` | 1000 / 1000.000380515684 | removed (`Flags 0x70000` = overpayment + impaired + default, `PaymentRemaining` 0) |
+| LoanBroker `DebtTotal` | 1000 | 0 |
+| LoanBroker `CoverAvailable` | 110.000043 | 10.000043 → **DefaultCovered 100** |
+| Vault `AssetsTotal` | 1000 | 100 → **vault loss 900** |
+| Vault `AssetsAvailable` | 0 | 100 |
+| Vault `LossUnrealized` | 1000 (impaired) | 0 |
+| share price (`getVaultSnapshot`: AssetsTotal / shares) | 1 | **0.1** |
+| net share price (XLS-65 exchange rate, what a withdrawal pays) | 0 (impaired) | 0.1 |
+
+What devnet showed:
+- **DefaultCovered = 100, equal to `expectedDefaultCovered`.** The formula is `min(roundUp(min(DebtTotal × CoverRateMinimum × CoverRateLiquidation,
+  DefaultAmount), 10^LoanScale), CoverAvailable)`. Here that is `min(1000 × 10% × 100%, 1000, 110.000043) = 100`. Both rates are 1/10 bps (÷ 100000).
+  The vault loss plus the cover returned equals the exposure: 900 + 100 = 1000.
+- **Devnet vaults are cash basis, so a default writes off the principal only.** Every vault created under `LendingProtocolV1_1` has
+  `Vault.LEVersion = 1` (rippled `VaultVersion::CashBasis`). `DebtTotal` holds principal only (1000), and `AssetsTotal` never booked the
+  0.00038 of interest. So the default wrote off `PrincipalOutstanding` = 1000, not `TotalValueOutstanding − ManagementFeeOutstanding` =
+  1000.000342 as XLS-66 §3.10.5 says (rippled 3.4.1 `cash_basis::loanVaultExposure`). The cash-basis patch number, XLS-66.1.1, is reserved but not
+  published, so rippled's source is the spec here. The same rule is why share value rises only as interest is paid (§3, §3a).
+- **A default can draw at most 10% of `DebtTotal` at default time.** That is not 10% of the original principal, and not all the posted cover.
+  The 10.000043 left over stays in the broker for the platform (`LoanBrokerCoverWithdraw`). `DebtTotal` falls as principal is repaid, so
+  repaying escrow refunds before the default shrinks both the loss and the cover the default can draw. The cover moves between pseudo-accounts
+  (broker RippleState 110.000043 → 10.000043, vault 0 → 100); the platform's own RLUSD did not change in the default.
+- **Timing is exclusive** (fixCleanup3_4_0, XLS-66.2). Impair works only when ledger time > `NextPaymentDueDate` (row 8: `tecTOO_SOON`).
+  Default works only when ledger time > due + grace (row 9). Before the fix, a broker could impair early, which pulled the due date forward
+  to "now". On devnet, impair and unimpair both left `NextPaymentDueDate` at 01:08:11 (rows 10–12).
+- **Impair is a reversible paper loss:** `LossUnrealized` went 0 → 1000 → 0 → 1000. While the vault is impaired, the XLS-65 exchange rate (what a
+  withdrawal pays) is 0, but `getVaultSnapshot().sharePrice` (AssetsTotal / shares) still shows 1. → UI: on an impaired vault, show
+  `(AssetsTotal − LossUnrealized) / shares` or an "impaired" badge. The next LoanPay would clear the impairment.
+- **Only the broker owner can default.** A non-owner `tfLoanDefault` after due + grace gets `tecNO_PERMISSION` (row 14). rippled checks the timing
+  before the owner, so before due + grace a non-owner gets `tecTOO_SOON`. `checkLoanManage` mirrors that order.
+- **A default is final.** LoanPay returns `tecKILLED` (LoanPay preclaim: `PaymentRemaining` 0 is treated as "already paid off", row 17), and any
+  further LoanManage returns `tecNO_PERMISSION` (row 18). Any recovery after a default happens off-ledger (collateral, lien: roadmap).
+- Fees: a LoanManage costs the 1-drop base fee, and so do its `tec` results. Rows 6, 7 and 13 never reached the ledger: the signer's Sequence
+  was compared before and after. Row 16 found the original default through `Loan.PreviousTxnID`.
+
+**What to say on stage** (who absorbs what, in order):
+1. Unreleased milestone money is never at risk. It sits in escrow, and on a stall it goes back to the project account and is repaid to the vault first.
+2. Money that was released and not repaid is written off on-chain. The platform's first-loss cover pays first: 10 % of the outstanding debt goes back to the vault in the default transaction itself.
+3. Investors absorb the rest pro rata through the share price. Here 1000 defaulted, cover returned 100, and the share price went from 1.00 to 0.10. Every step is on the explorer.
+
 ---
 
 ## 4. (e) Reserves and fees per project (devnet: base 1 XRP, owner 0.2 XRP, fee 1 drop)
