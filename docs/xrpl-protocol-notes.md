@@ -418,6 +418,61 @@ Answers to the research questions (rippled `LoanSet.cpp` / `Batch.cpp`, 3.4.1 an
 - **Limits:** 2..8 inner txs, so `escrows` mode takes 2..8 milestones and `full` mode 1..7 (the LoanSet takes one slot). One milestone →
   use `createMilestoneEscrow`.
 
+### 2e. XRPL-13b devnet results (atomic escrows in close, recovery)
+
+`WALLETS_FILE=.data/wallets.<you>.json pnpm --filter @xrlp/xrpl spike:close-batch` (2026-10-25 01:20–01:24 UTC, own bootstrap
+store, rippled 3.4.1, exit 0). Three fresh projects, each principal 3000 RLUSD, 3 milestones (1000 / 1200 / 800), 10% APR,
+`PaymentTotal 3 × 300 s`, origination fee 45; v2 SPV (4 × w1, quorum 3, master disabled), default signers platform + builder +
+trustee; conditions from the script (stand-in for CORE-12). Code: `closeLoanAndCreateEscrows` (`escrowMode`) and
+`resumeEscrowCreation` in `packages/xrpl/src/api.ts`, `src/batch.ts`, `src/loan-close.ts`. SPVs: A `rPh7svZz9AA8KdZF3iUqww9aQv3ta9YcVE` ·
+B `rwjDsiGgTTrpNUud1tn8HNDwjQiZb1JiYH` · C `rNHBybT9KeJ3jyatxMc8whsRFQxM8Aj67Y`; issuer `rLnisxZ6B2G27zVhrtiKcRXYs2V1wFKyST`.
+Setup txs (SPV TrustSet / SignerListSet / disable master, VaultCreate, LoanBrokerSet, cover, deposit) omitted; they are in the run record.
+
+| # | step | result | explorer |
+|---|---|---|---|
+| A1 | builder → SPV origination-fee shortfall 45 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/E84FB45B474A3A18B5945D09E10B05C2AE9BED5AF898C36BD2C02983B5B4DA0A |
+| A2 | **LoanSet** (platform `Account`, SPV 3-of-4 countersign), ledger 6392715 (01:22:10Z) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4661D0C6F321BA6DD46887294EA1C86B36F812FD9C0C1969016BD0CFA6148A70 |
+| A3 | **Batch** outer = SPV (multisig 3/4), `tfAllOrNothing`, 3 × EscrowCreate, fee 8 drops, ledger 6392717 (01:22:12Z) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/1DD530999139C1867549DAB971D9D01438A28093B16772A84E132CFE976EFB89 |
+| A3↳ | inner EscrowCreates m1 1000 / m2 1200 / m3 800 (OfferSequence 6392670 / 71 / 72) = `escrows[i].createTx` | `tesSUCCESS` ×3 | https://devnet.xrpl.org/transactions/57B76453C7A797C646497549C506D3ECE3E120B11C54610A05DA8222FCF625F4 · https://devnet.xrpl.org/transactions/DD743BE9384936A2DAFB048DF738CEEE65B7CA89EB6B97486C3A8A3FB05B2934 · https://devnet.xrpl.org/transactions/66481BDA5DDEEE1D0B32D7160D34A02F74E95D6067BA5E5788235603D0169E24 |
+| B1 | LoanSet, ledger 6392726 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/2E8AFFD64A405780C8C73F8F21111CF096C0BA6BE1A9C542F6DD786B5092ED69 |
+| B2 | (spike, `onTx` after LoanSet) issuer `TrustSet tfSetFreeze` on the SPV's RLUSD line | `tesSUCCESS` | https://devnet.xrpl.org/transactions/AC3455ECC0B9745C2BEF6A81592FD1C830F81589808C26472071AAAA77B4DCFC |
+| B3 | Batch, 3 × EscrowCreate on the frozen line, fee 8 drops, ledger 6392730: **outer applied, no inner applied** | `tesSUCCESS` (outer) | https://devnet.xrpl.org/transactions/AF14693582FDB295889241F74A4688EEA2BC8AFF85A5EAB061B756181299C989 |
+| B3↳ | inner EscrowCreates (Sequence 6392685..87): ranged `tx` lookup in ledger 6392730 → `txnNotFound`, `searched_all: true` | not applied | — (not on ledger) |
+| B4 | `CloseLoanPartialError`: `txResult inner_failed`, `txHash` = B3, created [], pending [m1, m2, m3], `context.batch.outcome rolled_back`; SPV holds **3000 RLUSD liquid, 0 escrows** | (client) | — |
+| B5 | issuer `TrustSet tfClearFreeze` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/F3B6F788EF5FB500FA7B2427D8CE6D0175F444ABA02CE45CA1C68A245B16547E |
+| B6 | `resumeEscrowCreation(err)`: one Batch, 3 × EscrowCreate, ledger 6392734 → SPV liquid 0 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/EE8F9497C3EA7BA85081B933ECAF09D89BD8C532309F800F0E82DD1263782DBD |
+| B6↳ | inner EscrowCreates (OfferSequence 6392686 / 87 / 88) | `tesSUCCESS` ×3 | https://devnet.xrpl.org/transactions/5139037C57BF7175AAA73790EB6C225DC3145AA9E9C60838F0D19D197272F91E · https://devnet.xrpl.org/transactions/F16E774AC8F5078AD99864A358D48815865877EF02F242FFBE582A847FAD0E85 · https://devnet.xrpl.org/transactions/362077D1FA47B867C00821574091F3639A865E1D6002ABF30CA117486CBD41DF |
+| B7 | `resumeEscrowCreation(err)` again (same stale error) → m1/m2/m3 found open by condition | **nothing submitted** (SPV Sequence + RLUSD unchanged) | — |
+| C1 | LoanSet, ledger 6392740 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/18E81078A96BB2AD33A1A9C9B4E520B367C42C7E3A92F6B8C6676AF4816B23E1 |
+| C2 | EscrowCreate m1 (`escrowMode: "sequential"`) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/63856886B46E5C2F39BFDEEB7CE144D327B270D01800554D6EF0CE9D7BC73C3F |
+| C3 | (spike, `onTx` after m1) issuer `TrustSet tfSetFreeze` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A9F1106E2AEB65CD8FCA914B733D42CC73A6EA76A91B066DC8B0E5569C92696F |
+| C4 | EscrowCreate m2 on the frozen line, ledger 6392746, fee 4 drops, Sequence 6392701 consumed | **`tecFROZEN`** (on-ledger) | https://devnet.xrpl.org/transactions/68D86E1D391E3567162EAF15DCADF73D0DF8B61CF3AEDF7EF6893AACA1919D08 |
+| C5 | `CloseLoanPartialError`: `txResult tecFROZEN`, `txHash` = C4, created [m1], pending [m2, m3] | (client) | — |
+| C6 | issuer `TrustSet tfClearFreeze` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/E045CD8DB89AA8FA18CCDBD4DF1E79EE3CB4C690AF6DBB0D054DB996E9FED1F0 |
+| C7 | `resumeEscrowCreation(err)`: one Batch with only m2 + m3 (m1 kept), fee 7 drops, ledger 6392750 → SPV liquid 0 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/EFBE271962D82F6231939700148E3C31D0F74C8BABDA3D935C6E1B3E091C312A |
+| C7↳ | inner EscrowCreates m2 / m3 (OfferSequence 6392703 / 04) | `tesSUCCESS` ×2 | https://devnet.xrpl.org/transactions/DBAF5C424FD9FB305729EA0C72802A3BC141A21C665716E57A5DA142BB463E45 · https://devnet.xrpl.org/transactions/9E160A126E5CDA5B9BD202DD59042EA99E553D3747E9AC7D41CA4E1B60425F44 |
+| C8 | `resumeEscrowCreation(err)` again → m1 (created) / m2 / m3 (open) | **nothing submitted** | — |
+
+Observations:
+- **The default close is now LoanSet + one Batch.** In A the SPV held liquid principal from the LoanSet ledger (6392715) to the
+  Batch ledger (6392717): **2 ledgers, 2 s of close time**, then 0 liquid with 3 escrows = 3000. In §2c (sequential) it was 1 + 3 txs.
+  `escrows[i].createTx` / `txs[1..3]` are the inner EscrowCreates (each has `ParentBatchID` = A3 in its metadata); A3 is `batchTx`.
+- **A rolled-back Batch looks applied from the outside.** B3 is `tesSUCCESS`, charged 8 drops, and its metadata only moves the
+  SPV's fee and Sequence (6392684 → 6392685), exactly like the applied A3. Only the inner lookups tell: pinned to the Batch's own
+  ledger, rippled answers `txnNotFound` with `searched_all: true`, so "not applied" is proven, not guessed. Recorded as
+  `test/fixtures/batch-escrows-rolled-back.json` (offline test). After it, the SPV held the whole principal liquid with no escrow:
+  the state `CloseLoanPartialError` + `resumeEscrowCreation` exist for.
+- The rolled-back inners did not consume Sequences 6392685..87: the resume Batch B6 took 6392685 as its outer Sequence and
+  6392686..88 for its inners (same as §2d C).
+- **EscrowCreate checks the source line's freeze at create time** (XLS-85): C4 is a validated `tecFROZEN` (fee paid, Sequence used),
+  so a sequential partial close leaves an explorer-visible failure; m1 stayed escrowed.
+- **Resume is exact and idempotent:** B6 created all 3, C7 only the 2 missing (m1 kept from `created`). Re-running it with the same
+  stale error (B7, C8) re-read the SPV's escrows, matched every condition, and submitted nothing.
+- Fees: Batch = base + base × (1 + 3 outer signers) + Σ inner base = 8 drops for 3 escrows, 7 for 2; multisig EscrowCreate 4 drops.
+- The freeze is spike-only, to force an on-ledger failure at a chosen point via the `onTx` hook. Production never freezes. The same
+  `CloseLoanPartialError` → `resumeEscrowCreation` path covers a crash or network error after LoanSet; with an unknown outcome,
+  resume first waits out the Batch's `LastLedgerSequence`.
+
 ---
 
 ## 3. (c) Vault mechanics, and the V1_1 closed-ended lifecycle
@@ -555,6 +610,101 @@ What devnet showed:
 - Attestation = 1-drop XRP `Payment` attester → SPV, one memo `xrlp/attest/v1` (`application/json`). The validated tx JSON (#16) is a
   test fixture (`packages/xrpl/test/fixtures/devnet-attest-decision-tx.json`): it decodes, re-encodes to the same hash, and its
   signature verifies offline. API v2 `tx` responses show `DeliverMax`, not `Amount`, for Payments.
+
+### 3c. XRPL-15 devnet results (loan default + first-loss cover)
+
+`pnpm --filter @xrlp/xrpl spike:default` (`packages/xrpl/scripts/spike-default.ts`, 2026-10-25 ~01:05 UTC, fresh faucet wallets, ~5 min).
+rippled 3.4.1, with `fixCleanup3_4_0` and `LendingProtocolV1_1` enabled (`feature`). Code: `packages/xrpl/src/default.ts`. Sources:
+[XLS-66] §3.10 (LoanManage), [XLS-66.2](https://github.com/XRPLF/XRPL-Standards/blob/master/XLS-0066-lending-protocol/66.2/README.md)
+(fixCleanup3_4_0 timing), [XLS-65] §3.1.7.1 (exchange rate), rippled 3.4.1 `src/libxrpl/tx/transactors/lending/LoanManage.cpp` and
+`ledger/helpers/LendingHelpers.cpp`. Setup: closed-ended vault (`AssetsMaximum` 1000); LoanBroker with `CoverRateMinimum 10000`,
+`CoverRateLiquidation 100000` and `ManagementFeeRate 10000`; cover 110.000043 (`defaultCoverDeposit`); investor deposit 1000; LoanSet
+1000 RLUSD @ 10 %, 3 × 60 s, `GracePeriod` 60 s, origination fee 15, to a single-key borrower that never pays. Loan `7C5B9880…`:
+start 01:07:11, `NextPaymentDueDate` 01:08:11, default allowed after 01:09:11.
+
+Accounts: platform `rYYkLCVeSK1naw4oTm51FJLQwsgyYJgfk` · borrower `r942XfTDKxrn1BABbz7PZLMs6euSjE3WaL` · investor `rNJokgMEG2fqfid1ncDxD2b2XJEs4xJCnr` ·
+outsider `rEhTvcWYJCLVqDKCvyo91aUSpEP4sdbDat` · issuer `rDCgHTF927ivi7X7PvBEyagzNZh9GnKhHR`
+
+| # | step | result | explorer |
+|---|---|---|---|
+| 1 | VaultCreate closed-ended, `AssetsMaximum` 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/F147A43213B91B754080AEBC8DA51A47530AAC7506A2117E1C10A42DD473E334 |
+| 2 | LoanBrokerSet `CoverRateMinimum 10000`, `CoverRateLiquidation 100000` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/04D8F46DEE906B2915FE7F6F837CFC8166DE0B04BB45A8F3DE6EB6C020F5EB96 |
+| 3 | LoanBrokerCoverDeposit 110.000043 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/8030908D2334D186A6DB8DC35DD1E20311D3E6EE9A3DDB78A4DBD6E9481A7D04 |
+| 4 | VaultDeposit investor 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/985C9A9550198BDB92CAC279BF9AEE53AC54863CC5A54C020927651DFF698018 |
+| 5 | LoanSet 1000, 3 × 60 s, grace 60 s (single-key borrower) | `tesSUCCESS` | https://devnet.xrpl.org/transactions/93125ADE96C337219D97930BBDB6987B9434A7DCE1C0EFA08DE748F848E42A95 |
+| 6 | `defaultLoan` before due + grace | **`LoanManageTooSoonError`** (client-side, platform Sequence unchanged) | — (nothing submitted) |
+| 7 | `impairLoan` before the due date | **`LoanManageTooSoonError`** (client-side) | — (nothing submitted) |
+| 8 | LoanManage `tfLoanImpair` before the due date (`skipGuard`) | **`tecTOO_SOON`** | https://devnet.xrpl.org/transactions/01BFDAA50AFF725EEE2EFF07E7538670494695ABA31B4AC7AF055C0D55BD9EA1 |
+| 9 | LoanManage `tfLoanDefault` before due + grace (`skipGuard`) | **`tecTOO_SOON`** | https://devnet.xrpl.org/transactions/061B0C469FF995A7943C46BA828440C2F852F8DCB5C6EDA1B588FE1950C6773D |
+| 10 | `tfLoanImpair`, payment overdue: `LossUnrealized` 0 → 1000 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/9BE6ECDC18D7E9151390C17353E850F55300346B01A71E7913A2E9145E3C79F5 |
+| 11 | `tfLoanUnimpair`: `LossUnrealized` 1000 → 0 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/7E7BF819E4B6BAC8BC7994688C7CD6BF8597616C6B1E73EB89B509964D251DE3 |
+| 12 | `tfLoanImpair` again | `tesSUCCESS` | https://devnet.xrpl.org/transactions/A76BBC82DB9ACA325947AA4C1D2DC3A0963C736641EBCA06A2BDF79154C78A9A |
+| 13 | `defaultLoan` by a non-owner | **`LoanManageRefusedError`** `not_broker_owner` (client-side, Sequence unchanged) | — (nothing submitted) |
+| 14 | LoanManage `tfLoanDefault` by a non-owner, after due + grace (`skipGuard`) | **`tecNO_PERMISSION`** | https://devnet.xrpl.org/transactions/4043CEF58A5E721017FEB844236705804B4176C403E802EE3C9F780A88B21FBD |
+| 15 | **LoanManage `tfLoanDefault` by the platform**, after due + grace | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/B3A32FB9CFF5A7F015CE7C61972BA1DF18E2371E3715DE8443B93B1FA8946568 |
+| 16 | `defaultLoan` again | replay: `alreadyDefaulted`, same tx, 0 txs | (row 15) |
+| 17 | LoanPay 333.333461 (one periodic payment) after the default | **`tecKILLED`** | https://devnet.xrpl.org/transactions/DD914351CA868D89D1E350FFFF20A4354A0840053B34578EB885F62764062FF4 |
+| 18 | LoanManage `tfLoanUnimpair` on the defaulted loan (platform, `skipGuard`) | **`tecNO_PERMISSION`** | https://devnet.xrpl.org/transactions/36540BBE5C3557DCD88B1C184DD7BFCE3BB8A2AEE38E9F910A09D3DAA99E120A |
+
+The default (row 15), read from its metadata (`parseDefaultOutcome`; the tx is a test fixture, `test/fixtures/devnet-loan-default-tx.json`):
+
+| | before | after |
+|---|---|---|
+| Loan `PrincipalOutstanding` / `TotalValueOutstanding` | 1000 / 1000.000380515684 | removed (`Flags 0x70000` = overpayment + impaired + default, `PaymentRemaining` 0) |
+| LoanBroker `DebtTotal` | 1000 | 0 |
+| LoanBroker `CoverAvailable` | 110.000043 | 10.000043 → **DefaultCovered 100** |
+| Vault `AssetsTotal` | 1000 | 100 → **vault loss 900** |
+| Vault `AssetsAvailable` | 0 | 100 |
+| Vault `LossUnrealized` | 1000 (impaired) | 0 |
+| share price (`getVaultSnapshot`: AssetsTotal / shares) | 1 | **0.1** |
+| net share price (XLS-65 exchange rate, what a withdrawal pays) | 0 (impaired) | 0.1 |
+
+What devnet showed:
+- **DefaultCovered = 100, equal to `expectedDefaultCovered`.** The formula is `min(roundUp(min(DebtTotal × CoverRateMinimum × CoverRateLiquidation,
+  DefaultAmount), 10^LoanScale), CoverAvailable)`. Here that is `min(1000 × 10% × 100%, 1000, 110.000043) = 100`. Both rates are 1/10 bps (÷ 100000).
+  The vault loss plus the cover returned equals the exposure: 900 + 100 = 1000.
+- **Devnet vaults are cash basis, so a default writes off the principal only.** Every vault created under `LendingProtocolV1_1` has
+  `Vault.LEVersion = 1` (rippled `VaultVersion::CashBasis`). `DebtTotal` holds principal only (1000), and `AssetsTotal` never booked the
+  0.00038 of interest. So the default wrote off `PrincipalOutstanding` = 1000, not `TotalValueOutstanding − ManagementFeeOutstanding` =
+  1000.000342 as XLS-66 §3.10.5 says (rippled 3.4.1 `cash_basis::loanVaultExposure`). The cash-basis patch number, XLS-66.1.1, is reserved but not
+  published, so rippled's source is the spec here. The same rule is why share value rises only as interest is paid (§3, §3a).
+- **A default can draw at most 10% of `DebtTotal` at default time.** That is not 10% of the original principal, and not all the posted cover.
+  The 10.000043 left over stays in the broker for the platform (`LoanBrokerCoverWithdraw`). `DebtTotal` falls as principal is repaid, so
+  repaying escrow refunds before the default shrinks both the loss and the cover the default can draw. The cover moves between pseudo-accounts
+  (broker RippleState 110.000043 → 10.000043, vault 0 → 100); the platform's own RLUSD did not change in the default.
+- **Timing is exclusive** (fixCleanup3_4_0, XLS-66.2). Impair works only when ledger time > `NextPaymentDueDate` (row 8: `tecTOO_SOON`).
+  Default works only when ledger time > due + grace (row 9). Before the fix, a broker could impair early, which pulled the due date forward
+  to "now". On devnet, impair and unimpair both left `NextPaymentDueDate` at 01:08:11 (rows 10–12).
+- **Impair is a reversible paper loss:** `LossUnrealized` went 0 → 1000 → 0 → 1000. While the vault is impaired, the XLS-65 exchange rate (what a
+  withdrawal pays) is 0, but `getVaultSnapshot().sharePrice` (AssetsTotal / shares) still shows 1. → UI: on an impaired vault, show
+  `(AssetsTotal − LossUnrealized) / shares` or an "impaired" badge. The next LoanPay would clear the impairment.
+- **Only the broker owner can default.** A non-owner `tfLoanDefault` after due + grace gets `tecNO_PERMISSION` (row 14). rippled checks the timing
+  before the owner, so before due + grace a non-owner gets `tecTOO_SOON`. `checkLoanManage` mirrors that order.
+- **A default is final.** LoanPay returns `tecKILLED` (LoanPay preclaim: `PaymentRemaining` 0 is treated as "already paid off", row 17), and any
+  further LoanManage returns `tecNO_PERMISSION` (row 18). Any recovery after a default happens off-ledger (collateral, lien: roadmap).
+- Fees: a LoanManage costs the 1-drop base fee, and so do its `tec` results. Rows 6, 7 and 13 never reached the ledger: the signer's Sequence
+  was compared before and after. Row 16 found the original default through `Loan.PreviousTxnID`.
+
+**Stall-path variant** (`SPIKE_PREPAY=600`, ~01:12 UTC; platform `rQj7NFejJoXvEhv3qesRHdxCJSdcucAFJ`, borrower `rQJEYRRWLupEruBL3jUiZdUdh3dZKbXLdF`).
+Here the borrower repays 600 on time with `tfLoanOverpayment` (as escrow refunds would be) and then goes dark. All other rows match the run above.
+
+| step | result | explorer |
+|---|---|---|
+| LoanPay 600 overpayment, on time | `tesSUCCESS`: `PrincipalOutstanding` and `DebtTotal` 400.000190257666, `AssetsTotal` 1000.0001712319 (interest booked as paid) | https://devnet.xrpl.org/transactions/B3C83D0006803CE4CCCC67505301BABF0AEF20017437AB6A485F6B32B47A9C0E |
+| impair (overdue): `LossUnrealized` 0 → 400.00019, net share price 1 → 0.599999 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/8C54DCC89136CEC53F3C8B206821ADA8AF2ED0F84950CA5CC8A4142806A7980F |
+| **default** (platform, after due + grace) | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/6FE6525D37DCB9EFBA53D9E8C00D987E17CB4D8F976D97041698389C1512A19E |
+| LoanPay after the default | `tecKILLED` | https://devnet.xrpl.org/transactions/90843C10B2B963E3B53904B65AD04AE41F5D4594385217BC3337721D6E35035D |
+
+- **DefaultCovered = 40.000019025767, equal to `expectedDefaultCovered`.** 10% of 400.000190257666 is 40.0000190257666, rounded **up** to
+  `10^LoanScale` (`LoanScale -12`). This confirms rippled's rounding to the last digit (offline test `devnet stall-path variant`).
+- Vault loss 360.000171231899. `AssetsTotal` 1000.000171 → 640, `AssetsAvailable` 599.99998 → 640, share price **1 → 0.64**.
+  The cover went 110.000043 → 70.000023974233: the default drew only 40, and 70 stays with the platform.
+- Repaying first shrinks the loss (360 instead of 900), and it also shrinks what the cover pays (40 instead of 100): the cover tracks the debt still owed.
+
+**What to say on stage** (who absorbs what, in order):
+1. Unreleased milestone money is never at risk. It sits in escrow, and on a stall it goes back to the project account and is repaid to the vault first.
+2. Money that was released and not repaid is written off on-chain. The platform's first-loss cover pays first: 10 % of the outstanding debt goes back to the vault in the default transaction itself.
+3. Investors absorb the rest pro rata through the share price. On devnet, 1000 unpaid → cover 100 → share 1.00 → 0.10. With 600 repaid first, 400 unpaid → cover 40 → share 0.64. Every step is on the explorer.
 
 ---
 
