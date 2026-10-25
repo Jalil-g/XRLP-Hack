@@ -132,6 +132,9 @@ export interface CoreServiceOptions {
   defaultSeed?: DemoSeed;
   /** Route 21: wipe ledger-side demo state (fake ledger). */
   resetLedger?: () => void;
+  /** Platform-held accounts (issuer, trustee, ...) that may never register as a builder, inspector or investor (#149).
+   *  platform / aiAgent / releaseService and every project SPV are always reserved. */
+  reservedAddresses?: XrplAddress[];
 }
 
 export const verificationFeeFor = (principal: Rlusd): Rlusd => fromMicro(maxMicro(250_000_000n, (toMicro(principal) * 20n) / 10_000n));
@@ -152,6 +155,8 @@ class KeyedMutex {
 }
 
 const OPEN_PROJECT: readonly ProjectStatus[] = ["escrowed", "repaying", "stalled"];
+/** xrpl submit outcomes where the tx may still have applied (packages/xrpl/src/submit.ts). */
+const AMBIGUOUS_TX_RESULTS = new Set(["connection_lost", "unknown_outcome", "preflight_refused_after_submit"]);
 /** Investor.kycCredentialTx when the ledger already held an accepted KYC_INVESTOR (no tx this time). */
 export const KYC_ALREADY_ON_LEDGER = "already-accepted";
 
@@ -196,7 +201,9 @@ export class CoreService implements CoreApi {
     } catch (e) {
       if (e instanceof DomainError) throw e;
       if (e instanceof LedgerError) {
-        throw new DomainError(ledgerErrorCode(e), `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
+        // #149 L7: a multi-tx step (e.g. builder repay = Payment + LoanPay) with an unknown outcome must not be re-run blind.
+        const unknown = e.txResult && AMBIGUOUS_TX_RESULTS.has(e.txResult) ? ` Outcome unknown: look up ${e.txHash ?? "the tx"} and the balances before retrying.` : "";
+        throw new DomainError(ledgerErrorCode(e), `${what}: ${e.message}${unknown}`, e, { txResult: e.txResult, txHash: e.txHash });
       }
       throw new DomainError("LEDGER_ERROR", `${what} failed: ${(e as Error).message}`, e);
     }
@@ -270,10 +277,18 @@ export class CoreService implements CoreApi {
 
   // ---------- participants (seed / admin; not HTTP routes) ----------
 
+  /** #149: a platform-held key must never become a builder, inspector (SPV signer) or investor. */
+  private assertNotReserved(db: DbState, address: XrplAddress, as: string): void {
+    const reserved = new Set([this.platformAddress, this.aiAgentAddress, this.releaseServiceAddress, ...(this.opts.reservedAddresses ?? [])]);
+    for (const p of db.projects) if (p.chain.spv) reserved.add(p.chain.spv);
+    if (reserved.has(address)) throw new DomainError("FORBIDDEN", `${address} is a platform-held account and cannot register as ${as}`);
+  }
+
   async registerBuilder(input: RegisterBuilderInput): Promise<Builder> {
     const d = parse(RegisterBuilderInput, input);
     const id = d.id ?? `bld-${slugify(d.name)}`;
     return this.store.write((db) => {
+      this.assertNotReserved(db, d.address, "a builder");
       if (db.builders.some((b) => b.id === id || b.address === d.address)) throw new DomainError("CONFLICT", `Builder ${id} already registered`);
       const b: Builder = {
         id,
@@ -293,7 +308,7 @@ export class CoreService implements CoreApi {
   /** Adds a licensed inspector to the verified panel and issues VERIFIED_INSPECTOR. */
   async registerInspector(input: RegisterInspectorInput): Promise<{ inspector: Inspector; events: ChainEvent[] }> {
     const d = parse(RegisterInspectorInput, input);
-    const exists = await this.read((db) => db.inspectors.some((i) => i.address === d.address));
+    const exists = await this.read((db) => (this.assertNotReserved(db, d.address, "an inspector"), db.inspectors.some((i) => i.address === d.address)));
     if (exists) throw new DomainError("CONFLICT", `Inspector ${d.address} already on the panel`);
     const txs = await this.onLedger("issue VERIFIED_INSPECTOR", () => this.ledger.issueCredential({ subject: d.address, type: "VERIFIED_INSPECTOR" }));
     const events = this.evs(txs, { projectId: PLATFORM_SCOPE, actor: d.address });
@@ -309,7 +324,7 @@ export class CoreService implements CoreApi {
 
   async kycInvestor(address: XrplAddress, name?: string): Promise<{ events: ChainEvent[] }> {
     const addr = parse(XrplAddress, address);
-    const done = await this.read((db) => db.investors.find((i) => i.address === addr)?.kycCredentialTx);
+    const done = await this.read((db) => (this.assertNotReserved(db, addr, "an investor"), db.investors.find((i) => i.address === addr)?.kycCredentialTx));
     if (done) return { events: [] };
     const txs = await this.onLedger("issue KYC_INVESTOR", () => this.ledger.issueCredential({ subject: addr, type: "KYC_INVESTOR" }));
     const events = this.evs(txs, { projectId: PLATFORM_SCOPE, actor: addr });
