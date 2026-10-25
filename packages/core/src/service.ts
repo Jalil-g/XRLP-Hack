@@ -321,8 +321,31 @@ export class CoreService implements CoreApi {
   listProjects(q: { status?: ProjectStatus } = {}): Promise<ProjectSummary[]> {
     return this.read((db) => db.projects.filter((p) => !q.status || p.status === q.status).map((p) => projectSummary(db, p)));
   }
-  getProject(id: string): Promise<ProjectDetail> {
-    return this.read((db) => projectDetail(db, getProjectOrThrow(db, id), this.now()));
+  async getProject(id: string): Promise<ProjectDetail> {
+    const d = await this.read((db) => projectDetail(db, getProjectOrThrow(db, id), this.now()));
+    // Queued checks before the first run: the policy's required check ids.
+    for (const m of d.project.milestones) {
+      const c = d.checks[m.id];
+      if (c && c.outcome === "pending" && c.required.length === 0) c.suite = [...this.verifier.policyFor(d.project, m).requiredChecks];
+    }
+    const balances = await this.liveBalances(d.project.chain.spv, d.builder.address);
+    return balances ? { ...d, balances } : d;
+  }
+
+  /** SPV + builder RLUSD, best effort: a slow or failing ledger read never breaks the project page. */
+  private async liveBalances(spv: XrplAddress | undefined, builder: XrplAddress): Promise<ProjectDetail["balances"]> {
+    if (!spv) return undefined;
+    let timer: Parameters<typeof clearTimeout>[0];
+    const timeout = new Promise<undefined>((r) => (timer = setTimeout(r, 2000)));
+    const read = Promise.all([this.ledger.getBalance(spv, "RLUSD"), this.ledger.getBalance(builder, "RLUSD")]).then(
+      ([s, b]) => ({ spv: s, builder: b }),
+      () => undefined,
+    );
+    try {
+      return await Promise.race([read, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   listEvents(id: string): Promise<ChainEvent[]> {
     return this.read((db) => {
@@ -712,7 +735,7 @@ export class CoreService implements CoreApi {
         if (m.status !== "audited") this.setMilestoneStatus(m, "audited");
         const rec: AuditRecord = { ...audit, projectId: id, round };
         db.audits.push(rec);
-        db.attestations.push({ milestoneId: mid, role: "inspector", signer: inspector, decision: allDone ? "approve" : "reject", notes: audit.notes, txHash: tx.hash, at, projectId: id, round });
+        db.attestations.push({ milestoneId: mid, role: "inspector", signer: inspector, decision: allDone ? "approve" : "reject", notes: audit.notes, txHash: tx.hash, at, projectId: id, round, kind: "audit", hash: auditHash });
         db.chainEvents.push(...events);
         return { milestone: m, audit, events };
       });
@@ -772,6 +795,8 @@ export class CoreService implements CoreApi {
           decision: evaluation.outcome === "pass" ? "approve" : "reject",
           notes: verdict.summary,
           txHash: tx.hash,
+          kind: "verdict",
+          hash: verdictHash,
           at: this.nowIso(),
           projectId: id,
           round,
@@ -815,6 +840,7 @@ export class CoreService implements CoreApi {
       db.attestations.push({
         milestoneId: mid,
         role: "release_service",
+        kind: "release",
         signer: this.releaseServiceAddress,
         decision: "approve",
         notes: "test suite green; escrow finished",
@@ -864,7 +890,7 @@ export class CoreService implements CoreApi {
         const p = this.projectIn(db, id);
         const m = getMilestoneOrThrow(p, mid);
         db.decisions.push({ projectId: id, milestoneId: mid, round: ctx.round, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
-        db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round });
+        db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round, kind: "decision", hash: sha256Hex(reason) });
         this.applyOutcome(m, evaluation);
         db.chainEvents.push(...events);
         return m;
