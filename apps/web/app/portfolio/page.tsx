@@ -6,7 +6,7 @@ import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { VAULT_PHASE } from "@/lib/display";
 import { getSession } from "@/lib/session";
-import { formatAmount, formatDate, fromCents, toCents } from "@/lib/utils";
+import { formatAmount, formatDate, fromCents, sharesFromUnits, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Portfolio" };
@@ -66,7 +66,7 @@ export default async function PortfolioPage() {
                     {pos.projectName}
                   </Link>
                 </td>
-                <td className="tabular px-4 py-4 text-right text-small">{Number(pos.shares).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
+                <td className="tabular px-4 py-4 text-right text-small">{sharesFromUnits(pos.shares).toLocaleString("en-US", { maximumFractionDigits: 2 })}</td>
                 <td className="tabular px-4 py-4 text-right text-small font-medium">{formatAmount(pos.value, { cents: true })}</td>
                 <td className="px-4 py-4">
                   <Tag tone={pos.phase === "redemption" ? "pass" : pos.phase === "subscription" ? "info" : "neutral"}>{VAULT_PHASE[pos.phase]}</Tag>

@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import type { Milestone, ProjectDetail } from "@/lib/contract";
+import { DUPLICATE_PHOTO_CHECK, failedChecks, findStall } from "@/lib/demo-scenes";
 import { MILESTONE_STATUS, PROJECT_STATUS, checkName } from "@/lib/display";
 import { getSession } from "@/lib/session";
 import { formatAmount, fromCents, toCents } from "@/lib/utils";
@@ -34,7 +35,8 @@ export default async function DemoPage() {
   const all = (await Promise.all(summaries.map((s) => get(s.id)))).filter((d): d is ProjectDetail => !!d);
 
   const a = all.find((d) => /maple/i.test(d.project.name)) ?? all.find((d) => d.project.status === "escrowed");
-  const b = all.find((d) => d !== a && d.project.milestones.some((m) => m.status === "expired")) ?? all.find((d) => d !== a && d.project.status === "stalled");
+  const stall = findStall(all, a, Date.now());
+  const b = stall?.d;
   const onboard = all
     .filter((d) => d !== a && ONBOARDING_ORDER.includes(d.project.status))
     .sort(
@@ -48,9 +50,10 @@ export default async function DemoPage() {
   const investor = session.investors.find((i) => i.kyc);
   const [m1, m2, m3] = a?.project.milestones ?? [];
   const refused = a?.events.find((e) => e.kind === "release_refused");
-  const failedCheck = m2 && a?.checks[m2.id]?.required.find((c) => c.result === "fail");
-  const bExpired = b?.project.milestones.find((m) => m.status === "expired");
-  const bRefunded = b?.project.milestones.find((m) => m.status === "refunded");
+  const { failed: m2Failed, headline: failedCheck } = failedChecks(m2 && a?.checks[m2.id]);
+  const reusedPhoto = failedCheck?.check === DUPLICATE_PHOTO_CHECK;
+  const bExpired = stall?.overdue;
+  const bRefunded = stall?.refunded;
 
   return (
     <div className="space-y-12">
@@ -100,9 +103,16 @@ export default async function DemoPage() {
         <Scene
           n={4}
           title="Failed check: funds stay locked"
-          body="The second milestone includes a photo reused from another project. One check fails and the money stays locked."
+          body={
+            m2Failed.length
+              ? `${reusedPhoto ? "The second milestone includes a photo reused from another project. " : ""}${m2Failed.length} required check${m2Failed.length === 1 ? " fails" : "s fail"} and the money stays locked.`
+              : "The second milestone includes a photo reused from another project. A required check fails and the money stays locked."
+          }
           state={m2 && <MilestoneTag m={m2} />}
-          detail={failedCheck && `${checkName(failedCheck.check)}: ${failedCheck.reason}`}
+          detail={
+            failedCheck &&
+            `${checkName(failedCheck.check)}: ${failedCheck.reason}${m2Failed.length > 1 ? ` (+${m2Failed.length - 1} more failed check${m2Failed.length === 2 ? "" : "s"})` : ""}`
+          }
           action={a && m2 && RUNNABLE.includes(m2.status) && m2.status !== "failed" && <ActionButton action={{ kind: "runChecks", projectId: a.project.id, milestoneId: m2.id }}>Run checks</ActionButton>}
           screen={a && m2 && <ScreenLink href={`/projects/${a.project.id}?m=${m2.id}`} label={m2.title} />}
         />
@@ -138,7 +148,7 @@ export default async function DemoPage() {
         <Scene
           title="Stall: escrow expires, money goes back"
           body="An escrow passed its CancelAfter. The keeper cancels it, and the project account repays the vault. Investors redeem at maturity."
-          state={b && (bExpired ? <Tag tone="review">Expired, not cancelled yet</Tag> : bRefunded ? <Tag>Returned to the vault</Tag> : <Tag>Nothing expired</Tag>)}
+          state={b && (bExpired ? <Tag tone="review">{bExpired.status === "expired" ? "Expired" : "Past CancelAfter"}, not cancelled yet</Tag> : bRefunded ? <Tag>Returned to the vault</Tag> : <Tag>Nothing expired</Tag>)}
           detail={b?.vault && `${b.project.name} vault available ${formatAmount(b.vault.assetsAvailable)} RLUSD`}
           action={bExpired && <ActionButton action={{ kind: "keeperTick" }}>Keeper tick</ActionButton>}
           screen={b && <ScreenLink href={`/projects/${b.project.id}`} label={b.project.name} />}

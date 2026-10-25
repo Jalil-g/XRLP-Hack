@@ -44,6 +44,14 @@ export function formatRlusd(amount: string | number, opts: { cents?: boolean; co
   return `${formatAmount(amount, opts)} RLUSD`;
 }
 
+/** Vault share-MPT scale: core counts shares in raw MPT units, one whole share = 10^6 units (packages/xrpl reads.ts, decisions.md XRPL-09). */
+export const SHARE_SCALE = 6;
+
+/** Raw share-MPT units (PortfolioPosition.shares, VaultSnapshot.sharesOutstanding) → whole shares, for display. */
+export function sharesFromUnits(units: string): number {
+  return Number(units) / 10 ** SHARE_SCALE;
+}
+
 export function formatPct(value: number, digits = 0) {
   return `${value.toFixed(digits)}%`;
 }
