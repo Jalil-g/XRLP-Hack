@@ -178,8 +178,8 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
         </div>
         <p className="flex max-w-3xl items-start gap-2 rounded-md bg-info-bg px-3 py-2 text-caption text-info">
           <FlaskConical className="mt-0.5 size-4 shrink-0" />
-          The AI escalated this project&apos;s verification and needs eyes on site before it can be listed. Proposed flow: the report format and
-          route are pending agreement on #53{api.mode === "http" ? ", so core cannot accept it yet" : " (mock mode)"}.
+          The AI escalated this project&apos;s verification: it needs an inspector&apos;s eyes on site before the project can be listed.
+          {api.mode === "http" ? " Core cannot accept site-visit reports yet." : " Sample flow in mock mode."}
         </p>
       </div>
 

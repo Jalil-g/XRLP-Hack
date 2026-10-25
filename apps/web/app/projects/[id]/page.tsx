@@ -57,7 +57,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const audits = (selected && d.audits[selected.id]) ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <AutoRefresh ms={3000} />
 
       <div>
@@ -65,7 +65,7 @@ export default async function ProjectPage({ params, searchParams }: Props) {
           Projects
         </Link>
         <PageHeader
-          className="mt-2"
+          className="mt-1"
           title={p.name}
           meta={<Tag tone={status.tone}>{status.label}</Tag>}
           description={`${builder.name} · ${p.siteAddress}`}
@@ -76,18 +76,18 @@ export default async function ProjectPage({ params, searchParams }: Props) {
         <div>
           <p className="text-small text-capital-muted">{p.status === "funding" ? "Raised toward project funding" : "Project loan principal"}</p>
           <p className="financial-amount mt-3">{formatAmount(p.status === "funding" ? fromCents(raised) : p.terms.principal)} <span>RLUSD</span></p>
-          <p className="mt-2 text-small text-capital-muted">{p.status === "funding" ? `of ${formatAmount(p.terms.principal)} RLUSD target · funding closes ${formatDate(p.terms.fundingDeadline)}` : "Where the principal is now"}</p>
+          {p.status === "funding" && <p className="mt-2 text-small text-capital-muted">of {formatAmount(p.terms.principal)} RLUSD target · funding closes {formatDate(p.terms.fundingDeadline)}</p>}
           <CapitalBar
-            className="mt-6"
+            className="mt-5"
             label={p.status === "funding" ? "Funding progress" : "Principal by location"}
             segments={
               p.status === "funding"
                 ? [
-                    { label: "Raised", cents: raised, tone: "accent" },
+                    { label: "Raised", cents: raised, tone: "accent", keep: true },
                     { label: "Still open", cents: Math.max(0, toCents(p.terms.principal) - raised), tone: "track" },
                   ]
                 : [
-                    { label: "Released to builder", cents: sum(["released"]), tone: "accent" },
+                    { label: "Released to builder", cents: sum(["released"]), tone: "accent", keep: true },
                     { label: "In milestone escrows", cents: sum([...LOCKED_MILESTONE_V2]), tone: "muted" },
                     { label: "Returned", cents: sum(["refunded"]), tone: "track" },
                     { label: "Not in escrow yet", cents: sum(["pending"]), tone: "track" },

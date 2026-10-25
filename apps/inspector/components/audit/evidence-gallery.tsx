@@ -54,6 +54,7 @@ export function PhotoCaption({ evidence, site, browserRead }: { evidence: Eviden
   return (
     <div className="space-y-1 px-2.5 py-2 text-caption leading-tight">
       {API_MODE === "mock" && evidence.uri?.startsWith("data:image/svg+xml") && <p className="font-medium text-muted">Mock evidence illustration</p>}
+      {API_MODE === "mock" && evidence.uri?.startsWith("/fixture-files/") && <p className="font-medium text-muted">Sample fixture photo</p>}
       <p className="truncate font-medium text-ink-2" title={evidence.filename}>
         <Camera className="mr-1 inline size-3 text-faint" />
         {evidence.filename}

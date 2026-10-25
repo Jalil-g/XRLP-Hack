@@ -82,16 +82,16 @@ function BuilderProject({ d }: { d: ProjectDetail }) {
       <div className="mb-6 grid gap-6 rounded-[20px] bg-capital p-6 text-capital-text sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8">
         <div className="min-w-0">
           <p className="text-small text-capital-muted">{current ? `${current.title} · scheduled draw` : "Project principal"}</p>
-          <p className="mt-2 break-words text-[36px] leading-[1.1] font-semibold tracking-[-0.035em] tabular-nums sm:text-[52px]">{formatAmount(current?.amount ?? p.terms.principal, { cents: true })} <span className="text-body font-medium tracking-normal text-capital-muted">RLUSD</span></p>
+          <p className="mt-2 break-words text-[36px] leading-[1.1] font-semibold tracking-[-0.035em] tabular-nums sm:text-[52px]">{formatAmount(current?.amount ?? p.terms.principal)} <span className="text-body font-medium tracking-normal text-capital-muted">RLUSD</span></p>
           <p className="mt-3 max-w-[65ch] text-small text-capital-muted">{current ? STEP[current.status] ?? (current.status === "failed" ? "A check failed. Review the flagged evidence and resubmit; funds remain locked." : "Follow the milestone below for the next action.") : "Verification comes before funding. Each construction draw has its own evidence requirements."}</p>
         </div>
         <dl className="space-y-3 border-t border-capital-muted/30 pt-4 text-small sm:border-t-0 sm:border-l sm:pt-0 sm:pl-6">
           {p.status === "funding" || p.status === "funded" ? (
-            <div><dt className="text-capital-muted">Raised from investors</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(raised / 100, { cents: true })} RLUSD</dd></div>
+            <div><dt className="text-capital-muted">Raised from investors</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(raised / 100)} RLUSD</dd></div>
           ) : (
-            <div><dt className="text-capital-muted">Paid to you</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(p.milestones.filter((m) => m.status === "released").reduce((a, m) => a + toCents(m.amount), 0) / 100, { cents: true })} RLUSD</dd></div>
+            <div><dt className="text-capital-muted">Paid to you</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(p.milestones.filter((m) => m.status === "released").reduce((a, m) => a + toCents(m.amount), 0) / 100)} RLUSD</dd></div>
           )}
-          {current && <div><dt className="text-capital-muted">Project principal</dt><dd className="mt-1 tabular-nums">{formatAmount(p.terms.principal, { cents: true })} RLUSD</dd></div>}
+          {current && <div><dt className="text-capital-muted">Project principal</dt><dd className="mt-1 tabular-nums">{formatAmount(p.terms.principal)} RLUSD</dd></div>}
         </dl>
       </div>
       <div className="mb-8">
@@ -163,7 +163,7 @@ function Payouts({ d }: { d: ProjectDetail }) {
 const STEP: Partial<Record<Milestone["status"], string>> = {
   escrowed: "Upload the evidence below. Next, the assigned inspector audits the site, then the checks run.",
   evidence_submitted: "Evidence received. The assigned inspector audits it and signs; then run the checks. Without a signed audit the inspector check fails.",
-  audited: "The inspector signed the audit. Run the checks: if every one passes, the escrow pays you in seconds.",
+  audited: "The inspector signed the audit. Run the checks: if every one passes, the escrow pays you.",
   needs_human: "The checks passed below the confidence this milestone needs. The platform operator is reviewing.",
   verified: "All checks passed. The release service is finishing the escrow.",
   expired: "This escrow expired. The money goes back to the project account and is repaid to the vault.",
@@ -206,16 +206,16 @@ function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
     />
   );
   return (
-    <div className="space-y-6 rounded-panel border border-line bg-surface p-4 sm:p-6">
+    <div className="space-y-6">
       <div>
-        <h3 className="text-body font-semibold">
+        <h3 className="text-heading">
           Milestone {m.index + 1}: {m.title} · {formatAmount(m.amount)} RLUSD
         </h3>
-        <p className="mt-1 max-w-[72ch] text-small text-ink-2">
-          {m.status === "failed"
-            ? `${failed.length === 1 ? "A check" : `${failed.length} checks`} failed, so the money stays locked. Fix what the red row says, then resubmit: the checks run again on the new evidence.`
-            : STEP[m.status]}
-        </p>
+        {m.status === "failed" && (
+          <p className="mt-1 max-w-[72ch] text-small text-ink-2">
+            {`${failed.length === 1 ? "A check" : `${failed.length} checks`} failed, so the money stays locked. Fix what the red row says, then resubmit: the checks run again on the new evidence.`}
+          </p>
+        )}
       </div>
       {m.status === "failed" ? (
         <>

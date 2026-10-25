@@ -12,6 +12,8 @@ html[data-projector="true"] {
 .finance-surface { border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-surface); padding: 24px; box-shadow: 0 2px 8px -4px rgb(23 37 28 / .12); }
 .capital-summary { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr); gap: 40px; border-radius: 20px; background: var(--color-capital); color: var(--color-capital-text); padding: 32px; }
 .project-capital { padding: 24px 32px; }
+.capital-compact { padding: 24px 32px; }
+.capital-compact .financial-amount { font-size: 40px; line-height: 44px; }
 .financial-amount { font-size: 52px; line-height: 56px; letter-spacing: -.035em; font-weight: 600; font-variant-numeric: tabular-nums; }
 .financial-amount > span { font-size: 16px; line-height: 24px; letter-spacing: 0; font-weight: 400; color: var(--color-capital-muted); }
 .capital-detail { display: grid; align-content: center; gap: 16px; border-left: 1px solid #425044; padding-left: 32px; }
@@ -22,8 +24,9 @@ html[data-projector="true"] {
 .capital-summary button:not([data-state]):hover, .capital-summary a.capital-action:hover { background: var(--color-accent-hover); }
 .capital-summary :focus-visible { outline-color: var(--color-accent); }
 .project-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; align-items: start; }
-.project-context { border-top: 3px solid var(--color-ink); padding-top: 20px; }
-.project-context dl > div { padding: 16px 0; border-bottom: 1px solid var(--color-line); }
+.project-context { border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-surface); padding: 20px 24px; box-shadow: 0 2px 8px -4px rgb(23 37 28 / .12); }
+.project-context dl > div { padding: 14px 0; border-bottom: 1px solid var(--color-line); }
+.project-context dl > div:last-child { border-bottom: 0; }
 .project-context dt { font-size: 13px; color: var(--color-ink-2); }
 .project-context dd { margin-top: 4px; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) { .project-workspace { grid-template-columns: minmax(0, 1fr); } .project-context dl { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; } }

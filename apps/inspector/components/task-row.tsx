@@ -55,8 +55,8 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
             )}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-right"><span className="block tabular text-body font-semibold">{formatRlusd(taskAmount(task))}</span><span className="text-caption text-muted">{m ? "Milestone amount" : "Project amount"}</span></div>
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
+          <div className="sm:text-right"><span className="block tabular text-body font-semibold">{formatRlusd(taskAmount(task))}</span><span className="text-caption text-muted">{m ? "Milestone amount" : "Project amount"}</span></div>
           <Badge tone={NEEDS[task.needs].tone} dot>
             {NEEDS[task.needs].label}
           </Badge>
@@ -68,10 +68,11 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
         </div>
       </div>
 
-      <ul className="mt-2 flex flex-wrap gap-1.5">
-        {task.sov.map((l) => (
-          <li key={l.code} className="rounded-md bg-subtle px-2 py-0.5 text-caption text-ink-2">
-            <span className="font-mono text-faint">{l.code}</span> {l.title} <span className="tabular text-faint">· {formatRlusd(l.amount)}</span>
+      <ul aria-label="Schedule of Values lines" className="mt-2 flex flex-wrap gap-x-2 text-small text-ink-2">
+        {task.sov.map((l, i) => (
+          <li key={l.code}>
+            {i > 0 && <span aria-hidden className="mr-2 text-faint">·</span>}
+            {l.title} <span className="tabular text-muted">{formatRlusd(l.amount)}</span>
           </li>
         ))}
       </ul>

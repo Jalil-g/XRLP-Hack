@@ -36,31 +36,32 @@ export default function QueuePage() {
     <div className="space-y-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-title">Assigned audits</h1>
-          <p className="mt-2 max-w-2xl text-body text-muted">Review the evidence. Record what you see. Sign your judgment.</p>
+          <h1 className="text-title">
+            Assigned audits{groups && <span className="ml-3 align-baseline text-ink-2 tabular">{actionable}</span>}
+          </h1>
+          <p className="mt-2 max-w-2xl text-body text-muted">
+            {groups ? `${actionable} awaiting your review: audits, re-audits and site visits. ` : ""}Record what you see and sign your judgment.
+          </p>
         </div>
         <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
       </div>
 
-      <section aria-label="Your assignment and credentials" className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <div className="flex items-center gap-4 border-b border-line pb-6 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
-          <span className="text-[52px] leading-none font-semibold tracking-[-0.035em] tabular">{groups ? actionable : "—"}</span>
-          <div><h2 className="text-small font-semibold">Awaiting your review</h2><p className="mt-1 text-caption text-muted">Audits, re-audits and site visits</p></div>
-        </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold">{inspector.name}</span>
-              <VerifiedInspectorBadge inspector={inspector} />
-            </div>
-            <p className="text-caption text-muted">
-              {inspector.licenseNumber} · {inspector.trades.join(", ")}
-            </p>
+      <section aria-label="Your credentials" className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-panel border border-line bg-surface px-5 py-4 sm:px-6">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold">{inspector.name}</span>
+            <VerifiedInspectorBadge inspector={inspector} />
           </div>
-          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="ml-auto font-mono text-caption text-muted underline underline-offset-4 hover:text-brand">
+          <p className="text-caption text-muted">
+            {inspector.licenseNumber} · {inspector.trades.join(", ")}
+          </p>
+        </div>
+        <p className="text-caption text-muted sm:ml-auto">
+          Signing account{" "}
+          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="font-mono text-ink-2 underline underline-offset-4 hover:text-brand">
             {shortAddress(inspector.address, 8, 6)}
           </a>
-        </div>
+        </p>
       </section>
 
       {!groups ? (

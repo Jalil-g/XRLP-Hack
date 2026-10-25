@@ -44,7 +44,7 @@ export function SiteHeader() {
             {API_MODE === "mock" ? "Mock data" : "Live API"}
           </span>
           <details className="relative">
-            <summary className="flex h-11 max-w-[200px] cursor-pointer list-none items-center gap-2 rounded-control px-2 text-caption font-medium hover:bg-band [&::-webkit-details-marker]:hidden">
+            <summary className="flex h-11 max-w-[200px] lg:max-w-[320px] cursor-pointer list-none items-center gap-2 rounded-control px-2 text-caption font-medium hover:bg-band [&::-webkit-details-marker]:hidden">
               Inspector <ChevronDown className="size-3.5 shrink-0 text-muted" aria-hidden />
               <span className="hidden truncate text-muted lg:inline">{inspector?.name}</span>
             </summary>

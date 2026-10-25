@@ -18,7 +18,7 @@ export default async function ProjectsPage() {
   const funding = projects.filter((project) => project.status === "funding");
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <AutoRefresh ms={5000} />
 
       <header className="max-w-[760px]">
@@ -28,12 +28,12 @@ export default async function ProjectsPage() {
         </p>
       </header>
 
-      <section className="capital-summary" aria-label="Listed project capital">
+      <section className="capital-summary capital-compact" aria-label="Listed project capital">
         <div>
           <p className="text-small text-capital-muted">Capital across listed projects</p>
-          <p className="financial-amount mt-3">{formatAmount(fromCents(principal))} <span>RLUSD</span></p>
+          <p className="financial-amount mt-2">{formatAmount(fromCents(principal))} <span>RLUSD</span></p>
           <CapitalBar
-            className="mt-6"
+            className="mt-4"
             label="Listed project funding"
             segments={[
               { label: "Raised", cents: raised, tone: "accent" },
@@ -42,7 +42,6 @@ export default async function ProjectsPage() {
           />
         </div>
         <div className="capital-detail">
-          <div><span>Raised to date</span><strong>{formatAmount(fromCents(raised))} RLUSD</strong></div>
           <div><span>Verified projects</span><strong>{projects.length}</strong></div>
           <div><span>Open for funding</span><strong>{funding.length}</strong></div>
         </div>
@@ -109,7 +108,7 @@ export default async function ProjectsPage() {
           </div>
         )}
       </section>
-      <p className="max-w-[78ch] text-small text-ink-2">The ledger fixes where money can go. The platform release service decides when, using the inspector&apos;s signed audit and automated checks. This is a Devnet prototype, not an offer to invest.</p>
+      <p className="max-w-[78ch] text-small text-ink-2">The ledger fixes where money can go. The platform release service decides when, using the inspector&apos;s signed audit and automated checks.</p>
     </div>
   );
 }

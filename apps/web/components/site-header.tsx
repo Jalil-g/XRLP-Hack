@@ -36,7 +36,7 @@ export function SiteHeader({ session }: { session: Session }) {
             </span>
           )}
           <details className="relative">
-            <summary className="flex h-11 max-w-[200px] cursor-pointer list-none items-center gap-2 rounded-control px-2 text-caption font-medium hover:bg-band [&::-webkit-details-marker]:hidden">
+            <summary className="flex h-11 max-w-[200px] lg:max-w-[320px] cursor-pointer list-none items-center gap-2 rounded-control px-2 text-caption font-medium hover:bg-band [&::-webkit-details-marker]:hidden">
               <span className="capitalize">{session.role}</span><ChevronDown className="size-3.5 shrink-0 text-ink-2" aria-hidden />
               <span className="hidden truncate text-ink-2 lg:inline">{session.role === "investor" ? session.investor?.name : session.role === "builder" ? session.builder?.name : "Operator"}</span>
             </summary>

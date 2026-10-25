@@ -59,7 +59,7 @@ export default async function VerificationPage({ params }: Props) {
 
       <section className="finance-surface grid gap-6 sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8" aria-label="Project verification summary">
         <div><h2 className="text-heading">{p.name}</h2><p className="mt-2 text-body text-ink-2">{builder.name}</p><p className="mt-5 max-w-[65ch] text-small text-ink-2">{v ? "Read the findings below before moving to the next stage. Project verification is not approval of a milestone draw." : "Verification has not run. Pay the fee, then review the identity, feasibility and capability findings here."}</p></div>
-        <div className="border-t border-line pt-4 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-8"><p className="text-small text-ink-2">Requested financing</p><p className="mt-2 break-words text-[36px] leading-tight font-semibold tracking-[-0.035em] tabular-nums">{formatAmount(p.terms.principal, { cents: true })}</p><p className="mt-1 text-small text-ink-2">RLUSD · {decision?.label ?? "Awaiting verification"}</p></div>
+        <div className="border-t border-line pt-4 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-8"><p className="text-small text-ink-2">Requested financing</p><p className="mt-2 break-words text-[36px] leading-tight font-semibold tracking-[-0.035em] tabular-nums">{formatAmount(p.terms.principal)}</p><p className="mt-1 text-small text-ink-2">RLUSD · {decision?.label ?? "Awaiting verification"}</p></div>
         <dl className="grid gap-x-10 gap-y-5 border-t border-line pt-6 sm:col-span-2 sm:grid-cols-3">
         <Fact
           label="Verification fee"
@@ -143,8 +143,8 @@ function Group({ title, note, checks }: { title: string; note: string; checks: C
                 <p className="text-small font-medium text-ink">
                   {checkLabel(c)}
                   {mock && (
-                    <Tag className="ml-2 h-5 px-1.5 align-middle text-[11px]" title={mock}>
-                      MOCK
+                    <Tag className="ml-2 h-5 px-1.5 align-middle" title={mock}>
+                      Mock
                     </Tag>
                   )}
                 </p>
