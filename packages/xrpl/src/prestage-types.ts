@@ -189,3 +189,28 @@ export function prestageVaultDates(p: { subscriptionDate: number; paymentTotal: 
   const redemptionDate = Math.max(loanSetDeadline + p.paymentTotal * p.paymentIntervalS + 60 + (p.bufferS ?? 0), p.subscriptionDate + 180);
   return { subscriptionDate: p.subscriptionDate, redemptionDate, loanSetDeadline };
 }
+
+/**
+ * Project C's escrows are finished right after C's close, back to back (history for the UI). Their CancelAfter must be
+ * before C's maturity (2 short intervals), so it is short, and each EscrowFinish preflight refuses unless the release
+ * margin (preflight.ts releaseMarginS) is still left. With the default EscrowFinish margin (FINISH_LLS_MARGIN = 60
+ * ledgers → 300 s) a 360 s CancelAfter left 60 s for LoanSet + Batch + 3 finishes, and a one-minute devnet stall failed
+ * the whole prestage (devnet 2026-10-25: "only 280s to CancelAfter (< 300s margin)"). C's finishes use 20 ledgers → 120 s.
+ */
+export const PRESTAGE_C_FINISH_LLS_MARGIN = 20;
+
+/** LoanSet + Batch + 3 EscrowFinish take ~25 s on devnet; leave room for a slow minute and a reconnect. */
+export const PRESTAGE_C_MIN_SLACK_S = 180;
+
+/** C's escrow CancelAfter, seconds after the close is planned: 1.5 payment intervals (maturity is 2 intervals). Pure. */
+export function prestageCCancelAfterS(intervalS: number): number {
+  return Math.round(1.5 * intervalS);
+}
+
+/**
+ * Seconds C may lose between planning its close and its last finish's preflight before that preflight refuses
+ * (CancelAfter − release margin). Pure; prestage refuses to start below PRESTAGE_C_MIN_SLACK_S.
+ */
+export function prestageCReleaseSlackS(p: { intervalS: number; releaseMarginS: number }): number {
+  return prestageCCancelAfterS(p.intervalS) - p.releaseMarginS;
+}
