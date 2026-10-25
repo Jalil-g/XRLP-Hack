@@ -2,7 +2,7 @@
 
 > Script, slides and demo beats live in `docs/08-pitch-storyline.md` and `docs/04-demo-script.md`. This file keeps the hook, the
 > "why XRPL" table, the business model, regulation, and the judge Q&A. Numbers must be sourced in `docs/01-problem.md`.
-> Working name **Drawproof** (recommendation: Drawproof).
+> Name: **Drawproof** (decided 10-24, `docs/decisions.md`). Rehearsal sheet with owners and sources: `docs/pitch-qa.md`.
 
 ## The hook
 
@@ -27,7 +27,7 @@ Closing line: *Investors fund verified projects, and the money moves only when e
 | No single party controls the project account | **Native multisig** (3 of 4, master disabled) | Mainnet | Platform always needs two outside parties |
 | Only verified builders/inspectors, KYC'd investors | **Credentials (XLS-70)** + **Permissioned Domains (XLS-80)** | Mainnet | Compliance gating on-ledger |
 | Public, timestamped audit trail of every check | Memo'd attestation txs (audit, verdict, decision, release) | Mainnet | Anyone can verify the suite went green **before** the money moved |
-| Dollar settlement, seconds, cents | **RLUSD** (NYDFS-chartered issuer), ~4 s ledgers, 1-drop fees | Mainnet (mock IOU on devnet) | A draw costs fractions of a cent |
+| Dollar settlement, seconds, cents | **RLUSD** (NYDFS-chartered issuer), ~4 s ledgers, sub-cent fees | Mainnet (mock IOU on devnet) | A draw costs fractions of a cent |
 
 **What we will not claim:** that the AI is trustless, that the ledger enforces release *timing* (it enforces destination and expiry),
 that XRPL removes credit risk, or that this is mainnet-ready.
@@ -36,8 +36,8 @@ that XRPL removes credit risk, or that this is mainnet-ready.
 
 | Revenue line | Mechanism | Benchmark |
 |---|---|---|
-| **Project verification fee** (per project, paid by the builder, on-chain) | RLUSD `Payment` to the platform before AI/inspector review | Lender application/underwriting fees are standard |
-| **Origination fee** 1.5–2% | `LoanOriginationFee` on `LoanSet` | Private lenders charge 1–3 points |
+| **Project verification fee** (per project, paid by the builder, on-chain) | RLUSD `Payment` to the platform before AI/inspector review: 250 RLUSD in the demo, scales with project size in production (bps of principal, with a floor) | Lender application/underwriting fees are standard |
+| **Origination fee** 1.5–2% | `LoanOriginationFee` on `LoanSet`, paid by the builder at close (points at closing) | Private lenders charge 1–3 points |
 | **Management fee** ~10% of interest | `ManagementFeeRate` on `LoanBroker` | Debt-fund servicing spread |
 | **Inspection per audit** | Passed to the inspector plus margin | $150–250 per draw today |
 
@@ -56,23 +56,24 @@ funding-portal status, which is exactly what CrowdStreet was sued over."* Also: 
 **1. "The AI releases the money. Isn't the AI your oracle?"**
 The AI runs a *published* test suite, most of which is deterministic: GPS vs site, timestamps vs escrow, duplicate-photo hashes, invoice
 vs Schedule of Values, and a licensed inspector's **signed audit** that must exist and match. The AI's judgement checks sit on top and can
-only turn a green into `needs_human`, which a named operator resolves with a signed reason. Every check result is attested on-chain *before*
-the finish, so you can verify after the fact that money moved only when the suite was green.
+only hold money back: a red one fails the milestone, a low-confidence one goes to `needs_human` for a named operator's signed decision.
+Every check result is attested on-chain *before* the finish, so you can verify after the fact that money moved only when the suite was green.
 
 **2. "So the platform holds the release key. What stops you releasing early?"**
 Honest answer: yes, our release service holds the preimage, gated by the suite. Three bounds. The escrow destination is fixed, so the worst
 case is an early release **to the correct builder**, never a redirection. Every release is preceded by on-chain attestations anyone can
-audit. And we post first-loss cover, so we eat the first loss from a bad release. Ledger-enforced release (the suite result as an on-chain
-rule) is Smart Escrows, XLS-100, not on devnet yet: that's the roadmap slide.
+audit. And we post first-loss cover, so if a bad release ends in a default, we eat the first loss. Ledger-enforced release (the suite
+result as an on-chain rule) is Smart Escrows, XLS-100, not on devnet yet: that's the roadmap slide.
 
 **3. "Who's accountable if an inspector signs off on bad work?"**
-Inspectors are licensed and insured, verified on the platform (credential), and **assigned by the AI**, never chosen or paid by the builder.
-Their audit is a named, permanent on-chain signature. Their track record (how often the suite contradicts them) feeds future assignments.
-Large milestones require two independent audits.
+Inspectors are licensed and insured, verified on the platform (credential), and **assigned by the AI**, never chosen or paid directly by the
+builder. Their audit is a named, permanent on-chain signature. Their track record (how often the suite contradicts them) feeds future
+assignments. Large milestones require two independent audits.
 
 **4. "Inspector and builder collude?"**
 The builder can't pick the inspector. The deterministic checks run on the builder's evidence regardless of what the inspector says: a reused
-photo fails the suite even with a glowing audit. Two audits for big milestones. Everything is on-chain, so patterns are visible.
+photo fails the suite even with a glowing audit. Two audits for big milestones. Every audit and verdict is attested on-chain, so patterns are
+visible.
 
 **5. "EXIF and GPS can be faked."**
 Yes. That's why the suite also needs an inspector who was physically there, and why duplicate detection runs across *all* projects. The AI
@@ -87,8 +88,9 @@ A per-project verification fee that funds the AI review and any inspector time, 
 in seconds after the suite passes instead of 5–14 business days, and no personal-guarantee negotiation with a bank that pulled back.
 
 **8. "Default after money is released?"**
-That money is at risk, because that's lending. Mitigants: small milestones, a deed of trust held by the SPV, first-loss cover applied by the
-ledger on `LoanManage` default. Unreleased money is never at risk.
+That money is at risk, because that's lending. Mitigants: small milestones, a deed of trust held by the SPV (off-chain, production),
+first-loss cover applied by the ledger on `LoanManage` default (XLS-66; our devnet proof is XRPL-15, #127, in progress). Unreleased money
+can only go to the builder on release or back toward the vault.
 
 **9. "Interest accrues on undrawn principal?"**
 Yes, and we price for it: committed principal sits in escrow that can only go to this project or back, so the fair rate is below a bank's
@@ -96,8 +98,8 @@ drawn rate. Production alternative: one loan per milestone.
 
 **10. "Investor liquidity?"**
 Closed-ended vault: deposits during subscription, redeem from the redemption date. Early refunds restore liquidity but redemption waits for the
-date. If a project under-funds at the deadline, money is locked until redemption: `AssetsMaximum` = principal and a platform backstop are the
-mitigations. Open item, and we say so.
+date. If a project under-funds at the deadline, money is locked until redemption: a platform backstop for the shortfall is the mitigation
+(`AssetsMaximum` = principal only stops over-funding). Open item, and we say so.
 
 **11. "Why blockchain? A bank escrow agent does this."**
 An escrow agent is one more party you trust and costs days per release. Here the destination is fixed at creation, the refund is programmable,

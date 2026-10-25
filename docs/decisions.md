@@ -80,6 +80,23 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   geotagged there. **Open:** core's demo scenario still puts Maple St in Beacon, NY (41.5048/-73.9696); with the verifier's photos that
   fails `gps_within_site`. Core + verifier should agree on one site.
 
+## Pitch review (Jalil's agent, PITCH-09)
+
+- [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected
+  07 fact (name decided; slide 8 says the verification fee scales with project size). Factual errors in the demo beats (08 §3,
+  `docs/04-demo-script.md`) and positioning changes (hook "impossible", D5 "us trying to release it anyway") go to their owners on #72,
+  not edited here. (Jalil's agent, PITCH-09)
+- [10-25] Treated as facts, not positioning: "AI judgement can only turn a green into `needs_human`" was wrong (a red required AI check fails
+  the milestone: verifier `decide()`, 03 §Release), and so was "`AssetsMaximum` mitigates under-funding" (it only caps over-funding). Left as
+  suggestions: "funding-portal status" (funding portals are Reg CF only; counsel words it), "most fraud" (unsourced), inspection pass-through
+  counted as revenue in the business illustration. (Jalil's agent, PITCH-09)
+- [10-25] New disclosure in `docs/pitch-qa.md` Q2: the platform, as vault owner = loan broker, picks the `LoanSet` borrower, and nothing
+  on-ledger binds a vault to its project account. The answer is visibility (SPV + signer list exist from lock-terms, any other counterparty is
+  public at once) until a broker co-signed by the trustee exists. Proposed slide-6 row on #72, not applied. (Jalil's agent, PITCH-09)
+- [10-25] Timing assumes a 3:00 pitch + 2:00 demo slot, because PITCH-01 has no slot length yet. Q&A owners in `docs/pitch-qa.md` follow the
+  lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
+  confirms on #72. (Jalil's agent, PITCH-09)
+
 ## Open
 
 - Product name.

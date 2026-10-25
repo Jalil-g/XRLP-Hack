@@ -39,7 +39,7 @@ with one depositor; say that to Soil/Evernorth.
 | 5 | **LIVE** | "Live on XRPL devnet" + explorer QR | Execution |
 | 6 | **Who can move the money, and when?** | Table below | Credibility |
 | 7 | **Potential** | "Any building: Schedule of Values in, test suite out." · "Any auditor: humans today, drones and sensors through the same signed-audit interface." · "Any ledger rule: Smart Escrows (XLS-100) put the suite on-chain." · "Mainnet vote open Oct 2026." | Rubric: potential |
-| 8 | **Business + ask** | Fee lines (protocol fields) · first-loss cover · Reg D 506(c) → Reg A+ · Ask: pilot with one community bank or private-credit fund · "Prototype, not an offer to invest." Closing line. | Impact |
+| 8 | **Business + ask** | Verification fee (250 RLUSD in the demo, scales with project size) · fee lines (protocol fields) · first-loss cover · Reg D 506(c) → Reg A+ · Ask: pilot with one community bank or private-credit fund · "Prototype, not an offer to invest." Closing line. | Impact |
 
 **Slide 6 table:**
 
@@ -107,4 +107,4 @@ uploaded; **Project B** with an already-expired escrow. Nothing live waits on a 
 
 ## 6. Name
 
-Open. Recommendation **Drawproof**. Decide by T+6h.
+Decided 10-24: **Drawproof** (`docs/decisions.md`).
