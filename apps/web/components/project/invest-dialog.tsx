@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { TxLink } from "@/components/chain";
+import { InvestmentTransfer } from "@/components/project/investment-transfer";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/form";
@@ -42,6 +43,12 @@ export function InvestDialog({
   const cents = validNumber ? toCents(raw.trim()) : 0;
   const invalid = !validNumber || !Number.isSafeInteger(cents) ? "Enter a valid amount with up to two decimal places" : cents <= 0 ? "Enter an amount" : cents > toCents(remaining) ? `Only ${formatAmount(remaining)} RLUSD is left to raise` : null;
 
+  const changeOpen = (nextOpen: boolean) => {
+    if (submitting.current) return;
+    setOpen(nextOpen);
+    if (!nextOpen && done) router.refresh();
+  };
+
   const deposit = async () => {
     if (submitting.current || invalid || !reviewing) return;
     submitting.current = true;
@@ -50,7 +57,6 @@ export function InvestDialog({
     try {
       const r = await api.invest(projectId, investor.address, fromCents(cents));
       setDone(r.investment);
-      router.refresh();
     } catch (err) {
       const feedback = errorFeedback(err);
       setError(err instanceof ApiError && err.txResult === "tecNO_AUTH" ? `${investor.name} needs a KYC credential before depositing. The vault refused it (tecNO_AUTH).` : `${feedback.title}. ${errorDescription(feedback)}`);
@@ -73,23 +79,28 @@ export function InvestDialog({
       >
         Invest
       </Button>
-      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
-        <DialogContent>
-          {done ? (
+      <Dialog open={open} onOpenChange={changeOpen}>
+        <DialogContent closeDisabled={busy} data-pause-auto-refresh="true">
+          {busy || done ? (
             <>
               <DialogHeader>
-                <DialogTitle>Deposit confirmed</DialogTitle>
+                <DialogTitle>{done ? "You’re invested" : "Moving your investment"}</DialogTitle>
                 <DialogDescription>
-                  {formatAmount(done.amount)} RLUSD is in the {projectName} vault. It is lent to the project when funding closes, then released milestone by milestone.
+                  {done ? `Your deposit in ${projectName} is confirmed.` : `Sending your RLUSD to the ${projectName} vault.`}
                 </DialogDescription>
               </DialogHeader>
-              <DialogBody className="text-small text-ink-2">
-                VaultDeposit <TxLink hash={done.tx} />
+              <DialogBody>
+                <InvestmentTransfer
+                  amount={done?.amount ?? fromCents(cents)}
+                  investorName={investor.name}
+                  investorAddress={investor.address}
+                  projectName={projectName}
+                  confirmed={!!done}
+                />
+                {done && <p className="mt-4 border-t border-line pt-4 text-small text-ink-2">VaultDeposit <TxLink hash={done.tx} /></p>}
               </DialogBody>
               <DialogFooter>
-                <Button variant="secondary" onClick={() => setOpen(false)}>
-                  Done
-                </Button>
+                {done ? <Button onClick={() => changeOpen(false)}>Done</Button> : <p className="w-full text-center text-caption text-ink-2">Waiting for the vault to respond.</p>}
               </DialogFooter>
             </>
           ) : reviewing ? (
