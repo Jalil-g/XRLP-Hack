@@ -178,8 +178,6 @@ a gravel floor, and the inspector rebar photo shows work in progress. Validate o
 before claiming a live scenario A pass. Fixed EXIF dates (Oct 19–24 2026) require the seeded timeline
 or re-stamping with stampExif before a real-time demo.
 
-## Environment
-
 ## AWS-native Claude provider (VER-14)
 
 The owner explicitly selected AWS Bedrock for live validation. Set VERIFIER_PROVIDER=bedrock,
