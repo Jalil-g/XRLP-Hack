@@ -33,7 +33,7 @@ import {
   type InspectorAssignment,
 } from "@xrlp/shared";
 import { z } from "zod";
-import type { AuditReportInput, CoreApi, EvidenceUpload, ReleaseServicePort, StoredFile } from "./api-surface.ts";
+import type { AuditReportInput, CoreApi, DemoParty, EvidenceUpload, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
 import { DomainError } from "./errors.ts";
@@ -328,6 +328,17 @@ export class CoreService implements CoreApi {
       getProjectOrThrow(db, id);
       return projectEvents(db, id);
     });
+  }
+  listDemoParties(): Promise<DemoParty[]> {
+    return this.read((db) => [
+      { address: this.platformAddress, name: "Platform", role: "platform" },
+      { address: this.aiAgentAddress, name: "AI verifier", role: "ai_agent" },
+      { address: this.releaseServiceAddress, name: "Release service", role: "release_service" },
+      ...db.investors.map((i) => ({ address: i.address, name: i.name, role: "investor" as const, kyc: !!i.kycCredentialTx })),
+      ...db.builders.map((b) => ({ address: b.address, name: b.name, role: "builder" as const })),
+      ...db.inspectors.map((i) => ({ address: i.address, name: i.name, role: "inspector" as const })),
+      ...db.projects.flatMap((p) => p.chain.spv ? [{ address: p.chain.spv, name: p.name, role: "spv" as const }] : []),
+    ]);
   }
   listBuilders(): Promise<Builder[]> {
     return this.read((db) => db.builders);

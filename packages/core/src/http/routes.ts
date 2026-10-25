@@ -126,6 +126,7 @@ export function registerRoutes(app: Hono, api: CoreApi, uploads: UploadStore): v
   app.get("/api/portfolio/:investor", async (c) => c.json(await api.portfolio(parse(XrplAddress, c.req.param("investor"), "investor"))));
 
   // 21–23: admin / demo
+  app.get("/api/admin/demo/parties", async (c) => c.json(await api.listDemoParties()));
   app.post("/api/admin/demo/reset", async (c) => c.json(await api.resetDemo(parse(ResetBody, await jsonBody(c), "body"))));
   app.post("/api/admin/keeper/tick", async (c) => c.json(await api.keeperTick()));
   app.post("/api/admin/demo/try-steal/:id/:mid", async (c) => c.json(await api.tryStealDemo(c.req.param("id"), c.req.param("mid"))));

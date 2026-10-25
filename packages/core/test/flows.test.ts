@@ -345,3 +345,21 @@ describe("docs/04-demo-script.md end to end (fake mode)", () => {
     assert.equal((await b.service.listProjects()).length, 0);
   });
 });
+
+
+describe("demo role picker", () => {
+  it("serves registered public identities through the HTTP route", async () => {
+    const { createHttpServer } = await import("../src/http/app.ts");
+    const { svc } = newCore();
+    await registerParticipants(svc);
+    const app = createHttpServer(svc, { dataDir: mkdtempSync(join(tmpdir(), "demo-parties-")) });
+    const response = await app.request("/api/admin/demo/parties");
+    assert.equal(response.status, 200);
+    const parties = await response.json() as { address: string; name: string; role: string; kyc?: boolean }[];
+    assert.equal(parties.find((p) => p.role === "platform")?.address, svc.platformAddress);
+    assert.equal(parties.filter((p) => p.role === "investor").length, 3);
+    assert.ok(parties.filter((p) => p.role === "investor").every((p) => p.kyc));
+    assert.ok(parties.some((p) => p.address === DEMO.builders.hudson.address && p.role === "builder"));
+    for (const party of parties) assert.ok(Object.keys(party).every((k) => ["address", "name", "role", "kyc"].includes(k)));
+  });
+});
