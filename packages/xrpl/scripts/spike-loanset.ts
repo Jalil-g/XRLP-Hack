@@ -127,7 +127,7 @@ try {
   spike.note(`LoanSet Fee=${tx.Fee} drops, CounterpartySignature.Signers=${tx.CounterpartySignature?.Signers?.length}`);
   spike.note(`SPV RLUSD ${spvBefore} -> ${spvAfter} (principal ${PRINCIPAL} - origination ${ORIGINATION_FEE}); platform ${platformBefore} -> ${platformAfter}`);
   spike.note(`Loan ${loan.loanId}: PrincipalOutstanding=${entry?.PrincipalOutstanding} TotalValueOutstanding=${entry?.TotalValueOutstanding} PeriodicPayment=${entry?.PeriodicPayment} PaymentRemaining=${entry?.PaymentRemaining} Flags=${entry?.Flags}`);
-  spike.note(`Broker DebtTotal=${brokerAfter?.DebtTotal} CoverAvailable=${brokerAfter?.CoverAvailable}; Vault AssetsTotal=${vaultAfter?.AssetsTotal} AssetsAvailable=${vaultAfter?.AssetsAvailable}`);
+  spike.note(`Broker DebtTotal=${brokerAfter?.DebtTotal} CoverAvailable=${brokerAfter?.CoverAvailable}; Vault AssetsTotal=${vaultAfter?.AssetsTotal} AssetsAvailable=${vaultAfter?.AssetsAvailable ?? "0"}`);
 
   spike.print();
   console.log(`\nrun record: ${spike.save({ vaultId: vault.vaultId, loanBrokerId: broker.loanBrokerId, loanId: loan.loanId, openVaultId })}`);

@@ -1,8 +1,8 @@
 // Mock-mode seed data. Shapes = lib/types.ts (docs/05-api.md); test/fixtures.test.ts parses every object with those schemas.
 // Story matches docs/04-demo-script.md: Maple St duplex (3 milestones, escrows locked, M1 evidence awaiting the inspector's
 // audit, M2 evidence with the reused Oak Ave framing photo), plus a failed suite needing a re-audit and a pre-construction visit.
-// Addresses are real classic addresses derived from public entropy sha256("drawproof/mock/<label>")[0..16] — never funded,
-// never on devnet; they only exist so mock-mode signing (INS-04) has keys that match the fixtures.
+// Inspector addresses are real ed25519 keys from PUBLIC entropy sha256("drawproof/mock/inspector-<name>")[0..16] (lib/mock/keys.ts)
+// — never funded, never on devnet; they exist so mock-mode signing (INS-04) has keys that match the fixtures.
 import { explorerTxUrl } from "@xrlp/shared";
 import type {
   Attestation,

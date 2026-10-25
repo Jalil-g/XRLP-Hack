@@ -4,16 +4,18 @@
 // Proves on devnet (SPV: master disabled, SignerList {platform, builder, inspector, trustee} w1, quorum 3):
 //   1. EscrowCreate (SPV multisig, PREIMAGE-SHA-256 Condition, CancelAfter) -> EscrowFinish by releaseService
 //   2. EscrowFinish with a wrong fulfillment -> tecCRYPTOCONDITION_ERROR on-ledger, escrow still open
-//   3. EscrowFinish to a destination without an RLUSD trust line -> tecNO_LINE; the Fulfillment is now public
+//   3. EscrowFinish to a destination without an RLUSD trust line: finishEscrow() refuses client-side (XRPL-14
+//      preflight, nothing submitted); forced with skipPreflight -> tecNO_LINE; the Fulfillment is now public
 //      on-ledger while the escrow is still open; a third party finishes it once the line exists
 //   4. EscrowFinish after CancelAfter -> tecNO_PERMISSION (or whatever devnet says); EscrowCancel -> RLUSD back to SPV
 // Env: SPIKE_SIGNERS=platform,inspector,trustee (which 3 SPV signers sign EscrowCreate), SPIKE_CANCEL_S=75.
 import { AccountSetAsfFlags, type Wallet } from "xrpl";
 import { disconnect, getClient, ledgerTime, signAndSubmit, waitForLedgerTimeAfter, XrplTxError, type TxResult } from "../src/client.ts";
-import { generateMilestoneCondition, type MilestoneCondition } from "../src/condition.ts";
 import { cancelEscrow, createMilestoneEscrow, finishEscrow, listEscrows, type CreatedEscrow } from "../src/escrow.ts";
 import { configureIssuer, ensureTrustline, issueRlusd, rlusdBalance } from "../src/rlusd.ts";
+import { UnsafeReleaseError } from "../src/preflight.ts";
 import { getSpvInfo } from "../src/spv.ts";
+import { testConditionPair, type TestConditionPair } from "../test/support/conditions.ts";
 import { Spike } from "./spike-lib.ts";
 
 const SPV_FUNDING = "1000";
@@ -87,7 +89,7 @@ try {
 
   const signerRoles = (process.env.SPIKE_SIGNERS ?? "platform,inspector,trustee").split(",") as Role[];
   const signers = signerRoles.map((r) => w[r]);
-  const create = async (label: string, destination: Role, amount: string, cond: MilestoneCondition, cancelAfter: number) => {
+  const create = async (label: string, destination: Role, amount: string, cond: TestConditionPair, cancelAfter: number) => {
     const e = await createMilestoneEscrow({ spv, builder: w[destination].classicAddress, issuer, amount, condition: cond.condition, cancelAfter, signers });
     spike.rows.push({ step: `${label}: EscrowCreate ${amount} RLUSD -> ${destination} (SPV multisig ${signerRoles.join("+")})`, result: e.tx.result, hash: e.tx.hash });
     spike.log(`  ✔ ${label}: EscrowCreate seq ${e.offerSequence} ${e.tx.explorerUrl}`);
@@ -95,14 +97,14 @@ try {
   };
 
   // Case 4 first (short CancelAfter) so its clock runs while cases 1–3 execute.
-  const c4 = generateMilestoneCondition();
+  const c4 = testConditionPair();
   const cancelAfter4 = (await ledgerTime()) + SHORT_CANCEL_S;
   const e4 = await create(`4 (CancelAfter +${SHORT_CANCEL_S}s)`, "builder", "40", c4, cancelAfter4);
   const createFee = (e4.tx.tx as { Fee?: string }).Fee;
 
   // ── Case 1: happy path ────────────────────────────────────────────────────────────────────────────
   const longCancel = (await ledgerTime()) + LONG_CANCEL_S;
-  const c1 = generateMilestoneCondition();
+  const c1 = testConditionPair();
   const e1 = await create("1", "builder", "100", c1, longCancel);
   const b1 = await bal("builder");
   const f1 = await spike.ok("1: EscrowFinish (correct fulfillment) by releaseService", () =>
@@ -111,9 +113,9 @@ try {
   spike.note(`case 1: builder RLUSD ${b1} -> ${await bal("builder")}; EscrowFinish Fee=${(f1!.tx as { Fee?: string }).Fee} drops; multisig EscrowCreate Fee=${createFee} drops`);
 
   // ── Case 2: wrong fulfillment -> tecCRYPTOCONDITION_ERROR, on-ledger ──────────────────────────────
-  const c2 = generateMilestoneCondition();
+  const c2 = testConditionPair();
   const e2 = await create("2", "builder", "50", c2, longCancel);
-  const wrong = generateMilestoneCondition().fulfillment; // well-formed, wrong preimage
+  const wrong = testConditionPair().fulfillment; // well-formed, wrong preimage
   const err2 = await spike.fails("2: EscrowFinish (WRONG fulfillment) by releaseService", "tecCRYPTOCONDITION_ERROR", () => rawFinish(w.releaseService, e2, c2.condition, wrong));
   const t2 = await fetchTx(err2.hash!);
   spike.note(`case 2: wrong-fulfillment tx validated=${t2.validated} ledger_index=${t2.ledger_index} result=${t2.result} Fee=${t2.fee} drops; escrow still open=${await escrowOpen(spv, e2.tx.hash)}`);
@@ -122,10 +124,20 @@ try {
   );
 
   // ── Case 3: destination without trust line -> tecNO_LINE, preimage leaks ───────────────────────────
-  const c3 = generateMilestoneCondition();
+  const c3 = testConditionPair();
   const e3 = await create("3", "builder2", "25", c3, longCancel);
-  const err3 = await spike.fails("3: EscrowFinish (correct fulfillment) -> builder2 without RLUSD trust line", "tecNO_LINE", () =>
-    finishEscrow({ submitter: w.releaseService, owner: spv, offerSequence: e3.offerSequence, condition: c3.condition, fulfillment: c3.fulfillment }),
+  // finishEscrow() preflights (XRPL-14) and refuses without submitting ...
+  try {
+    await finishEscrow({ submitter: w.releaseService, owner: spv, offerSequence: e3.offerSequence, condition: c3.condition, fulfillment: c3.fulfillment });
+    throw new Error("finishEscrow to builder2 (no trust line) should have been refused by preflight");
+  } catch (e) {
+    if (!(e instanceof UnsafeReleaseError)) throw e;
+    spike.rows.push({ step: "3: finishEscrow -> builder2 without trust line: preflight refuses, nothing submitted", result: `${e.code}/${e.reason}` });
+    spike.log(`  ✔ 3: preflight refused: ${e.message}`);
+  }
+  // ... so skip it to reproduce the leak the preflight exists to prevent.
+  const err3 = await spike.fails("3: EscrowFinish (correct fulfillment, preflight skipped) -> builder2 without RLUSD trust line", "tecNO_LINE", () =>
+    finishEscrow({ submitter: w.releaseService, owner: spv, offerSequence: e3.offerSequence, condition: c3.condition, fulfillment: c3.fulfillment, skipPreflight: true }),
   );
   const t3 = await fetchTx(err3.hash!);
   const open3 = await escrowOpen(spv, e3.tx.hash);

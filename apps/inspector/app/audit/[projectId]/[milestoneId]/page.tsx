@@ -1,13 +1,15 @@
 "use client";
 // INS-03 audit form: the inspector's deliverable for one milestone. Builder evidence on the left (what the suite will check),
-// the audit on the right: SoV checklist, site photos with EXIF, site map, notes. Files the InspectorAudit via route 10.
+// the audit on the right: SoV checklist, site photos with EXIF, site map, notes. INS-04: the inspector signs the audit's
+// attestation (XRPL-08 Payment to the SPV) in this browser and route 10 carries it as signedTxBlob.
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, RotateCcw } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, PenLine, RotateCcw } from "lucide-react";
 import { Checklist } from "@/components/audit/checklist";
 import { EvidenceGallery } from "@/components/audit/evidence-gallery";
 import { PhotoPicker } from "@/components/audit/photo-picker";
+import { SigningPanel } from "@/components/audit/signing-panel";
 import { SiteMap, type MapPin } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
 import { NEEDS } from "@/components/task-row";
@@ -17,8 +19,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, SectionLabel
 import { ApiError, api } from "@/lib/api";
 import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, type AuditDraft } from "@/lib/audit";
 import { evidenceStatus } from "@/lib/queue";
+import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
 import type { InspectorTask, SubmitAuditResult } from "@/lib/types";
-import { cn, formatDateTime, formatRlusd, shortHash } from "@/lib/utils";
+import { cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
 
 type AuditTask = InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> };
 
@@ -91,10 +94,21 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
   const m = task.milestone;
   const [draft, setDraft] = useState<AuditDraft>(() => emptyDraft(task));
   const [showErrors, setShowErrors] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "signing" | "filing">("idle");
   const [submitError, setSubmitError] = useState<{ message: string; stale: boolean }>();
-  const [result, setResult] = useState<SubmitAuditResult>();
+  const [result, setResult] = useState<{ res: SubmitAuditResult; signed?: SignedAttestation }>();
   const [bundle, setBundle] = useState<string>();
+  const [key, setKey] = useState<InspectorKey | null>();
+  const [keyVersion, setKeyVersion] = useState(0);
+  const spv = m.escrow?.owner;
+
+  useEffect(() => {
+    let live = true;
+    void loadInspectorKey(inspector).then((k) => live && setKey(k));
+    return () => {
+      live = false;
+    };
+  }, [inspector, keyVersion]);
 
   useEffect(() => {
     let live = true;
@@ -123,26 +137,41 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
     [],
   );
 
-  async function submit() {
+  /** `sign`: attestation signed here with the inspector's key. Otherwise core signs it with the inspector's demo key. */
+  async function submit(sign: boolean) {
     setShowErrors(true);
     setSubmitError(undefined);
     if (problems.length) {
       document.getElementById(problems[0]!.field)?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
-    setSubmitting(true);
     try {
       const report = await buildAudit(task, inspector, draft, new Date().toISOString());
-      setResult(await api.submitAudit({ projectId: task.projectId, milestoneId: m.id, report, photos: draft.photos.map((p) => p.file) }));
+      let signed: SignedAttestation | undefined;
+      if (sign && key && spv) {
+        setPhase("signing");
+        signed = await signAuditAttestation(report, spv, key);
+      }
+      setPhase("filing");
+      const res = await api.submitAudit({
+        projectId: task.projectId,
+        milestoneId: m.id,
+        report,
+        photos: draft.photos.map((p) => p.file),
+        ...(signed ? { signedTxBlob: signed.blob } : {}),
+      });
+      setResult({ res, signed });
     } catch (err) {
       const message = (err as Error).message;
       setSubmitError({ message, stale: err instanceof ApiError && err.code === "validation" && message.includes("evidenceBundleHash") });
     } finally {
-      setSubmitting(false);
+      setPhase("idle");
     }
   }
 
-  if (result) return <Filed result={result} task={task} back={back} />;
+  if (result) return <Filed result={result.res} signed={result.signed} task={task} back={back} />;
+  const busy = phase !== "idle";
+  const canSign = Boolean(key && spv);
 
   return (
     <div className="space-y-6">
@@ -282,8 +311,10 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
                   )}
                 </div>
               )}
-              <Button variant="brand" size="lg" className="w-full" onClick={() => void submit()} disabled={submitting || !bundle}>
-                {submitting ? "Filing audit…" : "File audit"}
+              {key !== undefined && spv && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
+              <Button variant="brand" size="lg" className="w-full" onClick={() => void submit(canSign)} disabled={busy || !bundle || key === undefined}>
+                {canSign && <PenLine />}
+                {phase === "signing" ? "Signing attestation…" : phase === "filing" ? "Filing audit…" : canSign ? "Sign & file audit" : "File audit (core signs)"}
               </Button>
             </CardContent>
           </Card>
@@ -293,8 +324,9 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
   );
 }
 
-function Filed({ result, task, back }: { result: SubmitAuditResult; task: AuditTask; back: React.ReactNode }) {
+function Filed({ result, signed, task, back }: { result: SubmitAuditResult; signed?: SignedAttestation; task: AuditTask; back: React.ReactNode }) {
   const attested = result.events.find((e) => e.kind === "audit_attested") ?? result.events[0];
+  const sameTx = signed && attested && signed.txHash.toUpperCase() === attested.txHash.toUpperCase();
   return (
     <div className="mx-auto max-w-xl space-y-4">
       {back}
@@ -313,6 +345,26 @@ function Filed({ result, task, back }: { result: SubmitAuditResult; task: AuditT
               Attestation {shortHash(attested.txHash)} <ExternalLink className="size-3.5" />
             </a>
           )}
+          <dl className="mx-auto max-w-sm space-y-1 rounded-md bg-subtle px-4 py-3 text-left text-xs">
+            {signed ? (
+              <>
+                <Row label="Signed by">
+                  <span className="font-mono">{shortAddress(signed.signer, 8, 6)}</span> in this browser
+                </Row>
+                <Row label="Sent to">
+                  <span className="font-mono">{shortAddress(signed.spv, 8, 6)}</span> (project account), 1 drop
+                </Row>
+                <Row label="Memo">
+                  <span className="font-mono">audit · {shortHash(signed.memo.hash)}</span>
+                </Row>
+                <Row label="On ledger">
+                  {sameTx ? <span className="text-ok">same tx you signed ✓</span> : <span className="text-bad">tx hash differs from the one signed</span>}
+                </Row>
+              </>
+            ) : (
+              <Row label="Signed by">core, with your demo key (no key loaded in this browser)</Row>
+            )}
+          </dl>
           <div>
             <Link href="/" className={buttonClass("secondary")}>
               Back to queue
@@ -320,6 +372,15 @@ function Filed({ result, task, back }: { result: SubmitAuditResult; task: AuditT
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <dt className="w-20 shrink-0 text-faint">{label}</dt>
+      <dd className="min-w-0 text-ink-2">{children}</dd>
     </div>
   );
 }
