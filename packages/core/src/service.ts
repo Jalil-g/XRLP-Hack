@@ -5,6 +5,7 @@
 // erases an on-chain fact; keeperTick() retries the remainder.
 import {
   CreateProjectInput,
+  explorerTxUrl,
   LedgerError,
   XrplAddress,
   type AttestMemo,
@@ -934,19 +935,54 @@ export class CoreService implements CoreApi {
         db.chainEvents.push(...evs);
       });
     }
-    // Refund the vault: multisig LoanPay from the SPV (separate commit; keeperTick retries if it fails).
-    const tx = await this.onLedger("escrow refund LoanPay", () => this.ledger.repayLoan({ project: p, amount: m.amount, source: "escrow_refund" }));
-    const evs = this.evs([tx], { projectId: id, milestoneId: mid, kind: "loan_payment", actor: p.chain.spv, amount: m.amount });
-    events.push(...evs);
+    // Refund the vault: multisig LoanPay from the SPV (separate commit; keeperTick retries if it fails). A write-ahead
+    // marker + the loan's TotalValueOutstanding make the retry safe: a LoanPay whose outcome we never learned (lost
+    // socket, or our commit failed after it applied) is detected on the loan instead of being paid twice.
+    const loanNow = p.chain.loanId ? await this.ledger.getLoanSnapshot({ loanId: p.chain.loanId }).catch(() => undefined) : undefined;
+    const prior = await this.read((db) => metaOf(db, id)?.refundAttempts?.[mid]);
+    if (prior) {
+      if (!prior.tvoBefore || !loanNow)
+        throw new DomainError("LEDGER_ERROR", `A refund LoanPay for ${mid} may already have applied (${prior.txHash ?? "hash unknown"}) and the loan can't be read to confirm; reconcile before retrying`, undefined, { txHash: prior.txHash });
+      // Half the refund is the threshold: fees can make the drop a little smaller than the payment.
+      if ((toMicro(prior.tvoBefore) - toMicro(loanNow.totalValueOutstanding)) * 2n >= toMicro(m.amount)) {
+        // It applied: record it without paying again. Only a known hash becomes a ChainEvent.
+        const tx: TxResult | undefined = prior.txHash
+          ? { hash: prior.txHash, explorerUrl: explorerTxUrl(prior.txHash), result: "reconciled_loan_repaid", kind: "loan_payment" }
+          : undefined;
+        return this.commitRefund(id, m, p.chain.spv, tx, events);
+      }
+    }
+    await this.store.write((db) => {
+      const meta = this.meta(db, id);
+      meta.refundAttempts = { ...meta.refundAttempts, [mid]: { at: this.nowIso(), ...(loanNow ? { tvoBefore: loanNow.totalValueOutstanding } : {}) } };
+    });
+    let tx: TxResult;
+    try {
+      tx = await this.onLedger("escrow refund LoanPay", () => this.ledger.repayLoan({ project: p, amount: m.amount, source: "escrow_refund" }));
+    } catch (e) {
+      const txHash = e instanceof DomainError ? e.txHash : undefined;
+      if (txHash) await this.store.write((db) => void (this.meta(db, id).refundAttempts![mid]!.txHash = txHash));
+      throw e;
+    }
+    return this.commitRefund(id, m, p.chain.spv, tx, events);
+  }
+
+  /** milestone -> refunded, repayment recorded, write-ahead marker cleared. No tx = reconciled without a known hash. */
+  private async commitRefund(id: string, ms: Milestone, spv: XrplAddress | undefined, tx: TxResult | undefined, events: ChainEvent[]) {
+    const mid = ms.id;
+    const evs = tx ? this.evs([tx], { projectId: id, milestoneId: mid, kind: "loan_payment", actor: spv, amount: ms.amount }) : [];
     const milestone = await this.store.write((db) => {
       const p = this.projectIn(db, id);
       const m = getMilestoneOrThrow(p, mid);
       this.setMilestoneStatus(m, "refunded");
-      db.repayments.push({ projectId: id, milestoneId: mid, amount: m.amount, source: "escrow_refund", tx: tx.hash, at: tx.at ?? this.nowIso() });
+      db.repayments.push({ projectId: id, milestoneId: mid, amount: m.amount, source: "escrow_refund", tx: tx?.hash ?? `reconciled:${mid}`, at: tx?.at ?? this.nowIso() });
+      const meta = this.meta(db, id);
+      if (meta.refundAttempts) delete meta.refundAttempts[mid];
       this.maybeComplete(db, p);
       db.chainEvents.push(...evs);
       return m;
     });
+    events.push(...evs);
     return { milestone, events };
   }
 
