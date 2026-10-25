@@ -7,6 +7,7 @@
 // v1 memo (`xrlp/attestation/v1`, AttestationPayload) is still written by api.ts attestApproval and decoded here.
 import { createHash } from "node:crypto";
 import { convertHexToString, convertStringToHex, decode, verifySignature, type Payment, type Wallet } from "xrpl";
+import type { AttestMemo } from "@xrlp/shared";
 import { getClient, signAndSubmit, submitBlob, type TxResult } from "./client.ts";
 
 // ---------------------------------------------------------------- v2: xrlp/attest/v1
@@ -20,16 +21,8 @@ export const ATTEST_AMOUNT_DROPS = "1";
 /** Keep the whole memo well under rippled's 1 KB Memos limit. */
 export const ATTEST_MAX_MEMO_BYTES = 900;
 
-/** Mirrors `AttestMemo` in shared v2 (packages/shared/src/ports.ts, #53). TODO(#53): import from @xrlp/shared once merged. */
-export interface AttestMemo {
-  v: 1;
-  kind: AttestKind;
-  milestoneId: string;
-  /** sha256 hex of the attested object (audit JSON, verdictHash, decision reason, release decision). */
-  hash: string;
-  decision?: string;
-  reason?: string;
-}
+/** The shared v2 `AttestMemo` (`hash` = sha256 hex of the audit JSON / verdictHash / decision reason / release decision). */
+export type { AttestMemo };
 
 type MemoTx = { Memos?: { Memo: { MemoType?: string; MemoFormat?: string; MemoData?: string } }[] };
 

@@ -5,11 +5,13 @@
 //
 // Split: `evaluatePreflight(snapshot, now)` is pure (unit-tested offline); `fetchPreflightSnapshot`
 // is the thin network layer; `preflightFinish` = fetch + evaluate.
+import { LedgerError, type ErrorCode } from "@xrlp/shared";
 import { getClient, isNotFound } from "./client.ts";
 import { fulfillmentMatches } from "./condition.ts";
+import { fetchAccountLines, fetchAccountRoot, fetchEscrowNode, fetchLedgerNow, findTrustLine } from "./reads.ts";
 
-/** docs/05-api.md ErrorCode for "pre-reveal safety refused to submit a finish". */
-export const UNSAFE_RELEASE = "unsafe_release" as const;
+/** Shared `ErrorCode` for "pre-reveal safety refused to submit a finish". */
+export const UNSAFE_RELEASE = "unsafe_release" as const satisfies ErrorCode;
 
 export type PreflightReason =
   | "escrow_not_found" // already finished / cancelled, or wrong owner+seq
@@ -41,7 +43,8 @@ export interface LedgerNow {
 
 export type EscrowAmount = string | { currency: string; issuer: string; value: string } | { mpt_issuance_id: string; value: string };
 
-export interface EscrowSnapshot {
+/** Raw on-ledger Escrow fields preflight judges (not the shared `EscrowSnapshot`, see reads.ts `getEscrowSnapshot`). */
+export interface PreflightEscrow {
   Account: string;
   Destination: string;
   Amount: EscrowAmount;
@@ -49,6 +52,9 @@ export interface EscrowSnapshot {
   CancelAfter?: number;
   FinishAfter?: number;
 }
+
+/** @deprecated Renamed to `PreflightEscrow` (avoids clashing with the shared `EscrowSnapshot`). */
+export type EscrowSnapshot = PreflightEscrow;
 
 export interface AccountSnapshot {
   address: string;
@@ -88,7 +94,7 @@ export interface PreflightRequest {
 /** Everything evaluatePreflight needs. `null` = fetched and absent; `undefined` = not applicable. */
 export interface PreflightSnapshot {
   request: PreflightRequest;
-  escrow: EscrowSnapshot | null;
+  escrow: PreflightEscrow | null;
   destinationAccount?: AccountSnapshot | null;
   trustline?: TrustlineSnapshot | null;
   issuerAccount?: AccountSnapshot | null;
@@ -104,7 +110,7 @@ export interface PreflightDetails {
   ledgerCloseTime: number;
   owner: string;
   offerSequence: number;
-  escrow?: EscrowSnapshot;
+  escrow?: PreflightEscrow;
   /** CancelAfter - ledger now (negative = expired). */
   secondsToCancelAfter?: number;
   /** max(marginS, lastLedgerOffset × MAX_CLOSE_INTERVAL_S). */
@@ -272,12 +278,13 @@ export function evaluatePreflight(snap: PreflightSnapshot, now: LedgerNow): Pref
 
 // --- refusal → ErrorCode ------------------------------------------------------------------------
 
-/** Thrown when preflight refuses. `code` is docs/05-api.md `unsafe_release`. */
-export class UnsafeReleaseError extends Error {
-  readonly code = UNSAFE_RELEASE;
+/** Thrown when preflight refuses. A shared `LedgerError` with `code: "unsafe_release"`, so LedgerPort callers can catch it as is. */
+export class UnsafeReleaseError extends LedgerError {
+  declare readonly code: typeof UNSAFE_RELEASE;
   readonly reason: PreflightReason;
   constructor(readonly result: PreflightResult) {
-    super(`unsafe_release (${result.reason}): ${result.message}`);
+    super(UNSAFE_RELEASE, `unsafe_release (${result.reason}): ${result.message}`);
+    this.name = "UnsafeReleaseError";
     this.reason = result.reason!;
   }
 }
@@ -292,7 +299,7 @@ export function assertPreflightOk(result: PreflightResult): void {
 }
 
 // --- fetch layer ---------------------------------------------------------------------------------
-// TODO: dedupe with reads.ts (XRPL-09) — getEscrow / account + trust line reads.
+// Ledger / escrow / account / trust-line reads come from reads.ts (XRPL-09), pinned to one validated ledger index.
 
 async function orNull<T>(p: Promise<T>): Promise<T | null> {
   try {
@@ -304,30 +311,19 @@ async function orNull<T>(p: Promise<T>): Promise<T | null> {
 }
 
 async function accountAt(address: string, ledgerIndex: number): Promise<AccountSnapshot | null> {
-  const client = await getClient();
-  return orNull(
-    client.request({ command: "account_info", account: address, ledger_index: ledgerIndex }).then((r) => ({
-      address,
-      balance: String(r.result.account_data.Balance),
-      flags: r.result.account_data.Flags,
-    })),
-  );
+  const a = await orNull(fetchAccountRoot(address, ledgerIndex));
+  return a && { address, balance: a.Balance, flags: a.Flags };
 }
 
 /** Read every input from ONE validated ledger, so the decision is consistent. Submits nothing. */
 export async function fetchPreflightSnapshot(req: PreflightRequest): Promise<{ snapshot: PreflightSnapshot; now: LedgerNow }> {
   const client = await getClient();
-  const led = await client.request({ command: "ledger", ledger_index: "validated" });
-  const now: LedgerNow = { ledgerIndex: Number(led.result.ledger_index), closeTime: led.result.ledger.close_time };
+  const now: LedgerNow = await fetchLedgerNow();
   const at = now.ledgerIndex;
   const submitter = addressOf(req.submitter);
 
   const [escrow, feeRes, submitterAccount] = await Promise.all([
-    orNull(
-      client
-        .request({ command: "ledger_entry", escrow: { owner: req.owner, seq: req.offerSequence }, ledger_index: at })
-        .then((r) => r.result.node as unknown as EscrowSnapshot),
-    ),
+    orNull<PreflightEscrow | null>(fetchEscrowNode(req.owner, req.offerSequence, at)),
     client.request({ command: "fee" }),
     submitter ? accountAt(submitter, at) : Promise.resolve(undefined),
   ]);
@@ -342,13 +338,13 @@ export async function fetchPreflightSnapshot(req: PreflightRequest): Promise<{ s
   const [destinationAccount, issuerAccount, lines] = await Promise.all([
     accountAt(dest, at),
     iou ? accountAt(iou.issuer, at) : Promise.resolve(undefined),
-    iou ? orNull(client.request({ command: "account_lines", account: dest, peer: iou.issuer, ledger_index: at })) : Promise.resolve(undefined),
+    iou ? orNull(fetchAccountLines(dest, iou.issuer, at)) : Promise.resolve(undefined),
   ]);
   snapshot.destinationAccount = destinationAccount;
   if (issuerAccount !== undefined) snapshot.issuerAccount = issuerAccount;
   if (iou) {
-    const line = lines?.result.lines.find((l) => l.currency === iou.currency);
-    snapshot.trustline = line ? (line as unknown as TrustlineSnapshot) : null;
+    const line = lines ? findTrustLine(lines, iou.currency) : null;
+    snapshot.trustline = line ? (line as TrustlineSnapshot) : null;
   }
   if (destinationAccount && destinationAccount.flags & LSF_DEPOSIT_AUTH && submitter && submitter !== dest) {
     const r = await client.request({ command: "deposit_authorized", source_account: submitter, destination_account: dest, ledger_index: at });

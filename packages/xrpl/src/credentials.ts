@@ -33,10 +33,21 @@ export async function acceptCredential(subject: Wallet, issuer: string, type: Cr
   });
 }
 
-/** Returns "accepted" | "pending" | "none" for a subject/issuer/type. */
-export async function credentialStatus(subject: string, issuer: string, type: CredentialType): Promise<CredentialStatus> {
+/** The Credential ledger object (subject's owner directory). */
+export interface CredentialEntry {
+  index: string;
+  Subject: string;
+  Issuer: string;
+  CredentialType: string;
+  Flags: number;
+  /** Last tx that touched it (the CredentialCreate, or the CredentialAccept once accepted). */
+  PreviousTxnID: string;
+}
+
+/** The subject's credential from `issuer` of `type`, or undefined (also for an unfunded subject). */
+export async function getCredential(subject: string, issuer: string, type: CredentialType): Promise<CredentialEntry | undefined> {
   const client = await getClient();
-  let objects: { LedgerEntryType?: string; Issuer: string; CredentialType: string; Flags: number }[] = [];
+  let objects: (CredentialEntry & { LedgerEntryType?: string })[] = [];
   try {
     for (let marker: unknown = undefined, first = true; first || marker; first = false) {
       const res = await client.request({
@@ -50,13 +61,29 @@ export async function credentialStatus(subject: string, issuer: string, type: Cr
       marker = res.result.marker;
     }
   } catch (e) {
-    if (isNotFound(e)) return "none";
+    if (isNotFound(e)) return undefined;
     throw e;
   }
   const hex = credentialTypeHex(type).toUpperCase();
-  const c = objects.find((o) => o.Issuer === issuer && o.CredentialType.toUpperCase() === hex);
+  return objects.find((o) => o.Issuer === issuer && o.CredentialType.toUpperCase() === hex);
+}
+
+/** Returns "accepted" | "pending" | "none" for a subject/issuer/type. */
+export async function credentialStatus(subject: string, issuer: string, type: CredentialType): Promise<CredentialStatus> {
+  const c = await getCredential(subject, issuer, type);
   if (!c) return "none";
   return c.Flags & LSF_ACCEPTED ? "accepted" : "pending";
+}
+
+/** CredentialDelete by the issuer. Idempotent: no tx (undefined) if the subject holds no such credential. */
+export async function revokeCredential(issuer: Wallet, subject: string, type: CredentialType): Promise<TxResult | undefined> {
+  if (!(await getCredential(subject, issuer.classicAddress, type))) return undefined;
+  return signAndSubmit(issuer, {
+    TransactionType: "CredentialDelete",
+    Account: issuer.classicAddress,
+    Subject: subject,
+    CredentialType: credentialTypeHex(type),
+  });
 }
 
 export interface EnsureCredentialResult {
