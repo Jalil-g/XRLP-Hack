@@ -147,7 +147,7 @@ handoff comments on the issue with the `HANDOFF` template; PRs ≤ ~400 lines, t
 `size:M` `demo-critical` `checkpoint:T+14h`. Cards: **Verified** badge (link to verification report), funding bar, deadline countdown, principal, rate, builder credential badge. Filter by type. Polls 5s.
 
 ### WEB-03 · Project detail = the demo screen (with the **Milestone checks panel**)
-`size:L` `demo-critical` `checkpoint:T+14h`. SoV → milestone rail; per milestone a **checks panel styled like GitHub checks**: one row per check (icon, name, reason, evidence thumbnails, attestation link), inspector audit row with signer address + tx link, AI verdict row with confidence + hash link, outcome banner (Released / Failed / Needs human / Pending). Vault panel (phase, share price with "booked at close" tooltip, AssetsAvailable, redeem date), loan panel, timeline, money map. Polls 3s.
+`size:L` `demo-critical` `checkpoint:T+14h`. SoV → milestone rail; per milestone a **checks panel styled like GitHub checks**: one row per check (icon, name, reason, evidence thumbnails, attestation link), inspector audit row with signer address + tx link, AI verdict row with confidence + hash link, outcome banner (Released / Failed / Needs human / Pending). Vault panel (phase, share price with "rises as interest is repaid" tooltip, AssetsAvailable, redeem date), loan panel, timeline, money map. Polls 3s.
 
 ### WEB-04 · Checks panel + verdict components
 `size:M` `demo-critical` `checkpoint:T+6h`. `ChecksPanel`, `CheckRow`, `AuditRow`, `VerdictRow` from the shared types. `/dev/checks` renders pass, duplicate-photo fail, missing-audit fail, needs_human.

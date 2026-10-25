@@ -137,7 +137,7 @@ Context: the scaffold UI is good-looking but encodes the OLD model: approvals-pa
 as second signer"; mock-data.ts (1,100 lines) holds business logic (platform auto-approves, share price rises on repay, "1,284 indexed photos");
 route names don't match docs/05-api.md; the header says "XRPL devnet · live" while on mock. Direction v2: the hero component is a
 **Milestone checks panel styled like GitHub checks** (one row per check with reason + attestation link; inspector audit row with signer + tx;
-AI verdict row with confidence; outcome banner Released / Failed / Needs human / Pending). Share value is booked at LoanSet; refunds are
+AI verdict row with confidence; outcome banner Released / Failed / Needs human / Pending). Share value rises as interest is repaid (devnet books it at LoanPay, not LoanSet); refunds are
 withdrawable from RedemptionDate. Builder onboarding = pay 250 RLUSD fee → verification report (identity / feasibility / capability, MOCK labels).
 Create project = Schedule of Values (templates are pre-filled SoVs; evidence + checks per line read-only).
 Work order: WEB-01 (#31) API client on routes 1–23 + strip logic from mocks + "mock" badge; WEB-04 (#34) checks panel components with
