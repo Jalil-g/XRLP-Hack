@@ -1,7 +1,7 @@
 // XRPL-11: shared building blocks for scripts/demo.ts (CLI backup of the live demo) and scripts/prestage.ts (Projects A/B/C).
 // Script-only code: composes the package API, prints narration + a tx table. Every tx is logged with its explorer link.
 //
-// Call sites that change when parallel tickets merge are marked `// after XRPL-06/07 merge:` and isolated here,
+// Call sites that change when XRPL-07 (#125) merges are marked `// after XRPL-07 merge:` and isolated here,
 // so switching is a one-function edit.
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
