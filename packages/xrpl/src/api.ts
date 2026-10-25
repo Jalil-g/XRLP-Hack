@@ -1,10 +1,11 @@
 // High-level API for @xrlp/core. Each call does real devnet txs and returns ChainEvents.
 // Wallets come from .data/wallets.json (bootstrapWallets). Pass a Wallet to override a role.
-import { ChainEvent as ChainEventSchema, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
-import { isoTimeToRippleTime, rippleTimeToISOTime, type Wallet } from "xrpl";
-import { ledgerTime, waitForLedgerTimeAfter, type TxResult } from "./client.ts";
+import { ChainEvent as ChainEventSchema, explorerTxUrl, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
+import { isoTimeToRippleTime, isValidClassicAddress, rippleTimeToISOTime, type Wallet } from "xrpl";
+import { getClient, ledgerTime, waitForLedgerTimeAfter, type TxResult } from "./client.ts";
 import { submitAttestation, type AttestationPayload } from "./attest.ts";
-import { acceptCredential, createCredential, type CredentialType } from "./credentials.ts";
+import { grantCredential } from "./compliance.ts";
+import { getCredential, revokeCredential, type CredentialStatus, type CredentialType } from "./credentials.ts";
 import { cancelEscrow, createMilestoneEscrow, finishEscrow } from "./escrow.ts";
 import { toChainEvent, type ChainEventKind } from "./events.ts";
 import {
@@ -26,7 +27,18 @@ import { createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet
 import { configureIssuer, ensureTrustline, payRlusd, rlusdBalance, topUpRlusd } from "./rlusd.ts";
 import { createSpvAccount, lockSpv, type SpvSigners } from "./spv.ts";
 import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx } from "./vault.ts";
-import { ensureFundedWallets, loadWallets, rememberSpv, resolveWallet, RLUSD_HOLDERS, rlusdTopUpPlan, type DemoWallets, type WalletRole } from "./wallets.ts";
+import {
+  credentialPlan,
+  ensureFundedWallets,
+  loadWallets,
+  NO_KYC_ROLES,
+  rememberSpv,
+  resolveWallet,
+  RLUSD_HOLDERS,
+  rlusdTopUpPlan,
+  type DemoWallets,
+  type WalletRole,
+} from "./wallets.ts";
 
 /** Role name ("investor1"), a demo-wallet address (r...), or a Wallet. */
 type WalletRef = WalletRole | string | Wallet;
@@ -41,19 +53,39 @@ export interface BootstrapOptions {
   fresh?: boolean;
   /** RLUSD each investor is topped up to. Default 50 000. */
   investorRlusd?: number;
-  /** RLUSD the platform holds for first-loss cover across projects. Default 25 000. */
+  /**
+   * RLUSD the platform is topped up to, for first-loss cover across concurrent projects. Default DEFAULT_PLATFORM_RLUSD
+   * (25 000 ≈ cover for 3 projects of up to ~70 000 principal). Size other sets with platformRlusdFor(terms[]).
+   */
   platformRlusd?: number;
   /** RLUSD the builder holds for the verification fee (250 in the demo). Default 1 000. */
   builderRlusd?: number;
+  /**
+   * Issue + accept the demo credentials (credentialPlan: KYC_INVESTOR investor1/2, VERIFIED_INSPECTOR inspector1..3) and
+   * make sure investor3 holds no KYC_INVESTOR (the tecNO_AUTH beat). Default true.
+   */
+  credentials?: boolean;
+  /** Also pre-issue VERIFIED_BUILDER to the builder (prestage). Default false: it is earned through project verification. */
+  preVerifyBuilder?: boolean;
   log?: (s: string) => void;
+}
+
+export interface BootstrapCredential {
+  role: WalletRole;
+  type: CredentialType;
+  /** "none" only for NO_KYC_ROLES (deliberately uncredentialed). */
+  status: CredentialStatus;
 }
 
 /**
  * Fund all demo roles from the faucet (reusing/migrating the wallet file), configure the RLUSD issuer
- * (DefaultRipple + AllowTrustLineLocking), open trust lines for RLUSD_HOLDERS, and top up investors/platform/builder.
+ * (DefaultRipple + AllowTrustLineLocking), open trust lines for RLUSD_HOLDERS, top up investors/platform/builder,
+ * then (unless `credentials: false`) grant the demo credentials and strip KYC from investor3.
  * Idempotent: a second run submits 0 txs.
  */
-export async function bootstrapWallets(opts: BootstrapOptions = {}): Promise<{ wallets: DemoWallets; txs: TxResult[] }> {
+export async function bootstrapWallets(
+  opts: BootstrapOptions = {},
+): Promise<{ wallets: DemoWallets; txs: TxResult[]; credentials: BootstrapCredential[] }> {
   const log = opts.log ?? (() => {});
   const wallets = await ensureFundedWallets({ fresh: opts.fresh, log });
   const issuer = wallets.issuer;
@@ -76,7 +108,26 @@ export async function bootstrapWallets(opts: BootstrapOptions = {}): Promise<{ w
       log(`RLUSD ${role} -> ${target} ${t.explorerUrl}`);
     }
   }
-  return { wallets, txs };
+  const credentials: BootstrapCredential[] = [];
+  if (opts.credentials !== false) {
+    for (const { role, type } of credentialPlan(opts)) {
+      const r = await grantCredential({ subject: wallets[role], type, platform: wallets.platform });
+      for (const t of r.txs) {
+        txs.push(t);
+        log(`${String(t.tx.TransactionType)} ${type} ${role} ${t.explorerUrl}`);
+      }
+      credentials.push({ role, type, status: r.status });
+    }
+    for (const role of NO_KYC_ROLES) {
+      const t = await revokeCredential(wallets.platform, wallets[role].classicAddress, "KYC_INVESTOR");
+      if (t) {
+        txs.push(t);
+        log(`CredentialDelete KYC_INVESTOR ${role} (must stay uncredentialed for tecNO_AUTH) ${t.explorerUrl}`);
+      }
+      credentials.push({ role, type: "KYC_INVESTOR", status: "none" });
+    }
+  }
+  return { wallets, txs, credentials };
 }
 
 // ---------------------------------------------------------------- project setup
@@ -524,22 +575,61 @@ export { getLoan };
 
 // ---------------------------------------------------------------- credentials
 
-/** Platform issues a credential; if `acceptWith` (the subject's wallet) is given, the subject accepts it too. */
+/**
+ * Platform issues a credential; the subject accepts it unless `accept: false`. Idempotent (delegates to grantCredential):
+ * nothing is re-submitted if the credential already exists / is accepted.
+ * `createTx` / `event` describe the CredentialCreate: this call's, or the existing one on the ledger (then `txs` and
+ * `events`, i.e. what this call submitted, are empty).
+ * @deprecated use `grantCredential` (compliance.ts), which returns only what it submitted.
+ */
 export async function issueCredential(p: {
   projectId?: string;
   subject: WalletRef;
   type: CredentialType;
   uri?: string;
   accept?: boolean;
-}): Promise<{ createTx: TxResult; acceptTx?: TxResult; event: ChainEvent }> {
+}): Promise<{ createTx: TxResult; acceptTx?: TxResult; event: ChainEvent; status: CredentialStatus; txs: TxResult[]; events: ChainEvent[] }> {
   const w = loadWallets();
-  const subject = typeof p.subject === "string" ? resolveWallet(p.subject) : p.subject;
-  const createTx = await createCredential(w.platform, subject.classicAddress, p.type, p.uri);
-  const acceptTx = p.accept === false ? undefined : await acceptCredential(subject, w.platform.classicAddress, p.type);
+  const r = await grantCredential({
+    subject: p.subject,
+    type: p.type,
+    platform: w.platform,
+    ...(p.uri ? { uri: p.uri } : {}),
+    ...(p.accept === false ? { accept: false } : {}),
+    ...(p.projectId ? { projectId: p.projectId } : {}),
+  });
+  const subject = typeof p.subject === "string" && isValidClassicAddress(p.subject) ? p.subject : addr(p.subject);
+  const createTx = r.createTx ?? (await existingCredentialCreateTx(subject, w.platform.classicAddress, p.type));
+  const event = r.events.find((e) => e.kind === "credential_issued") ??
+    toChainEvent(createTx, { projectId: p.projectId ?? PLATFORM_SCOPE, kind: "credential_issued", actor: w.platform.classicAddress });
+  return { createTx, ...(r.acceptTx ? { acceptTx: r.acceptTx } : {}), event, status: r.status, txs: r.txs, events: r.events };
+}
+
+/** The CredentialCreate behind an existing Credential: its PreviousTxnID, or one hop back if that was the CredentialAccept. */
+async function existingCredentialCreateTx(subject: string, issuer: string, type: CredentialType): Promise<TxResult> {
+  const c = await getCredential(subject, issuer, type);
+  if (!c) throw new Error(`issueCredential: ${type} for ${subject} not found after grant`);
+  let tx = await validatedTx(c.PreviousTxnID);
+  if (tx.tx.TransactionType === "CredentialAccept") {
+    const nodes = (tx.meta.AffectedNodes ?? []) as { ModifiedNode?: { LedgerEntryType?: string; LedgerIndex?: string; PreviousTxnID?: string } }[];
+    const prev = nodes.find((n) => n.ModifiedNode?.LedgerEntryType === "Credential" && n.ModifiedNode.LedgerIndex === c.index)?.ModifiedNode?.PreviousTxnID;
+    if (prev) tx = await validatedTx(prev);
+  }
+  return tx;
+}
+
+async function validatedTx(hash: string): Promise<TxResult> {
+  const client = await getClient();
+  const res = await client.request({ command: "tx", transaction: hash });
+  const r = res.result as unknown as Record<string, unknown>;
+  const meta = (r.meta ?? {}) as Record<string, unknown>;
   return {
-    createTx,
-    acceptTx,
-    event: toChainEvent(createTx, { projectId: p.projectId ?? PLATFORM_SCOPE, kind: "credential_issued", actor: w.platform.classicAddress }),
+    hash,
+    explorerUrl: explorerTxUrl(hash),
+    result: String(meta.TransactionResult ?? "unknown"),
+    ...(typeof r.ledger_index === "number" ? { ledgerIndex: r.ledger_index } : {}),
+    tx: (r.tx_json ?? r) as Record<string, unknown>,
+    meta,
   };
 }
 

@@ -137,3 +137,11 @@ export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErr
 export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
 export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
 export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
+// Hardening follow-ups (XRPL-03/05/08/12): bootstrap credentials + platform cover budget, locked multisig
+export type { BootstrapCredential } from "./api.ts";
+export { credentialPlan, NO_KYC_ROLES, DEFAULT_PLATFORM_RLUSD, platformRlusdFor } from "./wallets.ts";
+export type { CredentialGrant, CoverSizingTerms } from "./wallets.ts";
+export { getCredential, revokeCredential } from "./credentials.ts";
+export type { CredentialEntry } from "./credentials.ts";
+export { multisignWith, assertSignerQuorum } from "./spv.ts";
+export type { MultisigDeps, SubmitMultisignedOptions } from "./spv.ts";
