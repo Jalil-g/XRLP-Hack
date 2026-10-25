@@ -3,7 +3,8 @@
 ## We never say
 
 - **"Trustless AI."** The AI runs a published suite, mostly deterministic checks, and every result is attested on-chain. It's still our
-  service. Its judgement checks can only turn a green into `needs_human`, which a named operator resolves with a signed reason.
+  service. Its judgement checks can only hold money back: a red one fails the milestone, a low-confidence one goes to `needs_human`, which a
+  named operator resolves with a signed reason.
 - **"Ledger-enforced release."** The ledger enforces where a milestone's money can go (this builder, or back to the project account) and
   when the escrow expires. *When* it's released is up to our release service, which holds the escrow preimages and finishes only after the
   suite is green and attested on-chain. Ledger-enforced release would need Smart Escrows (XLS-100): roadmap.
@@ -12,7 +13,8 @@
 - **"Automatic refunds to investors."** An expired escrow goes back to the project account, not to investors. Our keeper (or anyone)
   submits `EscrowCancel`, the project account repays the vault with `LoanPay`, and investors redeem from the vault's `RedemptionDate`.
 - **That XRPL removes credit risk.** Money already released to a builder is a loan, and the builder can default. First-loss cover absorbs
-  the first part. The default flow (`LoanManage`) is designed, not built.
+  the first part: `LoanManage` default is built and proven on devnet (the cover paid exactly 10% of the outstanding debt; investors took the
+  rest through the share price). The app doesn't trigger a default yet (no keeper for it in core), and recovery after a default is off-chain.
 
 ## How the demo differs from production
 
