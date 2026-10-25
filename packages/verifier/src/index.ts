@@ -1,4 +1,6 @@
 // @xrlp/verifier — AI + deterministic evidence verification. See ../API.md.
+export { assignInspector } from "./assignInspector.ts";
+export type { AssignInspectorInput, InspectorAvailability } from "./assignInspector.ts";
 export { createLiveJudge, verifyMilestone, verifyMilestoneDetailed, decide } from "./verifyMilestone.ts";
 export type { VerifyMilestoneResult, VerifyOptions } from "./verifyMilestone.ts";
 export { verifyBuilder, MOCK_REGISTRY } from "./verifyBuilder.ts";
