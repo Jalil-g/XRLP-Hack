@@ -38,6 +38,8 @@ export interface ProjectMeta {
   verifiedAt?: string;
   fundingOpenedAt?: string;
   escrowedAt?: string;
+  /** Partial close (LoanSet applied, some EscrowCreate failed): milestones still without an escrow; RLUSD sits in the SPV. */
+  closePending?: string[];
   completedAt?: string;
   stalledAt?: string;
   /** Write-ahead marker per milestone id: a refund LoanPay was attempted and its outcome is not yet recorded. */

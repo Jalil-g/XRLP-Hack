@@ -107,6 +107,20 @@ function parse<S extends z.ZodTypeAny>(schema: S, input: unknown): z.output<S> {
   return r.data;
 }
 
+/** What an xrpl CloseLoanPartialError carries (duck-typed: core doesn't import the adapter package here). */
+interface ClosePartial {
+  loanId: string;
+  loanSetTx: string;
+  created: { milestoneId: string; owner: XrplAddress; offerSequence: number; condition: string; cancelAfter: string; createTx: string }[];
+  pending: string[];
+}
+function closePartialOf(e: unknown): ClosePartial | undefined {
+  const x = e as Partial<ClosePartial> | null;
+  return e instanceof LedgerError && typeof x?.loanId === "string" && x.loanId && typeof x.loanSetTx === "string" && Array.isArray(x.created) && Array.isArray(x.pending)
+    ? (x as ClosePartial)
+    : undefined;
+}
+
 // ---------- options ----------
 
 export interface CoreServiceOptions {
@@ -624,7 +638,12 @@ export class CoreService implements CoreApi {
     const d = this.opts.cancelAfterFor
       ? this.opts.cancelAfterFor(p, m, closeAt)
       : new Date(closeAt.getTime() + Math.round(((m.index + 1) / p.milestones.length) * p.terms.termDays * DAY_MS));
-    const cap = new Date(new Date(p.chain.redemptionDate!).getTime() - 3_600_000);
+    // XRPL refuses CancelAfter >= loan maturity = LEDGER now + PaymentInterval x PaymentTotal (xrpl loan-close.ts,
+    // loanScheduleFromTerms). Ledger time lags our clock and round(termDays / interval) x interval can be < termDays,
+    // so cap below that maturity with a margin (1 day, less for very short loans), and before RedemptionDate.
+    const span = Math.max(1, Math.round(p.terms.termDays / p.terms.paymentIntervalDays)) * p.terms.paymentIntervalDays * DAY_MS;
+    const maturityCap = closeAt.getTime() + span - Math.min(DAY_MS, Math.floor(span / 10));
+    const cap = new Date(Math.min(maturityCap, new Date(p.chain.redemptionDate!).getTime() - 3_600_000));
     return d < cap ? d : cap;
   }
 
@@ -644,7 +663,15 @@ export class CoreService implements CoreApi {
         throw new DomainError("CONFLICT", "Release service returned invalid or duplicate escrow conditions");
       const closeAt = this.now();
       const cancelAfters = p.milestones.map((m) => this.cancelAfterFor(p, m, closeAt).toISOString());
-      const res = await this.onLedger("loan close", () => this.ledger.closeLoanAndCreateEscrows({ project: p, builder: b, conditions, cancelAfters }));
+      let res: Awaited<ReturnType<LedgerPort["closeLoanAndCreateEscrows"]>>;
+      try {
+        res = await this.ledger.closeLoanAndCreateEscrows({ project: p, builder: b, conditions, cancelAfters });
+      } catch (e) {
+        const partial = closePartialOf(e);
+        // Best effort: the error (which lists created + pending escrows) is what the caller must see either way.
+        if (partial) await this.commitPartialClose(id, partial).catch(() => undefined);
+        return this.onLedger("loan close", () => Promise.reject(e));
+      }
       const events: ChainEvent[] = [];
       for (const t of res.txs) {
         const esc = t.kind === "escrow_created" ? res.escrows.find((e) => e.createTx === t.hash) : undefined;
@@ -678,6 +705,37 @@ export class CoreService implements CoreApi {
         db.chainEvents.push(...events);
         return { project: p, events };
       });
+    });
+  }
+
+  /**
+   * LoanSet applied but an EscrowCreate did not (xrpl CloseLoanPartialError). The loan and the escrows that exist are
+   * on-chain facts: record them (project -> escrowed, so a retry can't LoanSet twice) and leave the rest `pending`,
+   * listed in meta.closePending, for an operator (@xrlp/xrpl resumeEscrowCreation). The caller still gets the error.
+   */
+  private async commitPartialClose(id: string, partial: ClosePartial): Promise<void> {
+    await this.store.write((db) => {
+      const p = this.projectIn(db, id);
+      const events: ChainEvent[] = [];
+      const at = this.nowIso();
+      const evt = (hash: string, kind: ChainEventKind, extra: Partial<ChainEvent>): ChainEvent => ({
+        projectId: id, kind, txHash: hash, explorerUrl: explorerTxUrl(hash), at, ...(p.chain.spv ? { actor: p.chain.spv } : {}), ...extra,
+      });
+      events.push(evt(partial.loanSetTx, "loan_set", { amount: p.terms.principal }));
+      for (const esc of partial.created) {
+        const m = p.milestones.find((x) => x.id === esc.milestoneId);
+        if (!m || m.escrow) continue;
+        m.escrow = { owner: esc.owner, offerSequence: esc.offerSequence, condition: esc.condition.toUpperCase(), createTx: esc.createTx, createdAt: at };
+        m.cancelAfter = esc.cancelAfter;
+        this.setMilestoneStatus(m, "escrowed");
+        events.push(evt(esc.createTx, "escrow_created", { milestoneId: m.id, amount: m.amount }));
+      }
+      p.chain.loanId = partial.loanId;
+      this.setProjectStatus(db, p, "escrowed");
+      const meta = this.meta(db, id);
+      meta.escrowedAt = at;
+      meta.closePending = p.milestones.filter((m) => !m.escrow).map((m) => m.id);
+      db.chainEvents.push(...events);
     });
   }
 
