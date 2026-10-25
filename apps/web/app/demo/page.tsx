@@ -3,7 +3,7 @@ import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { PageHeader } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { ProjectDetail } from "@/lib/contract";
 import { MILESTONE_STATUS, PROJECT_STATUS } from "@/lib/display";
 import { getSession } from "@/lib/session";
@@ -13,7 +13,10 @@ export const metadata = { title: "Demo" };
 
 const INSPECTOR_APP_URL = process.env.NEXT_PUBLIC_INSPECTOR_APP_URL ?? "http://localhost:3001";
 
-const get = (id: string) => api.getProject(id).catch(() => undefined);
+const get = (id: string) => api.getProject(id).catch((error: unknown) => {
+  if (error instanceof ApiError && error.status === 404) return undefined;
+  throw error; // A service failure must not look like an unseeded demo.
+});
 
 export default async function DemoPage() {
   const [session, maple, birch, cedar] = await Promise.all([getSession(), get("maple-st"), get("birch-rd"), get("cedar-ln")]);

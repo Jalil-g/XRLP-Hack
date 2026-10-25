@@ -114,6 +114,18 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] Scripts make every project vault **private** (tfVaultPrivate + platform DomainID + non-transferable shares) by composing `setupProjectOnChain`'s steps in `scripts/demo-lib.ts` (`setupProjectOnChain` got `domainId` / `nonTransferableShares` in XRPL-10, but it fixes SubscriptionDate before the SPV's txs, which would eat the scripts' 60 s deposit window; switch once it can anchor on ledger time at VaultCreate). The CLI demo dropped the `DEMO_SPV_MODE=single` master-key fallback (XRPL-01 proved multisig LoanSet). Scripts delete an old investor3 `KYC_INVESTOR` credential so the `tecNO_AUTH` beat works with v1 wallet files. (Jalil's agent, XRPL-11)
 - [10-25] On merging XRPL-11 with XRPL-13b/15: the demo/prestage close uses the default batch mode (one `tfAllOrNothing` Batch row in the tx table, then each milestone's inner EscrowCreate), and the deprecated `generateMilestoneCondition` / `MilestoneCondition` exports are removed from `@xrlp/xrpl` (no users left; core has its own `packages/core/src/conditions.ts`) (Jalil's agent M5, integration)
 
+## Web action feedback (WEB-12)
+
+- Every shared API error code has presentation copy and a recovery step. Transport
+  and ledger failures tell users to inspect the current state before repeating a
+  write: a failed response does not prove the preceding transaction never landed.
+- Passing checks alone is not a release confirmation. Action toasts distinguish
+  confirmed release/refund from pending results; keeper messages describe recorded
+  updates rather than promising every expired escrow has already been repaid.
+- The demo page hides missing-project 404s only; service errors reach the normal
+  error boundary. Web tests use the workspace's existing tsx runner, now declared
+  as a web development dependency, with no new top-level tool.
+
 ## Pitch review (Jalil's agent, PITCH-09)
 
 - [10-25] PITCH-09 scope: factual errors fixed in `docs/07-pitch.md`, plus the two `docs/08-pitch-storyline.md` lines that repeat a corrected

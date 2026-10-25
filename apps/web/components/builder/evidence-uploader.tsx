@@ -6,6 +6,7 @@ import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { errorDescription, errorFeedback } from "@/lib/error-feedback";
 import type { EvidenceKind, EvidenceRequirement } from "@/lib/contract";
 import { cn } from "@/lib/utils";
 
@@ -50,7 +51,8 @@ export function EvidenceUploader({
       setFiles([]);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Upload failed");
+      const feedback = errorFeedback(err);
+      toast.error(feedback.title, { description: errorDescription(feedback), duration: 10_000 });
     } finally {
       setBusy(false);
     }

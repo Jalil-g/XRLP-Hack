@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/form";
 import { ApiError, api } from "@/lib/api";
+import { errorDescription, errorFeedback } from "@/lib/error-feedback";
 import type { Investment, Party } from "@/lib/contract";
 import { formatAmount, formatBps, fromCents, toCents } from "@/lib/utils";
 
@@ -43,7 +44,8 @@ export function InvestDialog({
       setDone(r.investment);
       router.refresh();
     } catch (err) {
-      setError(err instanceof ApiError && err.txResult === "tecNO_AUTH" ? `${investor.name} needs a KYC credential before depositing. The vault refused it (tecNO_AUTH).` : err instanceof Error ? err.message : "Deposit failed");
+      const feedback = errorFeedback(err);
+      setError(err instanceof ApiError && err.txResult === "tecNO_AUTH" ? `${investor.name} needs a KYC credential before depositing. The vault refused it (tecNO_AUTH).` : `${feedback.title}. ${errorDescription(feedback)}`);
     } finally {
       setBusy(false);
     }
@@ -92,7 +94,7 @@ export function InvestDialog({
                 <p className="text-caption text-ink-2">
                   {invalid && cents > 0 ? <span className="text-fail">{invalid}</span> : `${formatBps(rateBps)} a year · ${formatAmount(remaining)} RLUSD left to raise`}
                 </p>
-                {error && <p className="rounded-control bg-fail-bg px-3 py-2 text-small text-fail">{error}</p>}
+                {error && <p role="alert" className="rounded-control bg-fail-bg px-3 py-2 text-small text-fail">{error}</p>}
               </DialogBody>
               <DialogFooter>
                 <Button variant="secondary" disabled={busy} onClick={() => setOpen(false)}>
