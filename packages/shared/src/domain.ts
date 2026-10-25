@@ -192,6 +192,10 @@ export const ChainEvent = z.object({
     "credential_accepted",
     "loan_default",
     "release_refused", // e.g. try-steal EscrowFinish rejected with tecCRYPTOCONDITION_ERROR
+    // v2.1 (#133)
+    "release_attested", // release service's attestation before EscrowFinish (replaces approval_attested for releases)
+    "loan_impaired", // LoanManage tfLoanImpair / tfLoanUnimpair (paper loss booked or reversed; not a default)
+    "builder_payment", // builder -> SPV RLUSD Payment that funds a LoanPay
   ]),
   txHash: z.string(),
   explorerUrl: z.string().url(),
