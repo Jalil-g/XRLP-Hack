@@ -166,6 +166,30 @@ export { getCredential, revokeCredential } from "./credentials.ts";
 export type { CredentialEntry } from "./credentials.ts";
 export { multisignWith, assertSignerQuorum } from "./spv.ts";
 export type { MultisigDeps, SubmitMultisignedOptions } from "./spv.ts";
+// XRPL-13: XLS-56 Batch. closeLoanAtomic mode "escrows" works on devnet; "full" (LoanSet inside the Batch) needs
+// LendingProtocolV1_2 (devnet 3.4.1 → temINVALID_INNER_BATCH). See docs/xrpl-protocol-notes.md §2d.
+export {
+  closeLoanAtomic,
+  createEscrowsAtomic,
+  submitBatch,
+  signPreparedBatch,
+  buildBatch,
+  toInnerTx,
+  assignInnerSequences,
+  batchFee,
+  requiredBatchSigners,
+  mergeBatchSigners,
+  signBatchFor,
+  innerLoanSetTx,
+  innerTxHash,
+  fetchInnerResults,
+  BATCH_MIN_INNER,
+  BATCH_MAX_INNER,
+  BATCH_MAX_SIGNERS,
+  TF_INNER_BATCH_TXN,
+  TF_ALL_OR_NOTHING,
+} from "./batch.ts";
+export type { AtomicMilestone, AtomicEscrow, AtomicCloseMode, CloseLoanAtomicParams, CloseLoanAtomicResult, BatchResult, InnerResult, SubmitBatchParams } from "./batch.ts";
 // XRPL-07: finish / cancel / repay / withdraw
 export { builderPayToSpv, tryFinishWithWrongFulfillment } from "./api.ts";
 export {

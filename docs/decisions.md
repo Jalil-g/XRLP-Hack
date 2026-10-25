@@ -59,7 +59,27 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-25] `closeLoanAndCreateEscrows` validates everything before the first tx (`planLoanClose`): `PaymentTotal ≥ 2`, `0 < InterestRate ≤ 100%`, `PaymentInterval ≥ 60s`, loan fits `RedemptionDate`, 32-byte PREIMAGE-SHA-256 conditions only (`A0258020…810120`), unique within the call **and vs the SPV's open escrows** (doubles as a re-run guard), `now + 60s < CancelAfter < maturity` with maturity = ledger now + interval × total (a lower bound of the real one), SPV signer quorum. Failure after LoanSet → `CloseLoanPartialError {loanId, created, pending}`. — never leave principal liquid in the SPV because escrow #2 was bad (Jalil's agent, XRPL-06)
 - [10-25] Default escrow `CancelAfter` = **maturity − one payment interval** (was now + termDays, which equals maturity and would now be rejected) — a refunded escrow still lands in time to pay the last installment. Callers (core, demo, prestage) should pass `cancelAfters` explicitly. (Jalil's agent, XRPL-06)
 - [10-25] `generateMilestoneCondition` dropped from the public API (only a `@deprecated` re-export so `scripts/demo.ts` compiles); tests/spikes use `packages/xrpl/test/support/conditions.ts`. Remove the deprecated export once demo.ts and the G-owned spikes switch. (Jalil's agent, XRPL-06)
+- [10-25] Batch atomic close: devnet rippled 3.4.1 rejects LoanSet (all Lending/SAV types) as a Batch inner tx with `temINVALID_INNER_BATCH` until `LendingProtocolV1_2`. So `closeLoanAtomic` defaults to mode "escrows": countersigned LoanSet, then one `tfAllOrNothing` Batch of every milestone EscrowCreate from the SPV (2 txs, SPV liquid ~2 ledgers). Mode "full" (platform outer, LoanSet + escrows, SPV BatchSigner) is implemented and offline-tested for when V1_2 lands. Not wired into `closeLoanAndCreateEscrows` yet (api.ts owned elsewhere). See protocol-notes §2d (Jalil's agent, XRPL-13)
 - [10-25] XRPL-07 money-out defaults: finish/cancel submitted by `releaseService`; EscrowFinish LLS margin 60 ledgers, so preflight wants ≥ 300 s to CancelAfter (real escrows are days away; spikes pass `lastLedgerMargin: 20`); `repayLoan` auto-mode = `late` if past due, `overpayment` only for `source: "escrow_refund"` above one periodic payment, else `regular` (builder repayments never silently prepay principal); amounts are checked client-side (≥ one periodic payment rounded up, ≤ total outstanding) → `LoanPayAmountError` code `validation`, nothing submitted; cancel/withdraw timing is checked against validated-ledger close time → shared `TooSoonError` before submitting; `builderPayToSpv` returns no ChainEvent until shared has a kind for it; the wrong-fulfillment demo refuses a missing/expired escrow so a demo click can't waste the beat on `tecNO_PERMISSION` — why: a failed finish leaks the preimage and a rejected LoanPay/withdraw costs a demo minute, so refuse early with a typed error (Jalil's agent, XRPL-07)
+
+## Inspector lane (Roro's agent, challenge freely)
+
+- [10-24] `apps/inspector` uses the `@xrlp/shared` v2 schemas; only the read models shared defines as TS interfaces (`ProjectDetail`,
+  `InspectorTask`, snapshots) get local zod schemas in `lib/types.ts`, typed against those interfaces so drift fails typecheck.
+- [10-24] Inspector app data access is **client-side** (polling, in-browser signing later); in http mode the browser calls same-origin
+  `/api/*` and `next.config.ts` rewrites to `CORE_URL`. Responses are checked against the schemas and drift is logged, not thrown.
+- [10-24] Mock-mode parties use **real classic addresses** derived from public entropy `sha256("drawproof/mock/<label>")[0..16]`
+  (never funded, not devnet wallets) so INS-04 can sign as a mock inspector without committing any seed.
+- [10-24] Route 10 multipart fields `report` / `photos` (repeated) / `signedTxBlob` — same as core's CORE-04 handler.
+- [10-25] INS-02 queue evidence status uses the verifier's `required_evidence_present` rule (per kind, bar = largest `minCount`, not the
+  sum), so the queue never shows red where the suite passes.
+- [10-25] INS-03 `evidenceBundleHash` = the verifier's (`sha256` of sorted per-file `sha256` joined by `"\n"`) over **all** the milestone's
+  builder evidence; golden-tested against the verifier's Maple St fixture. Mock route 10 rejects a mismatched bundle up front.
+- [10-25] Inspector app adds `exifr` (same parser + options as the verifier; the `lite` build, because the full one probes for Node `fs`/`zlib`
+  in the Next bundle), so the photo preview shows exactly the EXIF time/GPS the suite reads.
+- [10-25] Inspector mock Maple St moved to the verifier's site (41 Maple St, Brooklyn, 40.6795/-73.962, r=120 m) — the demo photos are
+  geotagged there. **Open:** core's demo scenario still puts Maple St in Beacon, NY (41.5048/-73.9696); with the verifier's photos that
+  fails `gps_within_site`. Core + verifier should agree on one site.
 
 ## Open
 
