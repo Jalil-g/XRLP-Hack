@@ -7,6 +7,7 @@ import { TxLink } from "@/components/chain";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/form";
+import { Tag } from "@/components/ui/tag";
 import { ApiError, api } from "@/lib/api";
 import { errorDescription, errorFeedback } from "@/lib/error-feedback";
 import type { Investment, Party } from "@/lib/contract";
@@ -100,7 +101,13 @@ export function InvestDialog({
               <DialogBody className="space-y-4">
                 <dl className="space-y-3 text-small">
                   <div><dt className="text-ink-2">Project</dt><dd className="font-medium">{projectName}</dd></div>
-                  <div><dt className="text-ink-2">Investor</dt><dd>{investor.name}</dd></div>
+                  <div>
+                    <dt className="text-ink-2">Investor</dt>
+                    <dd className="flex flex-wrap items-center gap-2">
+                      <span>{investor.name}</span>
+                      <Tag tone={investor.kyc ? "pass" : "review"}>{investor.kyc ? "KYC verified" : "KYC required"}</Tag>
+                    </dd>
+                  </div>
                   <div><dt className="text-ink-2">Deposit</dt><dd className="text-heading tabular">{formatAmount(cents / 100, { cents: true })} RLUSD</dd></div>
                   <div><dt className="text-ink-2">Annual rate</dt><dd>{formatBps(rateBps)}</dd></div>
                 </dl>
