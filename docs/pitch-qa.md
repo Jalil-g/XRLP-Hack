@@ -6,7 +6,7 @@
 > **Owners are proposed by lane**: Jalil = XRPL/ledger/trust model · Sean = architecture/core/release service · Elmir = AI verification/fraud ·
 > Bri = product/UX/market · Roro = inspector workflow. Bri confirms on #72; then this replaces `docs/08-pitch-storyline.md` §5.
 > Sources: `03` = `docs/03-architecture.md` · `PN` = `docs/xrpl-protocol-notes.md` · `P2` = `docs/proof-devnet-2026-10-25-v2.md`
-> (PR #126, not merged yet) · `D` = `docs/decisions.md`. Devnet links die when devnet resets; PITCH-04 keeps the current set.
+> (PR #126) · `D` = `docs/decisions.md`. Devnet links die when devnet resets; PITCH-04 keeps the current set.
 > Never say: "trustless AI", "ledger-enforced release", "mainnet-ready", "automatic refunds to investors" (`docs/00-overview.md`).
 
 ## Who answers what
@@ -60,10 +60,13 @@ decisions log. In the demo its key, like every demo key except an inspector sign
 
 **4. "What if the builder defaults?"** (Jalil)
 Unreleased money comes back: escrows expire to the project account, which repays the vault (devnet: cancel, then a 9,000 `LoanPay`). Released
-money is credit risk: after due date plus grace we call `LoanManage` default, our first-loss cover pays the vault up to 10% of the debt, and
-the vault writes down the rest. Honest status: the default leg is XLS-66 spec, our devnet proof is in progress (XRPL-15, #127), and a deed of
-trust is off-chain.
-*Sources:* PN §2 (`DefaultCovered` math), §3 stall path · P2 §1 rows 27–28
+money is credit risk: after due date plus grace we call `LoanManage` default, and in that same transaction our first-loss cover pays the
+vault 10% of the outstanding debt while the vault writes down the rest. Proven on devnet (XRPL-15): the cover returned exactly 10% of what was
+outstanding, 1,000 unpaid → cover 100 → share price 1 → 0.1, and with 600 refunded first, 400 unpaid → cover 40 → 1 → 0.64; a deed of trust is off-chain.
+*Sources:* PN §3c ([default: cover 100](https://devnet.xrpl.org/transactions/B3A32FB9CFF5A7F015CE7C61972BA1DF18E2371E3715DE8443B93B1FA8946568),
+[600 refunded first: cover 40](https://devnet.xrpl.org/transactions/6FE6525D37DCB9EFBA53D9E8C00D987E17CB4D8F976D97041698389C1512A19E),
+[`LoanPay` after a default → `tecKILLED`](https://devnet.xrpl.org/transactions/DD914351CA868D89D1E350FFFF20A4354A0840053B34578EB885F62764062FF4)),
+PN §2 (`DefaultCovered` math), §3 stall path · P2 §1 rows 27–28
 ([EscrowCancel](https://devnet.xrpl.org/transactions/3BD1B494EEAC9A897879434E7657C95C8F19C485053D825F44E5E59E9F0F5AF0),
 [LoanPay 9,000](https://devnet.xrpl.org/transactions/686028E03383EC8AC3DE4CEF02B087822EA06D1EF34E6A7906E974C247EA4B25)) · cover is enforced
 at close: [`LoanSet` with too little cover → `tecINSUFFICIENT_FUNDS`](https://devnet.xrpl.org/transactions/1186024CBF707D61A4CB935CE37D652DF0A9E826CB939B76166FFDE18BA867B8) · D Open ("Default handling").
@@ -104,11 +107,15 @@ Token Escrow 2026-02-12.
 
 **9. "Is the loan close atomic? Couldn't the project account sit on liquid principal?"** (Jalil)
 Not fully: devnet's rippled 3.4.1 rejects `LoanSet` inside a Batch (`temINVALID_INNER_BATCH`) until `LendingProtocolV1_2`, so a fully atomic
-close is one amendment away (code written and tested offline). Today it's `LoanSet`, then all escrows in one all-or-nothing Batch, with
-principal liquid for ~2 ledgers (~9 s); proven on devnet, not yet wired into the demo close. Even in that window, moving principal needs
-3 of 4 signers, two of them outside the platform.
+close is one amendment away (code written and tested offline). Today the close (2–8 milestones) is `LoanSet`, then all escrows in one all-or-nothing Batch,
+with principal liquid for ~2 ledgers; a rolled-back Batch is detected and the missing escrows are re-created exactly once. Even in that
+window, moving principal needs 3 of 4 signers, two of them outside the platform.
 *Sources:* PN §2d (F1/F2 rejected;
 [E2: 3 escrows, one Batch](https://devnet.xrpl.org/transactions/05612B4D17E66B37FFA64139CD2BA2163642D76122C7FC319FF1407253DBC5B8)) ·
+PN §2e (the close path: [LoanSet](https://devnet.xrpl.org/transactions/4661D0C6F321BA6DD46887294EA1C86B36F812FD9C0C1969016BD0CFA6148A70),
+then [one Batch of 3 escrows](https://devnet.xrpl.org/transactions/1DD530999139C1867549DAB971D9D01438A28093B16772A84E132CFE976EFB89) 2 ledgers later;
+[rolled back](https://devnet.xrpl.org/transactions/AF14693582FDB295889241F74A4688EEA2BC8AFF85A5EAB061B756181299C989) →
+[resumed](https://devnet.xrpl.org/transactions/EE8F9497C3EA7BA85081B933ECAF09D89BD8C532309F800F0E82DD1263782DBD)) ·
 D [10-25] XRPL-13 and XRPL-06 (close validated before the first tx).
 
 ## Release service and core
@@ -208,9 +215,7 @@ and every check attested publicly before it moves. We're the rail a private-cred
 
 ## Before stage: what these answers depend on
 
-- **Q19, and slide 6's KYC row:** `setupProjectOnChain` still creates public vaults (P2 finding #2). Until project vaults are private with a
-  `DomainID`, cite the compliance run and don't demo `tecNO_AUTH` on a project vault.
+- **Q19, and slide 6's KYC row:** project vaults are private (`DomainID`) through the ledger adapter (#121) and the CLI `demo` / `prestage`
+  (#136), so `tecNO_AUTH` on a project vault can be shown on devnet.
 - **Q15:** assumes `VERIFIER_MODE=mock` on stage. Rewrite it if the verifier goes live (or moves to Bedrock).
-- **Q4:** add the default tx link once XRPL-15 (#127) lands.
-- **Q9:** if `closeLoanAtomic` gets wired into the close before the demo, drop "not yet wired into the demo close".
 - Re-open every devnet link the morning of the demo; a devnet reset breaks them all.
