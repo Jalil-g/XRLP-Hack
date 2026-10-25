@@ -8,7 +8,7 @@ import { api } from "@/lib/api";
 import type { Evidence, SiteGeo } from "@/lib/types";
 import { formatDateTime, formatRlusd } from "@/lib/utils";
 
-export function EvidenceGallery({ evidence, site }: { evidence: Evidence[]; site: SiteGeo }) {
+export function EvidenceGallery({ evidence, site, browserExif }: { evidence: Evidence[]; site: SiteGeo; browserExif?: ReadonlySet<string> }) {
   const photos = evidence.filter((e) => e.kind === "photo");
   const files = evidence.filter((e) => e.kind !== "photo");
   if (!evidence.length) return <p className="text-sm text-muted">The builder has not uploaded evidence for this milestone.</p>;
@@ -22,7 +22,7 @@ export function EvidenceGallery({ evidence, site }: { evidence: Evidence[]; site
               <a href={api.fileUrl(p)} target="_blank" rel="noreferrer" className="block aspect-[4/3] bg-subtle">
                 <img src={api.fileUrl(p)} alt={p.filename} className="size-full object-cover" loading="lazy" />
               </a>
-              <PhotoCaption evidence={p} site={site} />
+              <PhotoCaption evidence={p} site={site} browserRead={browserExif?.has(p.id)} />
             </li>
           ))}
         </ul>
@@ -49,7 +49,7 @@ export function EvidenceGallery({ evidence, site }: { evidence: Evidence[]; site
 }
 
 /** EXIF taken-at + GPS verdict under a photo. Shared by the builder gallery and the inspector's own photos. */
-export function PhotoCaption({ evidence, site }: { evidence: Evidence; site: SiteGeo }) {
+export function PhotoCaption({ evidence, site, browserRead }: { evidence: Evidence; site: SiteGeo; browserRead?: boolean }) {
   const geo = geoVerdict(site, evidence.meta.gps);
   return (
     <div className="space-y-1 px-2.5 py-2 text-[11px] leading-tight">
@@ -67,6 +67,7 @@ export function PhotoCaption({ evidence, site }: { evidence: Evidence; site: Sit
           {formatDistance(geo.distanceM!)} from site {geo.state === "inside" ? "· on site" : "· OUTSIDE geofence"}
         </p>
       )}
+      {browserRead && <p className="text-faint" title="Core's record of this file has no EXIF; read from the file in your browser with the verifier's parser.">EXIF read in your browser</p>}
     </div>
   );
 }

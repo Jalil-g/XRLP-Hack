@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { Progress } from "@/components/ui/progress";
 import { Tag } from "@/components/ui/tag";
+import { Empty } from "@/components/ui/layout";
 import { api } from "@/lib/api";
 import { PROJECT_STATUS, PROJECT_TYPE } from "@/lib/display";
 import { BRAND, formatAmount, formatBps, formatDate, toCents } from "@/lib/utils";
@@ -30,9 +31,12 @@ export default async function ProjectsPage() {
         </div>
 
         {projects.length === 0 ? (
-          <p className="rounded-panel bg-band px-6 py-10 text-center text-small text-ink-2">No verified projects yet. Builders appear here once their project passes verification.</p>
+          <Empty title="No verified projects yet" action={<Link href="/demo" className="text-small text-link hover:underline">See how project verification works</Link>}>
+            Projects appear here after they pass verification. This list refreshes automatically.
+          </Empty>
         ) : (
-          <table className="w-full border-collapse text-left">
+          <div className="overflow-x-auto" role="region" aria-label="Verified projects table" tabIndex={0}>
+          <table className="w-full min-w-[720px] border-collapse text-left">
             <thead>
               <tr className="border-y border-line bg-band text-caption text-ink-2">
                 <th className="px-4 py-2.5 font-medium">Project</th>
@@ -76,6 +80,7 @@ export default async function ProjectsPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </section>
     </div>

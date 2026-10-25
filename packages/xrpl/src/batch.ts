@@ -43,6 +43,7 @@ import {
   type PlannedEscrow,
 } from "./loan-close.ts";
 import { rlusdAmount } from "./rlusd.ts";
+import { assertLlsMargin } from "./submit.ts";
 
 /** XLS-56: 2..8 inner transactions. */
 export const BATCH_MIN_INNER = 2;
@@ -387,7 +388,7 @@ export async function submitBatch(p: SubmitBatchParams): Promise<BatchResult> {
     const nextSeq: Record<string, number> = {};
     for (const a of accounts) nextSeq[a] = await nextSequence(a);
     const outerSequence = nextSeq[p.account]!;
-    const lastLedgerSequence = (await client.getLedgerIndex()) + (p.lastLedgerMargin ?? DEFAULT_LLS_MARGIN);
+    const lastLedgerSequence = (await client.getLedgerIndex()) + assertLlsMargin(p.lastLedgerMargin ?? DEFAULT_LLS_MARGIN);
     const { batch, blob, hash } = signPreparedBatch(p, {
       outerSequence,
       nextSequence: nextSeq,

@@ -33,3 +33,24 @@ refund is retried alone, and an escrow already cancelled by someone else is refu
 `KEEPER=1` runs it every 30 s in `serve` (`KEEPER_INTERVAL_MS` overrides; ticks never overlap). `tryStealDemo()` records a `release_refused` event with `tecCRYPTOCONDITION_ERROR`.
 
 Errors: `DomainError` → `toApiError()` → `{ error: { code, message, txResult?, txHash? } }` (codes per 05 §1).
+
+## File-store guarantees and recovery
+
+`FileStore.write` and `reset` acquire an exclusive sibling `.lock` file before
+reading or replacing the database, including across Node processes. Writes use
+an exclusive temporary file, flush its contents, and rename it over the target.
+New files are mode `0600`; newly created directories are mode `0700` (existing
+directory permissions are preserved). Reads see the old or new complete file.
+Failed callbacks do not commit; malformed JSON is reported rather than reset.
+
+Lock acquisition times out after five seconds with an explicit error. Locks are
+never stolen based on age. Following a process crash, stop **all** writers,
+remove the database's sibling `.lock` file, then restart. Temporary files left
+by a killed process can be removed while all writers are stopped. This is for a
+single local filesystem, not distributed storage. It does not serialize ledger
+calls made outside the database transaction or deduplicate chain events.
+
+Evidence IDs must be alphanumeric with underscores, hyphens, or colons (including
+the demo's `project:m1` milestone IDs); filenames are
+sanitized. `FileStore` holds application state, not release preimages: the
+separate `FilePreimageVault` retains its existing encryption and key handling.

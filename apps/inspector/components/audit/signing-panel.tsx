@@ -75,7 +75,7 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
         </Button>
       </div>
       {error && <p className="text-xs text-bad">{error}</p>}
-      <p className="text-[11px] text-muted">Stored in this browser only (devnet). Without a key, core signs with your demo key instead.</p>
+      <p className="text-[11px] text-muted">Stored in this browser only (devnet). Without a key, core attests the audit on your behalf.</p>
     </form>
   );
 }

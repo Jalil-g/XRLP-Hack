@@ -4,7 +4,7 @@ import { ArrowRight, CalendarClock, Camera, FileText, History, MapPin, Receipt }
 import { Badge, type Tone } from "@/components/ui/badge";
 import { SectionLabel } from "@/components/ui/card";
 import { buttonClass } from "@/components/ui/button";
-import { auditHref, evidenceStatus, taskAmount, type EvidenceKindStatus } from "@/lib/queue";
+import { evidenceStatus, taskHref, taskAmount, type EvidenceKindStatus } from "@/lib/queue";
 import type { InspectorTask, TaskNeeds } from "@/lib/types";
 import { cn, formatDateTime, formatRlusd } from "@/lib/utils";
 
@@ -34,7 +34,7 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const m = task.milestone;
   const expiry = m?.cancelAfter ? expiryLabel(m.cancelAfter, now) : null;
   const mine = task.priorAudits.length;
-  const href = auditHref(task);
+  const href = taskHref(task);
   const title = m ? `M${m.index + 1} · ${m.title}` : "Site visit before verification";
 
   return (
@@ -62,7 +62,7 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
           </Badge>
           {href && (
             <Link href={href} className={buttonClass("brand", "sm")}>
-              {task.needs === "re_audit" ? "Re-audit" : "Audit"} <ArrowRight className="size-3.5" />
+              {task.needs === "re_audit" ? "Re-audit" : task.needs === "pre_visit" ? "Visit site" : "Audit"} <ArrowRight className="size-3.5" />
             </Link>
           )}
         </div>

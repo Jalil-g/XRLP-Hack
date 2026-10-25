@@ -6,6 +6,7 @@ import { Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { errorDescription, errorFeedback } from "@/lib/error-feedback";
 import type { EvidenceKind, EvidenceRequirement } from "@/lib/contract";
 import { cn } from "@/lib/utils";
 
@@ -20,11 +21,17 @@ export function EvidenceUploader({
   milestoneId,
   milestoneTitle,
   requirements,
+  submitLabel = "Upload",
+  fixture,
 }: {
   projectId: string;
   milestoneId: string;
   milestoneTitle: string;
   requirements: EvidenceRequirement[];
+  /** Verb on the submit button, e.g. "Resubmit". */
+  submitLabel?: string;
+  /** Demo shortcut: stage the verifier's fixture files for this milestone. */
+  fixture?: { label: string; files: { path: string; kind: EvidenceKind }[] };
 }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement>(null);
@@ -41,6 +48,32 @@ export function EvidenceUploader({
     ]);
 
   const count = (k: EvidenceKind) => files.filter((f) => f.kind === k).length;
+  const [loading, setLoading] = useState(false);
+
+  const loadFixture = async () => {
+    if (!fixture) return;
+    setLoading(true);
+    try {
+      const loaded = await Promise.all(
+        fixture.files.map(async (f) => {
+          const res = await fetch(`/fixture-files/${f.path}`);
+          if (!res.ok) throw new Error(`Fixture file missing: ${f.path}`);
+          const blob = await res.blob();
+          return { file: new File([blob], f.path.split("/").pop()!, { type: blob.type }), kind: f.kind };
+        }),
+      );
+      setFiles((prev) => [
+        ...prev,
+        ...loaded
+          .filter(({ file }) => !prev.some((p) => p.key === `${file.name}-${file.size}`))
+          .map(({ file, kind }) => ({ key: `${file.name}-${file.size}`, file, kind, preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined })),
+      ]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not load the fixture");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const upload = async () => {
     setBusy(true);
@@ -50,7 +83,8 @@ export function EvidenceUploader({
       setFiles([]);
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Upload failed");
+      const feedback = errorFeedback(err);
+      toast.error(feedback.title, { description: errorDescription(feedback), duration: 10_000 });
     } finally {
       setBusy(false);
     }
@@ -112,10 +146,18 @@ export function EvidenceUploader({
             ))}
           </ul>
         )}
-        <Button disabled={!files.length || busy} onClick={upload}>
-          {busy && <Loader2 className="animate-spin" aria-hidden />}
-          Upload {files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : "evidence"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={!files.length || busy} onClick={upload}>
+            {busy && <Loader2 className="animate-spin" aria-hidden />}
+            {submitLabel} {files.length ? `${files.length} file${files.length === 1 ? "" : "s"}` : "evidence"}
+          </Button>
+          {fixture && (
+            <Button variant="quiet" disabled={loading || busy} onClick={loadFixture}>
+              {loading && <Loader2 className="animate-spin" aria-hidden />}
+              {fixture.label}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div>

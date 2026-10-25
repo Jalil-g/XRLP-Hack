@@ -66,6 +66,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Opt-in presentation mode: larger rem-based text and readable secondary labels. */
+html[data-projector="true"] {
+  font-size: 20px;
+  --color-muted: #475467;
+  --color-faint: #475467;
+  --color-line: #c4cad4;
+}
+
+html[data-projector="true"] :is([class~="text-[11px]"], [class~="text-[13px]"]) {
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 @utility bg-grid {
   background-image:
     linear-gradient(to right, rgba(16, 24, 40, 0.05) 1px, transparent 1px),
