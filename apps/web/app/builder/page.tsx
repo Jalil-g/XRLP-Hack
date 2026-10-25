@@ -1,161 +1,177 @@
+// Builder workspace: per project, one number, the milestone rail, and the current milestone's one next action.
+// State shows through the rail, the checks suite and the button; plumbing (credential, release txs) sits in Proof.
 import Link from "next/link";
 import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
-import { EvidenceUploader } from "@/components/builder/evidence-uploader";
+import { BuilderHero, type HeroFigure } from "@/components/builder/builder-hero";
 import { EvidenceReceipt } from "@/components/builder/evidence-receipt";
+import { EvidenceUploader } from "@/components/builder/evidence-uploader";
 import { TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
+import { Proof } from "@/components/checks/proof";
+import { StatusIcon, type RowState } from "@/components/checks/status-icon";
 import { MilestoneTabs } from "@/components/project/milestone-tabs";
+import { ReleaseStage } from "@/components/project/release-stage";
 import { buttonClass } from "@/components/ui/button";
-import { Empty, PageHeader, Section } from "@/components/ui/layout";
+import { Empty, PageHeader } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
-import type { Milestone, ProjectDetail } from "@/lib/contract";
-import { PROJECT_STATUS, sovLinesFor } from "@/lib/display";
+import type { Milestone, ProjectDetail, ProjectStatus } from "@/lib/contract";
+import { PROJECT_STATUS, checkName, sovLinesFor } from "@/lib/display";
 import { MAPLE_FIXTURE_SETS } from "@/lib/fixture-files";
 import { getSession } from "@/lib/session";
-import { formatAmount, toCents } from "@/lib/utils";
+import { cn, formatDate, toCents } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Builder" };
 
-export default async function BuilderPage() {
-  const session = await getSession();
+type Props = { searchParams: Promise<{ m?: string }> };
+
+const PRE_FUNDING: ProjectStatus[] = ["draft", "verifying", "verified", "rejected", "terms_locked"];
+const FUNDING: ProjectStatus[] = ["funding", "funded"];
+
+export default async function BuilderPage({ searchParams }: Props) {
+  const [{ m: pin }, session] = await Promise.all([searchParams, getSession()]);
   const builder = session.builder;
   if (session.directoryUnavailable) throw new Error("Builder accounts are temporarily unavailable. Try loading the workspace again.");
-  if (!builder) return <Empty title="No builder accounts">Core did not return any builders.</Empty>;
+  if (!builder) return <Empty title="No builder accounts" />;
   const summaries = (await api.listProjects()).filter((s) => (s.builderId ? s.builderId === builder.id : s.builderName === builder.name));
   const details = await Promise.all(summaries.map((s) => api.getProject(s.id)));
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-14">
       <AutoRefresh ms={4000} />
       <PageHeader
+        title={builder.name}
+        meta={builder.verified ? <Tag tone="pass">Verified</Tag> : <Tag>Not verified</Tag>}
         action={
           <Link href="/builder/new" className={buttonClass("secondary")}>
             New project
           </Link>
         }
-        title={builder.name}
-        meta={builder.verified ? <Tag tone="pass">Verified builder</Tag> : <Tag>Not verified yet</Tag>}
       />
 
-      {details.length === 0 && <Empty title="Your next project starts here" action={<Link href="/builder/new" className={buttonClass()}>Create a project</Link>}>Submit a Schedule of Values, verify the project, then collect evidence for each construction draw.</Empty>}
+      {details.length === 0 && (
+        <Empty
+          title="No projects yet"
+          action={
+            <Link href="/builder/new" className={buttonClass()}>
+              Create project
+            </Link>
+          }
+        />
+      )}
 
-      {details.map((d) => (
-        <BuilderProject key={d.project.id} d={d} />
+      {details.map((d, i) => (
+        <BuilderProject key={d.project.id} d={d} lead={i === 0} pin={pin} />
       ))}
+
+      <Proof
+        label="Builder proof"
+        className="border-t border-line pt-2"
+        items={[
+          { label: "Licence", value: builder.licenseNumber },
+          { label: "Completed", value: `${builder.completedProjects} projects` },
+          { label: "Credential", value: builder.credentialTx && <TxLink hash={builder.credentialTx} /> },
+        ]}
+      />
     </div>
   );
 }
 
-function BuilderProject({ d }: { d: ProjectDetail }) {
-  const { project: p, builder } = d;
+function BuilderProject({ d, lead, pin }: { d: ProjectDetail; lead: boolean; pin?: string }) {
+  const { project: p } = d;
   const status = PROJECT_STATUS[p.status];
   const current = p.milestones.find((m) => !["released", "refunded", "pending"].includes(m.status));
+  // ?m= pins the milestone whose checks just ran, so its release plays out here instead of jumping to the next draw.
+  const shown = p.milestones.find((m) => m.id === pin) ?? current;
+  const released = p.milestones.filter((m) => m.status === "released");
+  const paidCents = released.reduce((a, m) => a + toCents(m.amount), 0);
   const raised = d.investments.reduce((a, i) => a + toCents(i.amount), 0);
+  const principal: HeroFigure = { label: "Principal", cents: toCents(p.terms.principal) };
+  const paid: HeroFigure = { label: "Paid to you", cents: paidCents, paid: true };
+  const next = shown && shown.id !== current?.id && current;
 
-  return (
-    <Section
-      title={
-        <span className="flex flex-wrap items-center gap-3">
-          {p.name} <Tag tone={status.tone}>{status.label}</Tag>
-        </span>
-      }
-      aside={
-        <Link href={`/projects/${p.id}`} className="text-link hover:underline">
-          Project page
-        </Link>
-      }
-    >
-      <div className="mb-6 grid gap-6 rounded-[20px] bg-capital p-6 text-capital-text sm:grid-cols-[minmax(0,1fr)_auto] sm:p-8">
-        <div className="min-w-0">
-          <p className="text-small text-capital-muted">{current ? `${current.title} · scheduled draw` : "Project principal"}</p>
-          <p className="mt-2 break-words text-[36px] leading-[1.1] font-semibold tracking-[-0.035em] tabular-nums sm:text-[52px]">{formatAmount(current?.amount ?? p.terms.principal)} <span className="text-body font-medium tracking-normal text-capital-muted">RLUSD</span></p>
-          <p className="mt-3 max-w-[65ch] text-small text-capital-muted">{current ? STEP[current.status] ?? (current.status === "failed" ? "A check failed. Review the flagged evidence and resubmit; funds remain locked." : "Follow the milestone below for the next action.") : "Verification comes before funding. Each construction draw has its own evidence requirements."}</p>
-        </div>
-        <dl className="space-y-3 border-t border-capital-muted/30 pt-4 text-small sm:border-t-0 sm:border-l sm:pt-0 sm:pl-6">
-          {p.status === "funding" || p.status === "funded" ? (
-            <div><dt className="text-capital-muted">Raised from investors</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(raised / 100)} RLUSD</dd></div>
-          ) : (
-            <div><dt className="text-capital-muted">Paid to you</dt><dd className="mt-1 font-medium tabular-nums">{formatAmount(p.milestones.filter((m) => m.status === "released").reduce((a, m) => a + toCents(m.amount), 0) / 100)} RLUSD</dd></div>
-          )}
-          {current && <div><dt className="text-capital-muted">Project principal</dt><dd className="mt-1 tabular-nums">{formatAmount(p.terms.principal)} RLUSD</dd></div>}
-        </dl>
-      </div>
-      <div className="mb-8">
-        <MilestoneTabs milestones={p.milestones} selectedId={current?.id} linked={false} label={`${p.name} milestone schedule`} />
-      </div>
-      <EvidenceReceipt detail={d} />
-      {p.status === "draft" && (
-        <NextStep
-          title="Pay the verification fee"
-          body="250 RLUSD pays for the AI review of your identity, the project's feasibility and your capability, plus an inspector visit if one is needed. In production the fee scales with project size."
-          action={<ActionButton context={p.name} action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>Pay 250 RLUSD</ActionButton>}
-        />
-      )}
-      {p.status === "verifying" && (
-        <NextStep
-          title="Run verification"
-          body="The AI checks your licence, insurance and entity (mock registries), whether the Schedule of Values adds up and is priced in range, and your track record."
-          action={<ActionButton action={{ kind: "verifyProject", projectId: p.id }}>Run verification</ActionButton>}
-        />
-      )}
-      {(p.status === "funding" || p.status === "funded") && (
-        <p className="text-body text-ink-2">
-          Raised <span className="tabular text-ink">{formatAmount(raised / 100)}</span> of {formatAmount(p.terms.principal)} RLUSD. Escrows are created when the loan closes.
-        </p>
-      )}
-      {p.status === "verified" && <p className="text-body text-ink-2">Verified. The platform locks terms and assigns your inspector next.</p>}
-
-      {d.verification && (
-        <p className="mb-6 flex flex-wrap items-center gap-3 text-small">
-          <Tag tone={d.verification.decision === "pass" ? "pass" : d.verification.decision === "fail" ? "fail" : "review"}>
-            {d.verification.decision === "pass" ? "Verified" : d.verification.decision === "fail" ? "Rejected" : "Needs an inspector visit"}
-          </Tag>
-          <span className="text-ink-2">Identity, feasibility and capability checked</span>
-          <Link href={`/projects/${p.id}/verification`} className="text-link hover:underline">
-            Verification report
+  const hero = FUNDING.includes(p.status) ? (
+    <BuilderHero lead={lead} label="Raised" cents={raised} ofCents={toCents(p.terms.principal)} figures={[{ label: "Closes", text: formatDate(p.terms.fundingDeadline) }]} />
+  ) : PRE_FUNDING.includes(p.status) ? (
+    <BuilderHero lead={lead} label="Principal" cents={toCents(p.terms.principal)} figures={[]} />
+  ) : shown ? (
+    <BuilderHero
+      lead={lead}
+      label={`${shown.title} draw`}
+      cents={toCents(shown.amount)}
+      figures={[paid, principal]}
+      action={
+        next && (
+          <Link href="/builder" scroll={false} className={buttonClass("primary", "lg")}>
+            Open {next.title}
           </Link>
-        </p>
-      )}
-
-      {current && <CurrentMilestone d={d} m={current} />}
-      <Payouts d={d} />
-    </Section>
+        )
+      }
+    />
+  ) : (
+    <BuilderHero lead={lead} label="Paid to you" cents={paidCents} figures={[principal]} />
   );
-}
 
-function Payouts({ d }: { d: ProjectDetail }) {
-  const paid = d.project.milestones.filter((m) => m.status === "released");
-  if (!paid.length) return null;
   return (
-    <div className="mt-8">
-      <h4 className="mb-2 text-small font-semibold">Paid to you</h4>
-      <ul className="divide-y divide-line border-y border-line">
-        {paid.map((m) => (
-          <li key={m.id} className="flex items-center justify-between gap-4 py-2.5 text-small">
-            <span>
-              {m.index + 1}. {m.title}
-            </span>
-            <span className="flex items-center gap-4">
-              <span className="tabular font-medium text-pass">+{formatAmount(m.amount)} RLUSD</span>
-              {m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} label="EscrowFinish" />}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <ReleaseStage>
+      <section aria-labelledby={`project-${p.id}`} className="space-y-7">
+        <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 id={`project-${p.id}`} className="text-heading">
+              {p.name}
+            </h2>
+            <Tag tone={status.tone}>{status.label}</Tag>
+          </div>
+          <nav aria-label={`${p.name} links`} className="flex gap-5 text-small font-medium">
+            {d.verification && (
+              <Link href={`/projects/${p.id}/verification`} className="text-ink-2 hover:text-ink">
+                Verification
+              </Link>
+            )}
+            <Link href={`/projects/${p.id}`} className="text-ink-2 hover:text-ink">
+              Project page
+            </Link>
+          </nav>
+        </header>
+
+        {hero}
+
+        {PRE_FUNDING.includes(p.status) ? (
+          <Onboarding d={d} />
+        ) : (
+          <MilestoneTabs milestones={p.milestones} selectedId={shown?.id} linked={false} label={`${p.name} milestones`} />
+        )}
+
+        <div className="space-y-3">
+          {shown && !PRE_FUNDING.includes(p.status) && !FUNDING.includes(p.status) && <CurrentMilestone d={d} m={shown} />}
+          <div>
+            <EvidenceReceipt detail={d} />
+            <Proof
+              label="Payouts"
+              items={released.map((m) => ({ label: `${m.title} paid`, value: m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} /> }))}
+            />
+          </div>
+        </div>
+      </section>
+    </ReleaseStage>
   );
 }
 
-const STEP: Partial<Record<Milestone["status"], string>> = {
-  escrowed: "Upload the evidence below. Next, the assigned inspector audits the site, then the checks run.",
-  evidence_submitted: "Evidence received. The assigned inspector audits it and signs; then run the checks. Without a signed audit the inspector check fails.",
-  audited: "The inspector signed the audit. Run the checks: if every one passes, the escrow pays you.",
-  needs_human: "The checks passed below the confidence this milestone needs. The platform operator is reviewing.",
-  verified: "All checks passed. The release service is finishing the escrow.",
-  expired: "This escrow expired. The money goes back to the project account and is repaid to the vault.",
+/** What fixes each failed check, in a few words. */
+const FIX: Record<string, string> = {
+  required_evidence_present: "Add the missing files",
+  gps_within_site: "Retake the photos on site",
+  photo_fresh: "Upload new photos",
+  no_duplicate_photo: "Replace the reused photo",
+  invoice_matches_budget: "Upload the matching invoice",
+  inspector_audit_present: "Ask the inspector to sign",
+  audit_checklist_complete: "Finish the work, then re-audit",
+  stage_visually_consistent: "Photograph the finished stage",
+  audit_matches_evidence: "Upload photos that match the audit",
+  document_consistency: "Fix the mismatched documents",
+  lien_waiver_matches_invoices: "Upload matching lien waivers",
 };
 
 function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
@@ -165,10 +181,11 @@ function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
   const flaggedNames = new Set((d.evidence?.[m.id] ?? []).filter((e) => failed.some((c) => c.evidenceIds.includes(e.id))).map((e) => e.filename));
   const set = /maple/i.test(p.name) ? MAPLE_FIXTURE_SETS[m.index] : undefined;
   const fixture = set && {
-    label: m.status === "failed" ? "Load Maple St fixture without the flagged photo" : "Load Maple St fixture",
+    label: "Use demo files",
+    title: flaggedNames.size ? "Demo fixture files, without the flagged photo" : "Demo fixture files",
     files: set.filter((f) => !flaggedNames.has(f.path.split("/").pop()!)),
   };
-  const uploader = ["escrowed", "evidence_submitted", "failed"].includes(m.status) && (
+  const uploader = (submitLabel: string) => (
     <EvidenceUploader
       projectId={p.id}
       milestoneId={m.id}
@@ -176,60 +193,108 @@ function CurrentMilestone({ d, m }: { d: ProjectDetail; m: Milestone }) {
       projectName={p.name}
       builderName={builder.name}
       requirements={sovLinesFor(p, m).flatMap((l) => l.evidence)}
-      submitLabel={m.status === "failed" ? "Resubmit" : "Upload"}
+      submitLabel={submitLabel}
       fixture={fixture}
     />
   );
-  const panel = (
-    <ChecksPanel
-      key={m.id}
-      milestone={m}
-      status={checks}
-      audits={d.audits[m.id] ?? []}
-      attestations={d.attestations[m.id] ?? []}
-      builderName={builder.name}
-      builderBalance={d.balances?.builder}
-      evidence={d.evidence?.[m.id]}
-      names={Object.fromEntries(d.inspectors.map((i) => [i.address, i.name]))}
-      run={{ projectId: p.id }}
-    />
-  );
+
+  if (m.status === "escrowed") return uploader("Upload");
+
+  const first = failed[0];
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-heading">
-          Milestone {m.index + 1}: {m.title} · {formatAmount(m.amount)} RLUSD
-        </h3>
-        {m.status === "failed" && (
-          <p className="mt-1 max-w-[72ch] text-small text-ink-2">
-            {`${failed.length === 1 ? "A check" : `${failed.length} checks`} failed, so the money stays locked. Fix what the red row says, then resubmit: the checks run again on the new evidence.`}
-          </p>
-        )}
-      </div>
-      {m.status === "failed" ? (
-        <>
-          {panel}
-          <h4 className="pt-2 text-body font-semibold">Resubmit evidence</h4>
-          {uploader}
-        </>
-      ) : (
-        <>
-          {uploader}
-          {panel}
-        </>
+      <ChecksPanel
+        key={m.id}
+        milestone={m}
+        status={checks}
+        audits={d.audits[m.id] ?? []}
+        attestations={d.attestations[m.id] ?? []}
+        builderName={builder.name}
+        builderBalance={d.balances?.builder}
+        evidence={d.evidence?.[m.id]}
+        names={Object.fromEntries(d.inspectors.map((i) => [i.address, i.name]))}
+        run={{ projectId: p.id, pinHref: `?m=${encodeURIComponent(m.id)}` }}
+      />
+      {m.status === "failed" && (
+        <div className="space-y-4 pt-2">
+          {first && (
+            <p className="flex items-center gap-2.5 text-body">
+              <StatusIcon state="fail" />
+              <span>
+                <span className="font-semibold text-ink">{checkName(first.check)}</span>
+                <span className="text-ink-2">{failed.length > 1 ? ` and ${failed.length - 1} more. ` : ". "}</span>
+                <span className="font-medium text-fail">{FIX[first.check] ?? "Fix the flagged evidence"}.</span>
+              </span>
+            </p>
+          )}
+          {uploader("Resubmit")}
+        </div>
+      )}
+      {m.status === "evidence_submitted" && (
+        <details className="proof">
+          <summary className={buttonClass("secondary")}>Add files</summary>
+          <div className="pt-5">{uploader("Upload")}</div>
+        </details>
       )}
     </div>
   );
 }
 
-function NextStep({ title, body, action }: { title: string; body: string; action: React.ReactNode }) {
+/** Before funding: a short checklist with the one live step's button. */
+function Onboarding({ d }: { d: ProjectDetail }) {
+  const { project: p, builder, verification: v } = d;
+  const s = p.status;
+  const verifyState: StepState = v?.decision === "pass" ? "done" : v?.decision === "fail" || s === "rejected" ? "fail" : v?.decision === "needs_human" ? "warn" : s === "verifying" ? "now" : "todo";
+  const steps: { label: string; state: StepState; action?: React.ReactNode }[] = [
+    {
+      label: "Pay fee",
+      state: s === "draft" ? "now" : "done",
+      action: s === "draft" && (
+        <ActionButton context={p.name} action={{ kind: "payFee", projectId: p.id, builder: builder.address }}>
+          Pay 250 RLUSD
+        </ActionButton>
+      ),
+    },
+    {
+      label: verifyState === "warn" ? "Site visit" : "Verify project",
+      state: verifyState,
+      action:
+        s === "verifying" ? (
+          <ActionButton action={{ kind: "verifyProject", projectId: p.id }}>Run verification</ActionButton>
+        ) : verifyState === "fail" || verifyState === "warn" ? (
+          <Link href={`/projects/${p.id}/verification`} className={buttonClass("secondary")}>
+            Open report
+          </Link>
+        ) : undefined,
+    },
+    { label: "Lock terms", state: s === "terms_locked" ? "done" : s === "verified" ? "now" : "todo", action: s === "verified" && <span className="text-small text-ink-2">Platform</span> },
+    { label: "Raise funds", state: s === "terms_locked" ? "now" : "todo" },
+  ];
   return (
-    <div className="flex flex-wrap items-center justify-between gap-6 rounded-panel bg-band px-6 py-5">
-      <div className="max-w-[60ch]">
-        <p className="text-body font-semibold">{title}</p>
-        <p className="mt-1 text-small text-ink-2">{body}</p>
-      </div>
-      {action}
-    </div>
+    <ol aria-label={`${p.name} onboarding`} className="max-w-[640px] divide-y divide-line border-y border-line">
+      {steps.map((step, i) => (
+        <li key={step.label} className="flex min-h-16 items-center gap-3.5 py-3">
+          <StepMarker state={step.state} />
+          <span className={cn("flex-1 text-body", step.state === "todo" ? "text-ink-2" : "font-medium text-ink")}>
+            <span className="mr-2 tabular-nums text-ink-3">{i + 1}</span>
+            {step.label}
+          </span>
+          {step.action}
+        </li>
+      ))}
+    </ol>
   );
+}
+
+type StepState = "done" | "now" | "todo" | "fail" | "warn";
+const STEP_ICON: Partial<Record<StepState, RowState>> = { done: "pass", fail: "fail", warn: "warn", todo: "queued" };
+
+function StepMarker({ state }: { state: StepState }) {
+  if (state === "now")
+    return (
+      <span aria-label="Next" role="img" className="flex size-5 shrink-0 items-center justify-center rounded-full border-2 border-ink">
+        <span className="size-1.5 rounded-full bg-ink" />
+      </span>
+    );
+  return <StatusIcon state={STEP_ICON[state]!} />;
 }

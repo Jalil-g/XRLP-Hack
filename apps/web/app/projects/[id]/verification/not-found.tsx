@@ -1,5 +1,14 @@
 import Link from "next/link";
+import { buttonClass } from "@/components/ui/button";
 
 export default function NotFound() {
-  return <section className="rounded-panel border border-line bg-surface p-6"><h1 className="text-title">Project not found</h1><p className="mt-3 text-body text-ink-2">This project may have been removed or replaced by a demo reset.</p><Link href="/builder" className="mt-4 inline-flex min-h-11 items-center text-small text-link underline underline-offset-4">Return to builder workspace</Link></section>;
+  return (
+    <section className="max-w-[640px] space-y-5 py-6">
+      <h1 className="text-heading">Project not found</h1>
+      <p className="text-body text-ink-2">It may have been removed by a demo reset.</p>
+      <Link href="/builder" className={buttonClass("secondary", "lg")}>
+        Builder workspace
+      </Link>
+    </section>
+  );
 }

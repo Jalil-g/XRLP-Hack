@@ -9,9 +9,11 @@ test("saved evidence receipt survives fresh renders and milestone status changes
   const project = db.projects.find((entry) => entry.id === "maple-st")!;
   const builder = db.builders.find((entry) => entry.id === project.builderId)!;
   const detail = { project, builder, evidence: db.evidence };
+  const files = project.milestones.flatMap((m) => db.evidence[m.id] ?? []);
   const before = renderToStaticMarkup(<EvidenceReceipt detail={detail} />);
-  assert.match(before, /Evidence received/);
-  assert.match(before, /Submission is not a release of funds/);
+  assert.match(before, /aria-label="Evidence receipt"/);
+  assert.match(before, new RegExp(`${files.length} files`));
+  for (const file of files) assert.ok(before.includes(file.filename), `receipt lists ${file.filename}`);
   project.milestones[0]!.status = "released";
   const after = renderToStaticMarkup(<EvidenceReceipt detail={detail} />);
   assert.equal(after, before);
