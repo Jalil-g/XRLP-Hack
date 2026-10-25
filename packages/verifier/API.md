@@ -11,6 +11,8 @@ pnpm --filter @xrlp/verifier typecheck
 pnpm --filter @xrlp/verifier test
 VERIFIER_MODE=mock pnpm --filter @xrlp/verifier demo
 pnpm --filter @xrlp/verifier fixtures
+pnpm --filter @xrlp/verifier eval --mode mock --repeat 3
+pnpm --filter @xrlp/verifier eval --mode live --repeat 3 --output .data/live-eval.json
 ```
 
 Mock mode is deterministic and needs no API key. Its judgement reasons are labeled [mock]; stage
@@ -99,12 +101,21 @@ The milestone runner combines caller policy with the baseline; callers can tight
 remove mandatory checks or lower thresholds. Any required failure fails. Missing, skipped, warning
 or low-confidence required checks need human review. Optional warnings do not dilute passing
 confidence. An unverified builder cannot auto-pass. decide accepts a third ReleasePolicy; production
-milestone verification always supplies it.
+milestone verification always supplies it. Without an explicit policy, decide conservatively requires
+the complete suite; partial result arrays can never automatically pass.
 
 verdictHash validates the full shared Verdict, canonicalizes nested object keys (array order is
 preserved), then computes SHA-256 hex. createdAt is included. Core/attest-signer must hash the exact
 returned object, not a placeholder or a reconstruction with another timestamp. canonicalJson is
 also exported; it rejects cycles and non-finite/non-JSON data. Neither helper signs or sends a tx.
+
+## Invoice reconciliation (VER-05)
+
+Standard-risk invoice totals within +/-10% of the milestone amount pass; mismatch up to +/-25%
+requires review; beyond 25% fails. High-risk/high-value policy narrows the pass band. Boundaries use
+integer cross-multiplication, so a one-cent excess cannot hide behind a rounded display percentage.
+Unreadable/malformed totals need review. Text/JSON parsing is deterministic; PDFs/images use live
+extraction and are explicitly labeled LLM-extracted. No live PDF extraction result was measured here.
 
 ## Project verification
 
@@ -119,7 +130,24 @@ The default licence/insurance registry, NYC residential cost proportions and fix
 MOCK. They do not prove real-world licensing, entity/sanctions status, site existence, permit
 authenticity, construction quality or quantities. Live mode adds bounded structured Claude judgement
 (20 seconds, no retries); unavailable/refused/low-confidence review requires a human, and cannot
-override deterministic contradictions. Project manifest: fixtures/project-manifest.json.
+override deterministic contradictions. Project manifest: fixtures/projects/manifest.json.
+
+The eval harness recursively discovers fixtures/**/manifest.json for milestone and project cases.
+It checks expected decisions AND every declared failing/warning check, serially. Live mode disables
+the review cache; three repetitions must independently match before claiming stability. Missing keys,
+unknown fixture builders, exceptions and mismatches cannot score green. Exit codes: 0 matched,
+1 mismatch, 2 configuration/unavailable. Reports contain results/timings/hashes, never credentials.
+Mock validation completed 24/24 scenario runs; no real live evaluation has been measured here.
+
+VER-11 adds six adversarial manifest cases: an APPROVED overlay on a real photo with a stale audit,
+injected notes from an unassigned inspector, stripped EXIF with an otherwise bound audit, wrong GPS,
+corrupt image bytes, and invoice instructions with a zero total. These test deterministic gating;
+they do not demonstrate that a live model resists every prompt attack. Transformations are generated
+from the credited real source fixtures at evaluation time. Every case must fail or need review.
+
+Locked SoV lines now determine visual criteria and evidence requirements. Caller-supplied line
+definitions cannot weaken different stored lines. A shared document may support several lines;
+the minimum count is the maximum requirement per kind, while audit/AI review covers each line.
 
 ## Inspector assignment
 

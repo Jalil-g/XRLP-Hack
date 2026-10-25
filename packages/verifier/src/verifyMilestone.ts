@@ -1,4 +1,4 @@
-import { CheckResult, MILESTONE_TEMPLATES, ReleasePolicy, Verdict } from "@xrlp/shared";
+import { CheckResult, MILESTONE_CHECKS as REQUIRED_SUITE, ReleasePolicy, Verdict } from "@xrlp/shared";
 import {
   checkGpsWithinSite,
   checkInvoiceMatchesBudget,
@@ -10,6 +10,7 @@ import {
 import { resolveMode, resolveModel } from "./config.ts";
 import { checkInspectorAudits } from "./auditChecks.ts";
 import { withDeadline } from "./deadline.ts";
+import { milestoneTemplate } from "./template.ts";
 import { MockJudge } from "./llm/mock.ts";
 import { unavailableJudgement, type MilestoneJudge, type MilestoneJudgement } from "./llm/types.ts";
 import { loadEvidence } from "./meta.ts";
@@ -49,7 +50,7 @@ export async function verifyMilestone(input: VerifyMilestoneInput, opts: VerifyO
 export async function verifyMilestoneDetailed(input: VerifyMilestoneInput, opts: VerifyOptions = {}): Promise<VerifyMilestoneResult> {
   const { project, builder, milestone } = input;
   const timeline = { ...(input.escrowCreatedAt ? { escrowCreatedAt: input.escrowCreatedAt } : {}), ...input.timeline };
-  const template = input.template ?? MILESTONE_TEMPLATES[project.type].find((t) => t.key === milestone.templateKey);
+  const template = milestoneTemplate(input);
   const prior: PriorEvidence[] = (input.priorEvidence ?? [])
     .map((p) => ("evidence" in p ? p : { evidence: p, projectId: "unknown", milestoneId: "unknown" }));
   const ctx: MilestoneContext = { project, builder, milestone, template, riskTier: builder.riskTier };
@@ -125,7 +126,11 @@ interface Decided {
 }
 
 /** Map check outcomes through the policy: deterministic fails decide; low LLM confidence -> human. */
-export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, release?: ReleasePolicy): Decided {
+export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, release: ReleasePolicy = {
+  riskTier: policy.riskTier, requiredChecks: [...REQUIRED_SUITE, "evidence_readable"],
+  optionalChecks: ["lien_waiver_matches_invoices"], minConfidence: policy.minConfidence,
+  requiredAudits: policy.requiredInspectors,
+}): Decided {
   const complete = [...outcomes];
   for (const required of release?.requiredChecks ?? []) {
     if (!complete.some((outcome) => outcome.check === required)) complete.push({ check: required, result: "warn", reason: "Required check result missing; operator review required.", evidenceIds: [], confidence: 0, source: "deterministic" });
@@ -158,7 +163,7 @@ export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, rel
   if (failing.length) {
     decision = "fail";
     confidence = Math.max(...failing.map((c) => c.confidence));
-  } else if (human.length || !policy.allowAutoPass) {
+  } else if (human.length || !policy.allowAutoPass || !counted.length) {
     decision = "needs_human";
     confidence = human.length ? Math.min(...human.map((c) => c.confidence)) : 0.5;
   } else {
@@ -169,7 +174,6 @@ export function decide(outcomes: CheckOutcome[], policy: VerificationPolicy, rel
 }
 
 function summarize(d: Decided, policy: VerificationPolicy): string {
-  const insp = `${policy.requiredInspectors} inspector${policy.requiredInspectors > 1 ? "s" : ""}`;
   const strip = (s: string) => s.replace(/\s*\[catches lazy fraud only[^\]]*\]/, "").replace(/^\[mock\]\s*/, "");
   if (d.decision === "fail") {
     const f = d.checks.filter((c) => c.escalation === "fail");

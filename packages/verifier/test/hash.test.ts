@@ -18,6 +18,7 @@ test("canonical verdict snapshot and hash agree, independently of property inser
   assert.notEqual(verdictHash({ ...verdict, decision: "fail" }), verdictHash(verdict));
   assert.notEqual(verdictHash({ ...verdict, createdAt: "2026-10-25T20:00:00Z" }), verdictHash(verdict));
   assert.equal(canonicalJson({ z: [2, 1], a: { z: 1, a: 2 } }), '{"a":{"a":2,"z":1},"z":[2,1]}');
+  assert.equal(canonicalJson(Array(2)), "[null,null]");
   assert.throws(() => canonicalJson({ bad: NaN }));
   const cycle: Record<string, unknown> = {}; cycle.self = cycle;
   assert.throws(() => canonicalJson(cycle), /cycles/);
@@ -30,6 +31,7 @@ test("required fail always blocks, skipped/missing/low confidence need human; op
   assert.equal(decide([o("fail")], policy, release).decision, "fail");
   assert.equal(decide([o("skipped")], policy, release).decision, "needs_human");
   assert.equal(decide([], policy, release).decision, "needs_human");
+  assert.equal(decide([], policy, { ...release, requiredChecks: [] }).decision, "needs_human");
   assert.equal(decide([o("pass", 0.7)], policy, release).decision, "needs_human");
   const optional = { ...o("warn", 0.3), check: "lien_waiver_matches_invoices" };
   const result = decide([o("pass"), optional], policy, release);

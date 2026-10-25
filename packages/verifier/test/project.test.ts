@@ -5,7 +5,7 @@ import { ProjectVerification } from "@xrlp/shared";
 import { verifyProject } from "../src/index.ts";
 import { projectInput } from "../fixtures/project-scenarios.ts";
 
-const manifest = JSON.parse(await readFile(new URL("../fixtures/project-manifest.json", import.meta.url), "utf8"));
+const manifest = JSON.parse(await readFile(new URL("../fixtures/projects/manifest.json", import.meta.url), "utf8"));
 for (const scenario of manifest.scenarios) {
   test(`project fixture ${scenario.key} -> ${scenario.expect}`, async () => {
     const input = projectInput(scenario.key);

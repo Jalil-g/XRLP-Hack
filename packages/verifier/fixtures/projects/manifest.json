@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "MOCK project records, registry and regional cost proportions. No real-world site/permit/sanctions validation.",
+  "note": "MOCK project records, registry and regional cost proportions. Discovered by the recursive eval harness. No real-world site/permit/sanctions validation.",
   "scenarios": [
     { "key": "project-pass", "expect": "pass", "failingChecks": [], "warnChecks": [] },
     { "key": "project-expired-insurance", "expect": "fail", "failingChecks": ["insurance_document_consistent"], "warnChecks": [] },
