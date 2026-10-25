@@ -1,10 +1,12 @@
 # Pitch Q&A: the 20 hardest judge questions (PITCH-09)
 
+> **Adopted pitch (2026-10-25):** [six-slide storyline](08-pitch-storyline.md), [100-second recorded demo](04-demo-script.md), [deck style guide](ideas/pitch-3min-style-guide.md), and [Claude PowerPoint prompts](ideas/pitch-3min-claude-prompts.md). These supersede older presentation timing and slide numbers below.
+
 > Rehearsal sheet for #72, 2026-10-25 (Jalil's agent). Each answer is at most 3 sentences, 25–31 s in full at 150 wpm (longer than
 > 07's ~20 s target). The **first sentence (5–14 s) is the answer** if a judge cuts in; the rest is the mechanism. Same style as
 > `docs/07-pitch.md` §Judge Q&A, which keeps the easier ones (SoV/skyscraper #6, mainnet #12, RLUSD freeze #14, hardware wallet #15, robots #16).
 > **Owners are proposed by lane**: Jalil = XRPL/ledger/trust model · Sean = architecture/core/release service · Elmir = AI verification/fraud ·
-> Bri = product/UX/market · Roro = inspector workflow. Bri confirms on #72; then this replaces `docs/08-pitch-storyline.md` §5.
+> Bri = product/UX/market · Roro = inspector workflow. Use these Q&A owners with `docs/08-pitch-storyline.md` §5.
 > Sources: `03` = `docs/03-architecture.md` · `PN` = `docs/xrpl-protocol-notes.md` · `P2` = `docs/proof-devnet-2026-10-25-v2.md`
 > (PR #126) · `D` = `docs/decisions.md`. Devnet links die when devnet resets; PITCH-04 keeps the current set.
 > Never say: "trustless AI", "ledger-enforced release", "mainnet-ready", "automatic refunds to investors" (`docs/00-overview.md`).
@@ -37,7 +39,7 @@
 ## Trust model
 
 **1. "Isn't the platform still trusted?"** (Jalil)
-Yes, for *when*: our release service holds each escrow's secret and finishes only after the suite is green, and slide 6 says so. Not for
+Yes, for *when*: our release service holds each escrow's secret and finishes only after the suite is green, and slide 3 states that responsibility. Not for
 *where*: the destination is fixed at `EscrowCreate`, so the worst case is an early release to the right builder, never a redirection, and
 public attestations precede every release. Putting the suite itself on-ledger needs Smart Escrows (XLS-100), not on devnet: that's the roadmap.
 *Sources:* 03 §Escrow gating · D Direction v2 ("Preimages are held by core's release service") · PN §0 · `packages/core/src/release-service.ts`.
@@ -211,11 +213,11 @@ non-transferable. The identity checks behind the credential are mocked and label
 Built proves the need and the AI-review approach, but it's lender-side software: the lender still holds the money and releases it however it
 likes, and its investors see nothing. We make the release itself the product: money locked per milestone where it can only pay the builder,
 and every check attested publicly before it moves. We're the rail a private-credit fund or community bank plugs into, which is our pilot ask.
-*Sources:* `docs/01-problem.md` §Why existing solutions don't close the gap (Built row) · `docs/08-pitch-storyline.md` slide 8 (pilot ask).
+*Sources:* `docs/01-problem.md` §Why existing solutions don't close the gap (Built row) · `docs/08-pitch-storyline.md` slide 6 (pilot ask).
 
 ## Before stage: what these answers depend on
 
-- **Q19, and slide 6's KYC row:** project vaults are private (`DomainID`) through the ledger adapter (#121) and the CLI `demo` / `prestage`
+- **Q19 (Q&A detail; no KYC table in the six-slide deck):** project vaults are private (`DomainID`) through the ledger adapter (#121) and the CLI `demo` / `prestage`
   (#136), so `tecNO_AUTH` on a project vault can be shown on devnet.
 - **Q15:** assumes `VERIFIER_MODE=mock` on stage. Rewrite it if the verifier goes live (or moves to Bedrock).
 - Re-open every devnet link the morning of the demo; a devnet reset breaks them all.

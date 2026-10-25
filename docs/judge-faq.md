@@ -1,5 +1,7 @@
 # Judge FAQ: five mandatory questions (PITCH-07)
 
+> Presentation source of truth: [six-slide pitch](08-pitch-storyline.md), including the 100-second prerecorded demo. This card is for Q&A after the three-minute pitch.
+
 Use this card for the five questions every presenter must be able to answer. Lead with the **bold sentence**; it is the complete answer if
 the judge interrupts. The rest is the mechanism and the honest limit. Longer edge cases remain in `docs/pitch-qa.md` and
 `docs/07-pitch.md`.
@@ -22,7 +24,7 @@ created.** It cannot redirect a live escrow; if release never happens, the escro
 controls *when* the platform submits a finish, and its verdict is attested before that transaction. A compromised service could release
 early to the correct builder, so we disclose that trust and post first-loss cover; moving the release rule on-ledger needs Smart Escrows.
 
-- Evidence: `docs/03-architecture.md` §Escrow gating, `packages/core/src/release-service.ts`, `docs/08-pitch-storyline.md` slide 6.
+- Evidence: `docs/03-architecture.md` §Escrow gating, `packages/core/src/release-service.ts`, `docs/08-pitch-storyline.md` slide 3.
 
 ## 3. "Why not a hardware wallet?"
 
