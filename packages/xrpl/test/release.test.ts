@@ -8,6 +8,7 @@ import { testConditionPair } from "./support/conditions.ts";
 import { cancelReadiness, escrowAmountFromMeta, wrongFinishBlockers, wrongFulfillmentFor } from "../src/escrow.ts";
 import { ceilMicro, LoanPayAmountError, loanPayFlags, LSF_LOAN_OVERPAYMENT, planLoanPayment } from "../src/loan.ts";
 import { evaluatePreflight, type PreflightSnapshot } from "../src/preflight.ts";
+import { topUpAmount } from "../src/rlusd.ts";
 import { withdrawPhaseCheck, VAULT_KIND_CLOSED_ENDED, type VaultLedgerEntry } from "../src/vault.ts";
 
 const NOW = 800_000_000;
@@ -193,4 +194,13 @@ test("wrongFinishBlockers: refuse an expired / about-to-expire escrow", () => {
 test("wrongFinishBlockers: refuse an unfunded submitter", () => {
   const s = wrongSnap({ submitterAccount: { address: "rPlatform", balance: "1", flags: 0 } });
   assert.deepEqual(wrongFinishBlockers(evaluatePreflight(s, nowL)).map((b) => b.reason), ["submitter_unfunded"]);
+});
+
+test("topUpAmount rounds the shortfall up to 6 dp (IOU precision), skips when already there", () => {
+  assert.equal(topUpAmount("35999.99999987428", 50_000), "14000.000001");
+  assert.equal(topUpAmount("35000", 50_000), "15000");
+  assert.equal(topUpAmount("0", 1000), "1000");
+  assert.equal(topUpAmount("49999.5", 50_000), "0.5");
+  assert.equal(topUpAmount("50000", 50_000), undefined);
+  assert.equal(topUpAmount("50000.000001", 50_000), undefined);
 });
