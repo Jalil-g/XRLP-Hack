@@ -74,6 +74,7 @@ import {
   isLocked,
   isTerminal,
 } from "./state-machine.ts";
+import { normalizeAnswers, siteVisitHash, siteVisitOutcome, SiteVisitReportInput, type InspectorSiteVisit } from "./site-visit.ts";
 import type { AuditRecord, DbState, ProjectMeta, Store } from "./store.ts";
 
 // ---------- non-route inputs (seed / admin) ----------
@@ -189,6 +190,8 @@ export class CoreService implements CoreApi {
   readonly releaseServiceAddress: XrplAddress;
   private readonly opts: CoreServiceOptions;
   private readonly locks = new KeyedMutex();
+  /** Keeper: verified milestones whose exposed release key was already reported (reported once, never retried). */
+  private readonly exposedReported = new Set<string>();
 
   constructor(opts: CoreServiceOptions) {
     this.opts = opts;
@@ -1272,6 +1275,25 @@ export class CoreService implements CoreApi {
       const expired = !!t.cancelAfter && now >= new Date(t.cancelAfter);
       const cancelPath = t.status === "expired" || (expired && isLocked(t.status));
       if (!cancelPath && !(t.status === "verified" && !expired)) continue;
+      if (!cancelPath) {
+        // A failed finish exposed the release key: no release can ever use it, so retrying every tick only repeats
+        // UNSAFE_RELEASE. Report it once (per process); CancelAfter -> cancel -> refund then returns the money.
+        const exposedAt = await this.release.keyExposedAt({ projectId: t.pid, milestoneId: t.mid }).catch(() => undefined);
+        if (exposedAt) {
+          const key = `${t.pid}/${t.mid}`;
+          if (!this.exposedReported.has(key)) {
+            this.exposedReported.add(key);
+            issues.push({
+              projectId: t.pid,
+              milestoneId: t.mid,
+              step: "release",
+              code: "UNSAFE_RELEASE",
+              message: `Release key for ${t.mid} was exposed at ${exposedAt}; no release retries. The escrow is cancelled and refunded after CancelAfter ${t.cancelAfter ?? "(unset)"}.`,
+            });
+          }
+          continue;
+        }
+      }
       try {
         if (cancelPath) await this.locks.run(t.pid, () => this.cancelExpiredLocked(t.pid, t.mid, events));
         else events.push(...(await this.locks.run(t.pid, () => this.releaseVerifiedLocked(t.pid, t.mid))).events);
@@ -1305,6 +1327,126 @@ export class CoreService implements CoreApi {
       if (tx.result !== "tecCRYPTOCONDITION_ERROR")
         throw new DomainError("LEDGER_ERROR", `Expected tecCRYPTOCONDITION_ERROR, ledger said ${tx.result}`, undefined, { txResult: tx.result, txHash: tx.hash });
       return { result: "tecCRYPTOCONDITION_ERROR", txHash: tx.hash, explorerUrl: tx.explorerUrl };
+    });
+  }
+
+  // ---------- routes 24, 25: project-level needs_human ----------
+
+  /** Latest route-5 verification must be needs_human with the project still `verifying`. */
+  private assertProjectNeedsHuman(id: string, p: Project, latest: { decision: string } | undefined, action: string): void {
+    assertProjectStatus(id, p.status, ["verifying"], action);
+    if (latest?.decision !== "needs_human")
+      throw new DomainError("ILLEGAL_TRANSITION", `Project ${id} has no needs_human verification to ${action} (latest: ${latest?.decision ?? "none; run route 5 first"})`);
+  }
+
+  /**
+   * Route 24: a verified panel inspector's pre-construction site visit (the queue's `pre_visit` task). Attested on-chain
+   * (core signs with the platform key on the inspector's behalf, disclosed in the memo), clears the pre-visit task. Never
+   * changes the project status: the platform operator decides with it in hand (route 25).
+   */
+  async submitSiteVisit(
+    id: string,
+    body: { report: SiteVisitReportInput; photos: StoredFile[]; signedTxBlob?: string },
+  ): Promise<{ visit: InspectorSiteVisit; events: ChainEvent[] }> {
+    const report = parse(SiteVisitReportInput, body.report);
+    if (report.projectId !== id) throw new DomainError("VALIDATION", `report.projectId ${report.projectId} does not match ${id}`);
+    if (body.signedTxBlob)
+      throw new DomainError("VALIDATION", "Inspector-signed site visits are not supported yet (no `site_visit` attestation kind on the ledger adapter); omit signedTxBlob and core attests it");
+    if (!body.photos.length) throw new DomainError("VALIDATION", "photos: at least one site photo is required");
+    const answers = normalizeAnswers(report.answers);
+    const unexplained = Object.entries(answers).filter(([, a]) => a.answer !== "yes" && !a.note).map(([k]) => k);
+    if (unexplained.length) throw new DomainError("VALIDATION", `answers: say why for ${unexplained.join(", ")}`);
+    return this.locks.run(id, async () => {
+      const { p, inspector, latest } = await this.read((db) => ({
+        p: this.projectIn(db, id),
+        inspector: db.inspectors.find((i) => i.address === report.inspector),
+        latest: db.verifications.filter((v) => v.projectId === id).at(-1),
+      }));
+      if (!inspector?.verified) throw new DomainError("FORBIDDEN", `${report.inspector} is not a verified panel inspector`);
+      this.assertProjectNeedsHuman(id, p, latest, "file a site visit for");
+      const at = this.nowIso();
+      const photos: Evidence[] = body.photos.map((f) => ({
+        id: newId("sv"),
+        kind: "photo",
+        filename: f.filename,
+        mimeType: f.mimeType,
+        uri: f.uri,
+        sha256: f.sha256,
+        meta: {},
+        uploadedAt: at,
+      }));
+      const notes = report.notes.trim();
+      const hash = await siteVisitHash({ projectId: id, inspector: report.inspector, answers, notes, photos });
+      const tx = await this.attest(
+        "platform",
+        this.platformAddress,
+        { v: 1, kind: "audit", milestoneId: `${id}:site-visit`, hash, decision: siteVisitOutcome(answers), reason: `site-visit signed-for ${report.inspector}` },
+        "attest site visit",
+      );
+      // Unsigned: the inspector field is the caller's claim (route 10 audits are inspector-signed; this route can't be yet).
+      const visit: InspectorSiteVisit = { projectId: id, inspector: report.inspector, answers, photos, notes, txHash: tx.hash, at, signedByInspector: false };
+      const events = this.evs([tx], { projectId: id, kind: "audit_attested", actor: report.inspector });
+      return this.store.write((db) => {
+        const meta = this.meta(db, id);
+        meta.siteVisits = [...(meta.siteVisits ?? []), { ...visit, hash, signedByInspector: false }];
+        meta.preVisitRequested = false; // task done; the operator decides (route 25)
+        db.chainEvents.push(...events);
+        return { visit, events };
+      });
+    });
+  }
+
+  /**
+   * Route 25: the platform operator resolves a needs_human project verification (mirror of route 12). The reason is
+   * attested FIRST; approve -> `verified` (+ VERIFIED_BUILDER on first pass, builder risk tier from the AI's report),
+   * reject -> `rejected`.
+   */
+  async decideProject(
+    id: string,
+    body: { actor: XrplAddress; decision: "approve" | "reject"; reason: string },
+  ): Promise<{ project: Project; events: ChainEvent[] }> {
+    this.requirePlatform(body.actor, "Decide a needs_human project verification");
+    const reason = body.reason?.trim();
+    if (!reason) throw new DomainError("VALIDATION", "A reason is required (it is attested on-chain)");
+    if (body.decision !== "approve" && body.decision !== "reject") throw new DomainError("VALIDATION", "decision must be approve | reject");
+    return this.locks.run(id, async () => {
+      const { p, b, latest } = await this.read((db) => {
+        const p = this.projectIn(db, id);
+        return { p, b: this.builderOf(db, p), latest: db.verifications.filter((v) => v.projectId === id).at(-1) };
+      });
+      this.assertProjectNeedsHuman(id, p, latest, "decide");
+      const to: ProjectStatus = body.decision === "approve" ? "verified" : "rejected";
+      assertProjectTransition(id, p.status, to);
+      const tx = await this.attest(
+        "platform",
+        this.platformAddress,
+        { v: 1, kind: "decision", milestoneId: `${id}:project`, hash: sha256Hex(reason), decision: body.decision, reason },
+        "attest operator project decision",
+      );
+      const events = this.evs([tx], { projectId: id, kind: "decision_attested", actor: body.actor });
+      let credTxs: TxResult[] = [];
+      if (to === "verified" && !b.verified) {
+        credTxs = await this.onLedger("issue VERIFIED_BUILDER", () => this.ledger.issueCredential({ subject: b.address, type: "VERIFIED_BUILDER" }));
+        events.push(...this.evs(credTxs, { projectId: id, actor: b.address }));
+      }
+      return this.store.write((db) => {
+        const p = this.projectIn(db, id);
+        const meta = this.meta(db, id);
+        this.setProjectStatus(db, p, to);
+        meta.preVisitRequested = false;
+        db.decisions.push({ projectId: id, milestoneId: `${id}:project`, round: 0, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
+        if (to === "verified") {
+          meta.verifiedAt = this.nowIso();
+          const builder = this.builderOf(db, p);
+          builder.riskTier = latest!.riskTier;
+          if (!builder.verified) {
+            builder.verified = true;
+            builder.credentialTx = credTxs[0]?.hash;
+          }
+        }
+        db.chainEvents.push(...events);
+        return { project: p, events };
+      });
     });
   }
 }

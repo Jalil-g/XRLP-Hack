@@ -25,6 +25,7 @@ import type {
   XrplAddress,
   Evidence,
 } from "@xrlp/shared";
+import type { InspectorSiteVisit, SiteVisitReportInput } from "./site-visit.ts";
 
 /** A file the HTTP layer already stored under DATA_DIR (multipart upload). */
 export interface StoredFile {
@@ -108,6 +109,14 @@ export interface CoreApi {
   resetDemo(body: { seed?: DemoSeed }): Promise<{ ok: true }>; // 21
   keeperTick(): Promise<KeeperTickResult>; // 22
   tryStealDemo(id: string, mid: string): Promise<TryStealResult>; // 23
+  submitSiteVisit(
+    id: string,
+    body: { report: SiteVisitReportInput; photos: StoredFile[]; signedTxBlob?: string },
+  ): Promise<{ visit: InspectorSiteVisit; events: ChainEvent[] }>; // 24
+  decideProject(
+    id: string,
+    body: { actor: XrplAddress; decision: "approve" | "reject"; reason: string },
+  ): Promise<{ project: Project; events: ChainEvent[] }>; // 25
 }
 
 /**
@@ -133,6 +142,8 @@ export interface ReleaseServicePort {
   release(p: { project: Project; milestone: Milestone }): Promise<TxResult[]>;
   /** Route 23: platform-signed finish with RANDOM bytes. Never reads the preimage store. */
   tryStealDemo(p: { project: Project; milestone: Milestone }): Promise<TxResult>;
+  /** When this milestone's release key was marked exposed by a failed finish (no release can ever use it), else undefined. */
+  keyExposedAt(p: { projectId: string; milestoneId: string }): Promise<string | undefined>;
   /** Demo reset. */
   clear(): Promise<void>;
 }
