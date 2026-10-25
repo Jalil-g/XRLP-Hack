@@ -19,6 +19,7 @@
     "spike:escrow": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-escrow.ts",
     "spike:spv": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-spv.ts",
     "spike:close": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-close.ts",
+    "spike:batch": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-batch.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

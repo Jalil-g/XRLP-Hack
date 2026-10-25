@@ -84,7 +84,7 @@ differently on devnet, devnet wins: write it down here and in `docs/decisions.md
 | SPV SignerList | Has no effect on EscrowFinish | No (but it does govern LoanSet, EscrowCreate, LoanPay and SignerListSet) |
 | **Preimage held by the inspector (chosen)** | Works today | **Yes.** The AI and platform approvals become on-chain attestations |
 | Lazy escrow (create the milestone escrow from SPV multisig only after approval, FinishAfter≈now) | Works | Gives a real m-of-n gate, but the SPV holds liquid principal until then (see §2 collusion bound). Keep as a fallback |
-| Batch (XLS-56, `BatchV1_1` enabled) | Works, ≤8 inner txs, multisig BatchSigners allowed | Can make `LoanSet + N×EscrowCreate` **atomic**, so the SPV never holds liquid principal. Stretch |
+| Batch (XLS-56, `BatchV1_1` enabled) | Works for Payment/EscrowCreate (≤8 inner, multisig BatchSigners ✔). **LoanSet as inner tx → `temINVALID_INNER_BATCH`** on devnet 3.4.1 (Lending/SAV types banned until `LendingProtocolV1_2`) | Partial: LoanSet, then **one** all-or-nothing Batch of every EscrowCreate (`closeLoanAtomic` "escrows"): SPV liquid ~1–2 ledgers instead of N multisig rounds. Full atomic close when V1_2 lands (§2d) |
 
 **Design adopted (replaces Shamir):** the inspector's client (browser WebCrypto, or a Ledger-backed app)
 generates a **fresh 32-byte CSPRNG preimage per milestone escrow**. It sends only the *condition* to the
@@ -308,6 +308,56 @@ Observations:
   on-ledger quorum. If an EscrowCreate still fails after LoanSet, `CloseLoanPartialError` carries `loanId`, the created escrows and the pending milestones.
 - The cross-SPV duplicate check doubles as a **re-run guard**: calling close again for a closed project is refused before any tx.
 - LoanSet autofill → sign → countersign → submit now runs under `withAccountLock(platform)` (XRPL-12).
+
+### 2d. XRPL-13 Batch atomic close (devnet)
+
+`pnpm --filter @xrlp/xrpl spike:batch` (2026-10-25 ~00:18 UTC, fresh faucet wallets, rippled **3.4.1**: `BatchV1_1` + `fixBatchV1_2`
+enabled, **`LendingProtocolV1_2` absent**, not even supported). v2 SPV `rHoVKshZoEJaqgKKZJwpXj4mTf65ppnGJY` (4 × w1, quorum 3, master
+disabled), signers platform + builder + inspector. Code: `packages/xrpl/src/batch.ts`.
+
+**Verdict: the fully atomic `LoanSet + EscrowCreate×N` is blocked on devnet today.** rippled 3.4.1 has every SAV/Lending type
+(`VaultCreate…VaultClawback`, `LoanBrokerSet…CoverClawback`, `LoanSet`, `LoanDelete`, `LoanManage`, `LoanPay`) in
+`Batch::kDisabledTxTypes`, and rejects it as an inner tx with `temINVALID_INNER_BATCH` no matter who signs. rippled `develop` lifts the
+ban behind `featureLendingProtocolV1_2`. **What works today**, and is now `closeLoanAtomic({ mode: "escrows" })`, the default: the countersigned
+LoanSet, then **one** all-or-nothing Batch that holds every milestone `EscrowCreate`. Two txs instead of 1+N. Either every escrow exists or none does. The SPV
+held the principal for **2 ledgers (~9 s)**.
+
+| # | variant | result | explorer |
+|---|---|---|---|
+| A | Batch outer = SPV (multisigned 3/4), 2 × RLUSD Payment SPV→builder, no BatchSigners | `tesSUCCESS` | https://devnet.xrpl.org/transactions/D93DABD9C04A6C6973E9BB36FC7C70F77EB606899446D43A87337427A386C3B6 |
+| A↳ | inner Payments (fee 0, `ParentBatchID` in meta) | `tesSUCCESS` ×2 | https://devnet.xrpl.org/transactions/97A080D1DDB7A46856F3241288AF1BA53D832B92D4F9B5AC0DF536730A9B89A6 · https://devnet.xrpl.org/transactions/ACE64B8391D9C6F16905AE69453794735AA02114EC158636E4EBBBBD5E70404A |
+| B | Batch outer = **platform**, same 2 inner Payments from the SPV, `BatchSigners = [{Account: SPV, Signers: [3]}]` | `tesSUCCESS` | https://devnet.xrpl.org/transactions/4B5C2BBF043677DBFCCDAF670F1922AF4897D6403CCF5270265F69576774278E |
+| B↳ | inner Payments | `tesSUCCESS` ×2 | https://devnet.xrpl.org/transactions/348DEECFA4F2FFEF0B6489BD752021D4D7D167F33C57C1A675A43767529FB5A5 · https://devnet.xrpl.org/transactions/BBDEA55C585A9441414B30CA86CCA16BAA1FFF2B4EF7A99D21A9B1DD4D6CBC78 |
+| C | `tfAllOrNothing`: Payment 1 + Payment 999 (overdraws) | outer `tesSUCCESS`, **both inners not applied**, SPV balance unchanged | https://devnet.xrpl.org/transactions/436DCDD497BAE3BA433CE9EBDCD2652AB6D3A20817CE15A50F562F5A736C96E7 |
+| F1 | **full close**: outer = platform, inner LoanSet (`Counterparty` = SPV, **no** `CounterpartySignature`) + 2 × EscrowCreate from the SPV, BatchSigners = SPV multisig | **`temINVALID_INNER_BATCH`** "Malformed: Invalid inner batch transaction." | — (not on ledger) |
+| F2 | full close, borrower-initiated: outer = SPV (multisig), inner LoanSet `Account` = SPV / `Counterparty` = platform + 2 × EscrowCreate, BatchSigners = platform (single) | **`temINVALID_INNER_BATCH`** (same) | — (not on ledger) |
+| E1 | fallback: LoanSet countersigned by SPV multisig (standalone, as XRPL-01) | `tesSUCCESS` (ledger 6391571) | https://devnet.xrpl.org/transactions/0F0564B011AE6E55A8B1B944ADD0D04A38609DA01229224FEF9A342CA7440D7A |
+| E2 | fallback: Batch outer = SPV (multisig 3/4), 3 × EscrowCreate 330 RLUSD, `tfAllOrNothing`, fee 8 drops | `tesSUCCESS` (ledger 6391573) | https://devnet.xrpl.org/transactions/05612B4D17E66B37FFA64139CD2BA2163642D76122C7FC319FF1407253DBC5B8 |
+| E2↳ | inner EscrowCreates (OfferSequence 6391539/40/41 = inner `Sequence`) | `tesSUCCESS` ×3 | https://devnet.xrpl.org/transactions/D55455B55B0E380BB6AFEB0C34E48D504C4D763CC06D5CC048D28344BFFFCC33 · https://devnet.xrpl.org/transactions/65BF0ABDED94165567ACA1771D99D96C7255FF6AF7E60C191D445F906D17A31A · https://devnet.xrpl.org/transactions/74BE49BE0C51CFD209A69D6A0CDC262E3C6022DB1CDBD140784E1991FA191708 |
+
+Answers to the research questions (rippled `LoanSet.cpp` / `Batch.cpp`, 3.4.1 and `develop`):
+- **Can LoanSet be an inner tx?** Not on 3.4.1 (`kDisabledTxTypes`, `temINVALID_INNER_BATCH`). With `LendingProtocolV1_2` (develop) it can.
+- **Does the inner LoanSet still need `CounterpartySignature`?** No. `LoanSet::preflight` skips the "must have CounterpartySignature" check for
+  `tfInnerBatchTxn`. It requires an explicit `Counterparty` (else `temBAD_SIGNER`). `Batch::preflightSigValidated` adds `Counterparty` to the
+  **required BatchSigners**, so the SPV's approval comes through its BatchSigner. If a `CounterpartySignature` is present it must be unsigned.
+  The inner LoanSet fee is then just `base` (no counterparty signatures). `innerLoanSetTx()` builds exactly this.
+- **Outer Account?** Either works for multisig: A (SPV outer, multisigned) and B (platform outer + SPV BatchSigner with nested `Signers`).
+  For the full close, use outer = **platform**: it is the LoanSet `Account` and pays the fee, and the SPV is the only BatchSigner.
+  The outer Account must never be listed in BatchSigners (`temBAD_SIGNER`).
+- **Multisig SPV EscrowCreate as inner tx, with the SPV signing via `BatchSigner.Signers`?** Yes (variant B with Payments, E2 with the SPV as outer).
+  The signature payload is `BCH\0` + outer Account + outer Sequence + outer Flags + count + inner tx IDs + batch account + signer account.
+  Fee and LastLedgerSequence are **not** bound, so the outer submitter can re-fee without new BatchSigners.
+- **Fee** (rippled `Batch::calculateBaseFeeImpl`) = `base + base×(1 + outerSigners) + Σ inner base + base × (signatures in BatchSigners)`.
+  E2: 1 + 4 + 3 = 8 drops ✔. `batchFee()` computes it. xrpl.js autofill gives the same with `signersCount` = outer signers + nested BatchSigner signatures.
+- **Sequences:** inners from the outer account use outer+1… (the outer consumes its own Sequence). In C the outer used SPV seq 6391537, and the rolled-back
+  inners did **not** consume 6391538/39: E2's escrows got them. An escrow's `OfferSequence` = its inner `Sequence`; its "create tx" = the inner hash.
+- **xrpl.js 5.3.0 gotcha:** `combineBatchSigners` de-duplicates by `BatchSigner.Account` and keeps only the first fragment. That drops all but one
+  signer of a multisig account (→ `tefBAD_QUORUM`). `mergeBatchSigners()` merges the nested `Signers` instead. Also, autofill mutates the
+  `RawTransactions` array of the input in place. `submitBatch` builds every Sequence itself.
+- **tfAllOrNothing rollback is silent:** the outer is `tesSUCCESS` (fee charged) even when nothing applied. `submitBatch` looks up every inner hash,
+  and `createEscrowsAtomic`/`closeLoanAtomic` throw `XrplTxError("inner_failed …")` unless every inner tx is `tesSUCCESS`.
+- **Limits:** 2..8 inner txs, so `escrows` mode takes 2..8 milestones and `full` mode 1..7 (the LoanSet takes one slot). One milestone →
+  use `createMilestoneEscrow`.
 
 ---
 
