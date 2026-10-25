@@ -1,9 +1,10 @@
 // Milestone escrows: IOU (RLUSD) escrows owned by the SPV, payable only to the builder,
 // gated by a PREIMAGE-SHA-256 condition, refundable to the SPV after CancelAfter.
 import { randomBytes } from "node:crypto";
-import { explorerTxUrl, TooSoonError } from "@xrlp/shared";
+import { explorerTxUrl, LedgerError, TooSoonError } from "@xrlp/shared";
 import type { EscrowFinish, Wallet } from "xrpl";
 import { getClient, isNotFound, signAndSubmit, submitBlob, withAccountLock, XrplTxError, type TxResult } from "./client.ts";
+import { redactSecrets, safeCause } from "./errors.ts";
 import { assertPreimageSha256Condition, fulfillmentFromPreimage, fulfillmentMatches } from "./condition.ts";
 import { assertPreflightOk, preflightFinish, UnsafeReleaseError, type LedgerNow, type PreflightReason, type PreflightResult } from "./preflight.ts";
 import { rlusdAmount } from "./rlusd.ts";
@@ -95,14 +96,17 @@ const realFinishDeps: FinishEscrowDeps = {
  * and submitted pre-signed: the retry engine may resubmit that exact blob (same hash, applies at most once) but never
  * re-signs it, since a re-signed finish would outlive the preflight that allowed it (security review H3). If that blob
  * provably can't apply (`retriable`), preflight is re-run and the finish rebuilt once.
- * Errors: `UnsafeReleaseError` (`unsafe_release`) only when the fulfillment never left this process; a refusal on the
- * rebuild's preflight is `XrplTxError("preflight_refused_after_submit")`, because the first blob may have been broadcast.
+ * Errors: `unsafe_release` (`UnsafeReleaseError` for a refused preflight, else a `LedgerError` wrapping e.g. a dropped
+ * websocket) exactly when the fulfillment never left this process; a refusal on the rebuild's preflight is
+ * `XrplTxError("preflight_refused_after_submit")`, because the first blob may have been broadcast.
  */
 export async function finishEscrow(p: FinishEscrowParams, deps: Partial<FinishEscrowDeps> = {}): Promise<TxResult> {
   if (!fulfillmentMatches(p.condition, p.fulfillment)) throw new Error("fulfillment does not match escrow condition");
   const d: FinishEscrowDeps = { ...realFinishDeps, ...deps };
   const margin = assertLlsMargin(p.lastLedgerMargin ?? FINISH_LLS_MARGIN, "EscrowFinish lastLedgerMargin");
   const account = p.submitter.classicAddress;
+  /** A blob carrying the fulfillment may have reached a server (conservative: any submit that isn't provably unsent). */
+  let sent = false;
   const attempt = () =>
     withAccountLock(account, async () => {
       const pf = p.skipPreflight
@@ -130,24 +134,44 @@ export async function finishEscrow(p: FinishEscrowParams, deps: Partial<FinishEs
         },
         margin,
       );
-      return d.submitBlob(p.submitter.sign(prepared).tx_blob, "EscrowFinish");
+      const blob = p.submitter.sign(prepared).tx_blob;
+      try {
+        return await d.submitBlob(blob, "EscrowFinish");
+      } catch (e) {
+        if (!(e instanceof XrplTxError && e.notSent)) sent = true;
+        throw e;
+      }
     });
   let first: XrplTxError;
   try {
     return await attempt();
   } catch (e) {
-    if (!(e instanceof XrplTxError) || !e.retriable) throw e;
+    if (!(e instanceof XrplTxError) || !e.retriable) throw sent ? e : neverRevealed(e);
     first = e;
   }
   try {
     return await attempt();
   } catch (e) {
+    if (!sent) throw neverRevealed(e);
     if (!(e instanceof UnsafeReleaseError)) throw e;
     throw new XrplTxError("EscrowFinish", "preflight_refused_after_submit", undefined, {
       detail: `${e.reason}: ${e.result.message}; the first finish (${first.engineResult}) provably did not apply, but it may have been broadcast`,
       cause: e,
     });
   }
+}
+
+/**
+ * A finish that failed before any blob carrying the fulfillment was submitted (preflight read, autofill, websocket
+ * down before the first submit): the fulfillment never left this process, so it is `unsafe_release` (core keeps the
+ * release key and the milestone can be retried), never a generic error that core must treat as "key exposed".
+ */
+function neverRevealed(e: unknown): LedgerError {
+  if (e instanceof LedgerError && e.code === "unsafe_release") return e;
+  const msg = redactSecrets(e instanceof Error ? e.message : String(e));
+  const out = new LedgerError("unsafe_release", `EscrowFinish not submitted, the fulfillment never left this process: ${msg}`);
+  out.cause = safeCause(e);
+  return out;
 }
 
 /**

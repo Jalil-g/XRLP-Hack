@@ -218,12 +218,19 @@ export class XrplLedgerAdapter implements LedgerPort {
   /** EscrowFinish by releaseService; re-runs preflight first (UnsafeReleaseError -> code unsafe_release, nothing submitted). */
   finishEscrow(p: Arg<"finishEscrow">): Promise<PortTxResult> {
     return this.run("finishEscrow", async () => {
+      let submitter: Wallet;
+      try {
+        submitter = this.wallets().releaseService;
+      } catch (e) {
+        // Nothing signed or sent: unsafe_release so core keeps the release key (any other code marks it exposed).
+        throw new XrplLedgerError("unsafe_release", `releaseService key unavailable, nothing submitted: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+      }
       const { tx } = await releaseMilestone({
         projectId: PLATFORM_SCOPE,
         milestoneId: "",
         escrow: { owner: p.owner, offerSequence: p.offerSequence, condition: p.condition },
         fulfillment: p.fulfillment,
-        submitter: this.wallets().releaseService,
+        submitter,
         ...this.finishMargins,
       });
       return this.tx(`EscrowFinish ${p.owner}/${p.offerSequence}`, tx, "escrow_finished");

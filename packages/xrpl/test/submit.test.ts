@@ -705,3 +705,41 @@ test("#171 issue 2: …but a pre-signed blob (may have an earlier history) is ne
     return true;
   });
 });
+
+// ── pre-submit failures are provably unsent (finishEscrow relies on it: unsafe_release, release key kept) ─────────
+
+test("websocket down before this call's first submit → connection_lost flagged notSent; a submit that may have left is never notSent", async () => {
+  const down = () => new DisconnectedError("websocket closed");
+  let submits = 0;
+  const io: LedgerIo = {
+    submit: async () => {
+      submits++;
+      throw down();
+    },
+    lookup: async () => Promise.reject(down()),
+    validatedLedgerIndex: async () => Promise.reject(down()),
+    reconnect: async () => Promise.reject(new Error("connect ECONNREFUSED 1.2.3.4:51233")),
+    sleep: async () => {},
+  };
+  await assert.rejects(submitReliably(blob("A"), io, { pollMs: 0, backoffMs: 0 }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError, `got ${String(e)}`);
+    assert.equal(e.engineResult, "connection_lost", "still uncertain for a pre-signed blob with an earlier history");
+    assert.equal(e.retriable, false);
+    assert.equal(e.notSent, true);
+    return true;
+  });
+  assert.equal(submits, 0);
+
+  // The socket dies on the submit itself: the server may have the blob → connection_lost, not notSent.
+  const io2: LedgerIo = { ...io, validatedLedgerIndex: async () => 100 };
+  await assert.rejects(submitReliably(blob("A"), io2, { pollMs: 0, backoffMs: 0 }), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError);
+    assert.equal(e.engineResult, "connection_lost");
+    assert.equal(e.notSent, false);
+    return true;
+  });
+
+  // A refusal after a real submit is not notSent either.
+  const fatal = new FakeLedger(["temMALFORMED"]);
+  await assert.rejects(submitReliably(blob("A"), fatal, { pollMs: 0 }), (e: unknown) => e instanceof XrplTxError && e.engineResult === "temMALFORMED" && !e.notSent);
+});

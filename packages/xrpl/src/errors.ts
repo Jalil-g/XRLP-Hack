@@ -11,11 +11,15 @@ export interface XrplTxErrorOptions {
   /** Extra detail appended to the message (e.g. rippled's engine_result_message). */
   detail?: string;
   cause?: unknown;
+  /** True when no blob of this intent was ever handed to a server (failed before the first submit request). */
+  notSent?: boolean;
 }
 
 export class XrplTxError extends Error {
   readonly explorerUrl?: string;
   readonly retriable: boolean;
+  /** No blob of this intent ever left the process (see XrplTxErrorOptions.notSent). */
+  readonly notSent: boolean;
 
   constructor(
     public readonly txType: string,
@@ -30,6 +34,7 @@ export class XrplTxError extends Error {
     );
     this.name = "XrplTxError";
     this.retriable = opts.retriable ?? false;
+    this.notSent = opts.notSent ?? false;
     if (hash) this.explorerUrl = explorerTxUrl(hash);
   }
 

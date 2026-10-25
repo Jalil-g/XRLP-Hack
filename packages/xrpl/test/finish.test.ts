@@ -2,7 +2,9 @@
 // preflight and submitted pre-signed; nothing re-signs it without a fresh preflight.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decode, Wallet } from "xrpl";
+import { LedgerError } from "@xrlp/shared";
+import { decode, DisconnectedError, Wallet } from "xrpl";
+import { toAdapterError } from "../src/adapter-map.ts";
 import { XrplTxError, toErrorCode } from "../src/errors.ts";
 import type { TxResult } from "../src/client.ts";
 import { finishEscrow, type FinishEscrowDeps } from "../src/escrow.ts";
@@ -131,4 +133,68 @@ test("H3: lastLedgerMargin outside 1..500 is refused before anything is read", a
     /lastLedgerMargin must be an integer in 1\.\.500/,
   );
   assert.deepEqual(w.log, []);
+});
+
+// Known medium finding: a failure BEFORE any finish blob was submitted must be `unsafe_release` (core keeps the release
+// key), never a generic error (core would mark the key exposed and the milestone could never release).
+test("pre-submit failures (preflight read, autofill, socket down before submit) → unsafe_release, nothing sent", async () => {
+  const run = (deps: Partial<FinishEscrowDeps>) =>
+    finishEscrow({ submitter: Wallet.generate(), owner: OWNER, offerSequence: 7, condition: pair.condition, fulfillment: pair.fulfillment }, deps);
+  const isUnsafe = (e: unknown) => {
+    assert.ok(e instanceof LedgerError, `got ${String(e)}`);
+    assert.equal(e.code, "unsafe_release");
+    assert.equal(toErrorCode(e), "unsafe_release");
+    const mapped = toAdapterError(e, "finishEscrow");
+    assert.equal(mapped.code, "unsafe_release", "adapter keeps it");
+    assert.ok(!e.message.includes(pair.fulfillment));
+    return true;
+  };
+  const w = world({ preflights: [(r) => preflightOk(1010, r)], submits: [] });
+
+  // websocket drop during preflight's ledger reads
+  await assert.rejects(run({ ...w.deps, preflightFinish: async () => Promise.reject(new DisconnectedError("websocket closed")) }), isUnsafe);
+  // autofill fails after a good preflight
+  await assert.rejects(run({ ...w.deps, prepare: async () => Promise.reject(new DisconnectedError("websocket closed")) }), isUnsafe);
+  assert.deepEqual(w.signed, []);
+
+  // the engine proves nothing was sent (socket down before the first submit): retriable → one rebuild, also unsent
+  const unsent = (): TxResult => {
+    throw new XrplTxError("EscrowFinish", "not_applied", undefined, { retriable: true, notSent: true });
+  };
+  const twice = world({ preflights: [(r) => preflightOk(1010, r), (r) => preflightOk(1020, r)], submits: [unsent, unsent] });
+  await assert.rejects(run(twice.deps), isUnsafe);
+  // …and if the rebuild's preflight then refuses, that is the plain UnsafeReleaseError (nothing was ever broadcast)
+  const thenRefused = world({ preflights: [(r) => preflightOk(1010, r), () => refused("expired_or_too_close")], submits: [unsent] });
+  await assert.rejects(run(thenRefused.deps), (e: unknown) => e instanceof UnsafeReleaseError && e.reason === "expired_or_too_close");
+  // the engine's "socket down before this call submitted anything" (connection_lost + notSent) is unsafe_release too
+  const unsentFatal = (): TxResult => {
+    throw new XrplTxError("EscrowFinish", "connection_lost", "A".repeat(64), { notSent: true });
+  };
+  await assert.rejects(run(world({ preflights: [(r) => preflightOk(1010, r)], submits: [unsentFatal] }).deps), isUnsafe);
+});
+
+test("a finish that may have been sent keeps its ledger error (core reconciles / marks the key exposed)", async () => {
+  const lost = (): TxResult => {
+    throw new XrplTxError("EscrowFinish", "connection_lost", "A".repeat(64));
+  };
+  const w = world({ preflights: [(r) => preflightOk(1010, r)], submits: [lost] });
+  await assert.rejects(finishEscrow({ submitter: Wallet.generate(), owner: OWNER, offerSequence: 7, condition: pair.condition, fulfillment: pair.fulfillment }, w.deps), (e: unknown) => {
+    assert.ok(e instanceof XrplTxError && e.engineResult === "connection_lost");
+    assert.equal(toAdapterError(e).code, "ledger_error");
+    return true;
+  });
+  // first blob provably dead (retriable, but it was sent), then the rebuild's autofill fails → NOT unsafe_release
+  const dead = (): TxResult => {
+    throw new XrplTxError("EscrowFinish", "tefMAX_LEDGER", undefined, { retriable: true });
+  };
+  let prepares = 0;
+  const w2 = world({ preflights: [(r) => preflightOk(1010, r), (r) => preflightOk(1020, r)], submits: [dead] });
+  const prepare = w2.deps.prepare;
+  await assert.rejects(
+    finishEscrow({ submitter: Wallet.generate(), owner: OWNER, offerSequence: 7, condition: pair.condition, fulfillment: pair.fulfillment }, {
+      ...w2.deps,
+      prepare: async (tx, m) => (++prepares === 2 ? Promise.reject(new DisconnectedError("websocket closed")) : prepare(tx, m)),
+    }),
+    (e: unknown) => !(e instanceof LedgerError) && e instanceof DisconnectedError,
+  );
 });
