@@ -13,7 +13,7 @@ Sizes: **S** ≤ 1.5h · **M** 2–3h · **L** 4–5h.
 | **@Jalil-g** | `area:xrpl` | `packages/xrpl/**`: money path, credentials (3 roles), fee payment, private vault, bootstrap/prestage/demo scripts, `adapter.ts` = `LedgerPort` |
 | **@elmir132** | `area:verifier` | `packages/verifier/**`, `fixtures/**`: project verification, milestone test suite (checks + Claude), inspector matching, fixtures, `adapter.ts` = `VerifierPort` |
 | **@bri-yin** | `area:web` | `apps/web/**`: marketplace (verified projects), project detail with **checks panel**, invest, portfolio, builder onboarding (fee → verification), create project from SoV, `/demo` |
-| **@RoroDev2023** | `area:inspector` | `apps/inspector/**` (:3001) + `packages/attest-signer/**` (today `ledger-signer`): queue, **audit form**, signed audit submission, audit history; attestation signing (software key) |
+| **@RoroDev2023** | `area:inspector` | `apps/inspector/**` (:3001) + `packages/attest-signer/**`: queue, **audit form**, signed audit submission, audit history; attestation signing (software key) |
 | **@seanpatrickmay** | `area:core` | `packages/core/**` (orchestrator, **release service**, HTTP, keeper, store, adapters), `packages/shared/**` (contract), root/CI, `docs/05-api.md`, integration |
 | everyone | `area:pitch` | `docs/**`, `pitch/**` |
 
