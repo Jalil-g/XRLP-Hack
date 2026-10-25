@@ -1,12 +1,13 @@
 // High-level API for @xrlp/core. Each call does real devnet txs and returns ChainEvents.
 // Wallets come from .data/wallets.json (bootstrapWallets). Pass a Wallet to override a role.
-import { ChainEvent as ChainEventSchema, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
-import { isoTimeToRippleTime, rippleTimeToISOTime, type Wallet } from "xrpl";
-import { ledgerTime, waitForLedgerTimeAfter, type TxResult } from "./client.ts";
+import { explorerTxUrl, TooSoonError, type ChainEvent, type Milestone, type Project } from "@xrlp/shared";
+import { isoTimeToRippleTime, isValidClassicAddress, rippleTimeToISOTime, type Wallet } from "xrpl";
+import { getClient, ledgerTime, waitForLedgerTimeAfter, XrplTxError, type TxResult } from "./client.ts";
 import { submitAttestation, type AttestationPayload } from "./attest.ts";
-import { acceptCredential, createCredential, type CredentialType } from "./credentials.ts";
-import { cancelEscrow, createMilestoneEscrow, finishEscrow } from "./escrow.ts";
-import { toChainEvent, type ChainEventKind } from "./events.ts";
+import { grantCredential } from "./compliance.ts";
+import { getCredential, revokeCredential, type CredentialStatus, type CredentialType } from "./credentials.ts";
+import { cancelEscrow, createMilestoneEscrow, finishEscrow, listEscrows } from "./escrow.ts";
+import { toChainEvent } from "./events.ts";
 import {
   COVER_RATE_LIQUIDATION,
   COVER_RATE_MINIMUM,
@@ -24,9 +25,21 @@ import {
 } from "./lending-math.ts";
 import { createLoanBroker, depositBrokerCover, getLoan, loanPayMultisig, loanSet, type LoanPayMode } from "./loan.ts";
 import { configureIssuer, ensureTrustline, payRlusd, rlusdBalance, topUpRlusd } from "./rlusd.ts";
-import { createSpvAccount, lockSpv, type SpvSigners } from "./spv.ts";
+import { CloseLoanPartialError, CloseValidationError, planLoanClose, type CloseConditions } from "./loan-close.ts";
+import { checkSignerQuorum, createSpvAccount, getSpvInfo, lockSpv, type SpvSigners } from "./spv.ts";
 import { createVault, depositToVaultTx, getShareBalance, getVault, vaultPhase, withdrawFromVaultTx } from "./vault.ts";
-import { ensureFundedWallets, loadWallets, rememberSpv, resolveWallet, RLUSD_HOLDERS, rlusdTopUpPlan, type DemoWallets, type WalletRole } from "./wallets.ts";
+import {
+  credentialPlan,
+  ensureFundedWallets,
+  loadWallets,
+  NO_KYC_ROLES,
+  rememberSpv,
+  resolveWallet,
+  RLUSD_HOLDERS,
+  rlusdTopUpPlan,
+  type DemoWallets,
+  type WalletRole,
+} from "./wallets.ts";
 
 /** Role name ("investor1"), a demo-wallet address (r...), or a Wallet. */
 type WalletRef = WalletRole | string | Wallet;
@@ -41,19 +54,39 @@ export interface BootstrapOptions {
   fresh?: boolean;
   /** RLUSD each investor is topped up to. Default 50 000. */
   investorRlusd?: number;
-  /** RLUSD the platform holds for first-loss cover across projects. Default 25 000. */
+  /**
+   * RLUSD the platform is topped up to, for first-loss cover across concurrent projects. Default DEFAULT_PLATFORM_RLUSD
+   * (25 000 ≈ cover for 3 projects of up to ~70 000 principal). Size other sets with platformRlusdFor(terms[]).
+   */
   platformRlusd?: number;
   /** RLUSD the builder holds for the verification fee (250 in the demo). Default 1 000. */
   builderRlusd?: number;
+  /**
+   * Issue + accept the demo credentials (credentialPlan: KYC_INVESTOR investor1/2, VERIFIED_INSPECTOR inspector1..3) and
+   * make sure investor3 holds no KYC_INVESTOR (the tecNO_AUTH beat). Default true.
+   */
+  credentials?: boolean;
+  /** Also pre-issue VERIFIED_BUILDER to the builder (prestage). Default false: it is earned through project verification. */
+  preVerifyBuilder?: boolean;
   log?: (s: string) => void;
+}
+
+export interface BootstrapCredential {
+  role: WalletRole;
+  type: CredentialType;
+  /** "none" only for NO_KYC_ROLES (deliberately uncredentialed). */
+  status: CredentialStatus;
 }
 
 /**
  * Fund all demo roles from the faucet (reusing/migrating the wallet file), configure the RLUSD issuer
- * (DefaultRipple + AllowTrustLineLocking), open trust lines for RLUSD_HOLDERS, and top up investors/platform/builder.
+ * (DefaultRipple + AllowTrustLineLocking), open trust lines for RLUSD_HOLDERS, top up investors/platform/builder,
+ * then (unless `credentials: false`) grant the demo credentials and strip KYC from investor3.
  * Idempotent: a second run submits 0 txs.
  */
-export async function bootstrapWallets(opts: BootstrapOptions = {}): Promise<{ wallets: DemoWallets; txs: TxResult[] }> {
+export async function bootstrapWallets(
+  opts: BootstrapOptions = {},
+): Promise<{ wallets: DemoWallets; txs: TxResult[]; credentials: BootstrapCredential[] }> {
   const log = opts.log ?? (() => {});
   const wallets = await ensureFundedWallets({ fresh: opts.fresh, log });
   const issuer = wallets.issuer;
@@ -76,7 +109,26 @@ export async function bootstrapWallets(opts: BootstrapOptions = {}): Promise<{ w
       log(`RLUSD ${role} -> ${target} ${t.explorerUrl}`);
     }
   }
-  return { wallets, txs };
+  const credentials: BootstrapCredential[] = [];
+  if (opts.credentials !== false) {
+    for (const { role, type } of credentialPlan(opts)) {
+      const r = await grantCredential({ subject: wallets[role], type, platform: wallets.platform });
+      for (const t of r.txs) {
+        txs.push(t);
+        log(`${String(t.tx.TransactionType)} ${type} ${role} ${t.explorerUrl}`);
+      }
+      credentials.push({ role, type, status: r.status });
+    }
+    for (const role of NO_KYC_ROLES) {
+      const t = await revokeCredential(wallets.platform, wallets[role].classicAddress, "KYC_INVESTOR");
+      if (t) {
+        txs.push(t);
+        log(`CredentialDelete KYC_INVESTOR ${role} (must stay uncredentialed for tecNO_AUTH) ${t.explorerUrl}`);
+      }
+      credentials.push({ role, type: "KYC_INVESTOR", status: "none" });
+    }
+  }
+  return { wallets, txs, credentials };
 }
 
 // ---------------------------------------------------------------- project setup
@@ -118,19 +170,13 @@ export interface ProjectChainSetup {
   redemptionAt: string; // ISO
   /** What LoanBrokerSet + LoanBrokerCoverDeposit put on the ledger. */
   cover: { amount: string; minimum: string; coverRateMinimum: number; coverRateLiquidation: number; managementFeeRate: number; txHash: string };
-  /**
-   * The `cover_deposited` event. TODO(#53): also in `events` only once shared ChainEvent.kind includes it
-   * (detected at runtime), so strict ChainEvent.parse() in core never sees an unknown kind.
-   */
+  /** The `cover_deposited` event (also in `events`, after loan_broker_created). */
   coverEvent: ChainEvent;
   events: ChainEvent[];
   txs: Record<string, TxResult>;
   /** SPV wallet (master key disabled if lockSpv). Only useful when lockSpv=false. */
   spvWallet: Wallet;
 }
-
-// TODO(#53): remove once packages/shared ChainEvent.kind has "cover_deposited" (CORE-01 / shared v2).
-const SHARED_HAS_COVER_KIND = (ChainEventSchema.shape.kind.options as readonly string[]).includes("cover_deposited");
 
 /**
  * Create the per-project SPV (+ signer list, master disabled), a closed-ended RLUSD vault (AssetsMaximum = principal),
@@ -200,11 +246,11 @@ export async function setupProjectOnChain(project: Project, opts: SetupProjectOp
   txs.loanBrokerCoverDeposit = await depositBrokerCover(w.platform, broker.loanBrokerId, issuer, coverAmount);
   const coverEvent = toChainEvent(txs.loanBrokerCoverDeposit, {
     projectId: project.id,
-    kind: "cover_deposited" as ChainEventKind, // TODO(#53): drop the cast once shared has the kind
+    kind: "cover_deposited",
     actor: w.platform.classicAddress,
     amount: coverAmount,
   });
-  if (SHARED_HAS_COVER_KIND) events.push(coverEvent);
+  events.push(coverEvent);
 
   return {
     spv: spv.classicAddress,
@@ -285,15 +331,25 @@ export { getShareBalance };
 // ---------------------------------------------------------------- loan + escrows
 
 export interface CloseLoanOptions {
-  /** Per-milestone hex condition, generated INSPECTOR-side by generateMilestoneCondition(). Required for every milestone. */
-  conditions: Record<string, string> | { milestoneId: string; condition: string }[];
-  /** Default: terms.termDays / terms.paymentIntervalDays. */
+  /**
+   * One PREIMAGE-SHA-256 condition per milestone, generated by core's release service (CORE-12); this package never
+   * generates preimages. `string[]` (index = project.milestones[i]), `Record<milestoneId, condition>`, or
+   * `{milestoneId, condition}[]`. Must be well-formed (`A0258020…810120`), unique within the call and not already used by
+   * an open escrow of the SPV.
+   */
+  conditions: CloseConditions;
+  /** ISO CancelAfter by milestone index; overrides milestone.cancelAfter and defaultCancelAfter. Each must be < loan maturity. */
+  cancelAfters?: string[];
+  /** Default: terms.termDays / terms.paymentIntervalDays (must be ≥ 2). */
   paymentTotal?: number;
   /** Default: terms.paymentIntervalDays * 86400. Must fit before vault RedemptionDate. */
   paymentIntervalS?: number;
-  /** Default CancelAfter for milestones without milestone.cancelAfter: now + termDays. */
+  /** CancelAfter for milestones without cancelAfters[i] / milestone.cancelAfter. Default: maturity − one payment interval. */
   defaultCancelAfter?: Date;
-  /** Wait for the vault to leave Subscription before LoanSet (polls ledger time). Default true. */
+  /**
+   * Wait for the vault to leave Subscription before LoanSet (polls ledger time). Default true.
+   * `false`: throw shared `TooSoonError` (nothing submitted) if the vault is still in Subscription.
+   */
   waitForInvestmentPhase?: boolean;
   /** SPV signers that countersign LoanSet + EscrowCreate (3 of the SPV list). Default platform + builder + trustee. AI is never a signer. */
   spvSigners?: Wallet[];
@@ -333,92 +389,150 @@ export interface CloseLoanResult {
   originationFee: string;
   /** Payer -> SPV RLUSD Payment covering the origination fee shortfall, if one was needed. */
   originationFeeTopUpTx?: TxResult;
+  /** One per milestone, in project.milestones order (structurally the shared `EscrowRef`). */
   escrows: MilestoneEscrowInfo[];
+  /** LoanSet + one EscrowCreate per milestone, in order (shared `CloseResult.txs`). */
+  txs: TxResult[];
+  /** Lower bound of loan maturity used for the CancelAfter check (ISO). */
+  maturity: string;
   events: ChainEvent[];
 }
 
 /**
- * LoanSet (platform signs as broker owner, SPV multisig countersigns) -> principal lands in the SPV ->
- * immediately one EscrowCreate per milestone (SPV multisig) so the SPV's liquid balance returns to ~0.
+ * LoanSet (platform = Account, SPV multisig countersigns) -> principal lands in the SPV -> immediately one
+ * EscrowCreate per milestone (SPV multisig) with the caller's conditions, so the SPV's liquid balance returns to ~0.
+ *
+ * Everything is validated BEFORE any tx (planLoanClose): PaymentTotal ≥ 2, InterestRate > 0, the loan fits the vault,
+ * well-formed + unique conditions (also vs the SPV's open escrows), now + 60s < CancelAfter < maturity, the SPV signers
+ * reach quorum. Bad input → `CloseValidationError` (code "validation"), nothing submitted. Vault still in Subscription
+ * with `waitForInvestmentPhase: false` → shared `TooSoonError`. An EscrowCreate failing after LoanSet →
+ * `CloseLoanPartialError` with the loanId, the escrows created so far and the pending milestones.
  */
 export async function closeLoanAndCreateEscrows(project: Project, opts: CloseLoanOptions): Promise<CloseLoanResult> {
   const w = loadWallets();
+  const issuer = w.issuer.classicAddress;
   const { spv, vaultId, loanBrokerId } = project.chain;
   if (!spv || !vaultId || !loanBrokerId) throw new Error("project.chain missing spv/vaultId/loanBrokerId — run setupProjectOnChain first");
-  const conds: Record<string, string> = Array.isArray(opts.conditions)
-    ? Object.fromEntries(opts.conditions.map((c) => [c.milestoneId, c.condition]))
-    : opts.conditions;
-  for (const m of project.milestones) if (!conds[m.id]) throw new Error(`missing condition for milestone ${m.id}`);
 
   const vault = await getVault(vaultId);
   if (!vault) throw new Error(`vault ${vaultId} not found`);
-  if (opts.waitForInvestmentPhase !== false && vault.SubscriptionDate != null) {
+  let now = await ledgerTime();
+  if (vault.SubscriptionDate != null && now <= vault.SubscriptionDate) {
+    if (opts.waitForInvestmentPhase === false) {
+      throw new TooSoonError(`vault ${vaultId} is in Subscription until ${rippleTimeToISOTime(vault.SubscriptionDate)} (ledger now ${rippleTimeToISOTime(now)}); LoanSet would fail tecTOO_SOON`);
+    }
     await waitForLedgerTimeAfter(vault.SubscriptionDate, opts.onWait);
+    now = await ledgerTime();
   }
 
-  const paymentTotal = opts.paymentTotal ?? Math.max(1, Math.round(project.terms.termDays / project.terms.paymentIntervalDays));
-  const paymentIntervalS = opts.paymentIntervalS ?? project.terms.paymentIntervalDays * DAY;
+  const termsSchedule = loanScheduleFromTerms(project.terms);
   const signers = opts.spvSigners ?? defaultSpvSignerWallets();
+  const existing = await listEscrows(spv);
+  const plan = planLoanClose({
+    milestones: project.milestones,
+    conditions: opts.conditions,
+    ...(opts.cancelAfters ? { cancelAfters: opts.cancelAfters } : {}),
+    ...(opts.defaultCancelAfter ? { defaultCancelAfter: isoTimeToRippleTime(opts.defaultCancelAfter.toISOString()) } : {}),
+    now,
+    paymentTotal: opts.paymentTotal ?? termsSchedule.paymentTotal,
+    paymentIntervalS: opts.paymentIntervalS ?? termsSchedule.paymentIntervalS,
+    interestRate: project.terms.interestRateBps * 10, // bps -> 1/10 bps
+    ...(vault.RedemptionDate != null ? { redemptionDate: vault.RedemptionDate } : {}),
+    existingConditions: existing.flatMap((e) => (e.Condition ? [e.Condition] : [])),
+  });
+  if (!opts.spvSingleKey) {
+    const info = await getSpvInfo(spv);
+    const q = info.signerQuorum == null ? undefined : checkSignerQuorum({ quorum: info.signerQuorum, signers: info.signers }, signers.map((s) => s.classicAddress));
+    if (!q?.ok) {
+      const why = !q ? "SPV has no SignerList" : q.unknown.length ? `not on the SPV list: ${q.unknown.join(", ")}` : q.duplicates.length ? `duplicate signers: ${q.duplicates.join(", ")}` : `weight ${q.weight} < quorum ${q.quorum}`;
+      throw new CloseValidationError([`SPV signers cannot countersign: ${why}`]);
+    }
+  }
 
   const originationFee = opts.originationFee ?? originationFeeFor(project.terms.principal);
-  const escrowTotal = project.milestones.reduce((a, m) => a + toMicro(m.amount), 0n);
-  const spvHeld = BigInt(Math.floor(Number(await rlusdBalance(spv, w.issuer.classicAddress)) * 1e6));
+  const escrowTotal = plan.escrows.reduce((a, e) => a + toMicro(e.amount), 0n);
+  if (escrowTotal > toMicro(project.terms.principal)) {
+    throw new CloseValidationError([`milestone amounts sum to ${fromMicro(escrowTotal)} > principal ${project.terms.principal}`]);
+  }
+  const spvHeld = BigInt(Math.floor(Number(await rlusdBalance(spv, issuer)) * 1e6));
   const shortfall = escrowTotal - (toMicro(project.terms.principal) - toMicro(originationFee)) - spvHeld;
   let originationFeeTopUpTx: TxResult | undefined;
   if (shortfall > 0n) {
     const payer = resolveWallet(opts.originationFeePayer ?? "builder");
-    const held = await rlusdBalance(payer.classicAddress, w.issuer.classicAddress);
+    const held = await rlusdBalance(payer.classicAddress, issuer);
     if (Number(held) * 1e6 < Number(shortfall)) {
       throw new Error(`origination fee: ${payer.classicAddress} holds ${held} RLUSD, needs ${fromMicro(shortfall)} to pay it into the SPV (or pass originationFee: "0")`);
     }
-    originationFeeTopUpTx = await payRlusd(payer, spv, w.issuer.classicAddress, fromMicro(shortfall));
+    originationFeeTopUpTx = await payRlusd(payer, spv, issuer, fromMicro(shortfall));
   }
 
-  const loan = await loanSet({
-    brokerOwner: w.platform,
-    loanBrokerId,
-    borrower: spv,
-    principal: project.terms.principal,
-    interestRate: project.terms.interestRateBps * 10, // bps -> 1/10 bps
-    paymentTotal,
-    paymentIntervalS,
-    allowOverpayment: opts.allowOverpayment ?? true,
-    ...(Number(originationFee) > 0 ? { originationFee } : {}),
-    data: `xrlp:${project.id}`,
-    borrowerSig: opts.spvSingleKey ? { single: opts.spvSingleKey } : { multisig: signers },
-  });
+  let loan: { tx: TxResult; loanId: string };
+  try {
+    loan = await loanSet({
+      brokerOwner: w.platform,
+      loanBrokerId,
+      borrower: spv,
+      principal: project.terms.principal,
+      interestRate: plan.interestRate,
+      paymentTotal: plan.paymentTotal,
+      paymentIntervalS: plan.paymentIntervalS,
+      allowOverpayment: opts.allowOverpayment ?? true,
+      ...(Number(originationFee) > 0 ? { originationFee } : {}),
+      data: `xrlp:${project.id}`,
+      borrowerSig: opts.spvSingleKey ? { single: opts.spvSingleKey } : { multisig: signers },
+    });
+  } catch (e) {
+    if (e instanceof XrplTxError && e.engineResult === "tecTOO_SOON") {
+      throw new TooSoonError(`LoanSet: vault ${vaultId} still in Subscription`, { txResult: e.engineResult, ...(e.hash ? { txHash: e.hash } : {}) });
+    }
+    throw e;
+  }
   const events: ChainEvent[] = [
     toChainEvent(loan.tx, { projectId: project.id, kind: "loan_set", actor: spv, amount: project.terms.principal }),
   ];
+  const txs: TxResult[] = [loan.tx];
 
-  const now = await ledgerTime();
-  const defaultCancel = opts.defaultCancelAfter ? isoTimeToRippleTime(opts.defaultCancelAfter.toISOString()) : now + project.terms.termDays * DAY;
+  const builder = opts.builderAddress ?? w.builder.classicAddress;
   const escrows: MilestoneEscrowInfo[] = [];
-  for (const m of project.milestones) {
-    const condition = conds[m.id]!;
-    const cancelAfter = m.cancelAfter ? isoTimeToRippleTime(m.cancelAfter) : defaultCancel;
-    const esc = await createMilestoneEscrow({
-      spv,
-      builder: opts.builderAddress ?? w.builder.classicAddress,
-      issuer: w.issuer.classicAddress,
-      amount: m.amount,
-      condition,
-      cancelAfter,
-      ...(opts.spvSingleKey ? { singleKey: opts.spvSingleKey } : { signers }),
-    });
+  for (const e of plan.escrows) {
+    let esc: Awaited<ReturnType<typeof createMilestoneEscrow>>;
+    try {
+      esc = await createMilestoneEscrow({
+        spv,
+        builder,
+        issuer,
+        amount: e.amount,
+        condition: e.condition,
+        cancelAfter: e.cancelAfter,
+        ...(opts.spvSingleKey ? { singleKey: opts.spvSingleKey } : { signers }),
+      });
+    } catch (err) {
+      const pending = plan.escrows.slice(e.index).map((x) => x.milestoneId);
+      throw new CloseLoanPartialError(loan.loanId, loan.tx.hash, escrows.map(({ escrow: _e, amount: _a, ...ref }) => ref), pending, err);
+    }
     escrows.push({
-      milestoneId: m.id,
+      milestoneId: e.milestoneId,
       owner: spv,
       offerSequence: esc.offerSequence,
-      condition,
+      condition: e.condition,
       createTx: esc.tx.hash,
-      amount: m.amount,
-      cancelAfter: rippleTimeToISOTime(cancelAfter),
-      escrow: { owner: spv, offerSequence: esc.offerSequence, condition, createTx: esc.tx.hash },
+      amount: e.amount,
+      cancelAfter: rippleTimeToISOTime(e.cancelAfter),
+      escrow: { owner: spv, offerSequence: esc.offerSequence, condition: e.condition, createTx: esc.tx.hash, createdAt: new Date().toISOString() },
     });
-    events.push(toChainEvent(esc.tx, { projectId: project.id, milestoneId: m.id, kind: "escrow_created", actor: spv, amount: m.amount }));
+    txs.push(esc.tx);
+    events.push(toChainEvent(esc.tx, { projectId: project.id, milestoneId: e.milestoneId, kind: "escrow_created", actor: spv, amount: e.amount }));
   }
-  return { loanId: loan.loanId, loanSetTx: loan.tx, originationFee, ...(originationFeeTopUpTx ? { originationFeeTopUpTx } : {}), escrows, events };
+  return {
+    loanId: loan.loanId,
+    loanSetTx: loan.tx,
+    originationFee,
+    ...(originationFeeTopUpTx ? { originationFeeTopUpTx } : {}),
+    escrows,
+    txs,
+    maturity: rippleTimeToISOTime(plan.maturity),
+    events,
+  };
 }
 
 // ---------------------------------------------------------------- approvals + release
@@ -524,22 +638,61 @@ export { getLoan };
 
 // ---------------------------------------------------------------- credentials
 
-/** Platform issues a credential; if `acceptWith` (the subject's wallet) is given, the subject accepts it too. */
+/**
+ * Platform issues a credential; the subject accepts it unless `accept: false`. Idempotent (delegates to grantCredential):
+ * nothing is re-submitted if the credential already exists / is accepted.
+ * `createTx` / `event` describe the CredentialCreate: this call's, or the existing one on the ledger (then `txs` and
+ * `events`, i.e. what this call submitted, are empty).
+ * @deprecated use `grantCredential` (compliance.ts), which returns only what it submitted.
+ */
 export async function issueCredential(p: {
   projectId?: string;
   subject: WalletRef;
   type: CredentialType;
   uri?: string;
   accept?: boolean;
-}): Promise<{ createTx: TxResult; acceptTx?: TxResult; event: ChainEvent }> {
+}): Promise<{ createTx: TxResult; acceptTx?: TxResult; event: ChainEvent; status: CredentialStatus; txs: TxResult[]; events: ChainEvent[] }> {
   const w = loadWallets();
-  const subject = typeof p.subject === "string" ? resolveWallet(p.subject) : p.subject;
-  const createTx = await createCredential(w.platform, subject.classicAddress, p.type, p.uri);
-  const acceptTx = p.accept === false ? undefined : await acceptCredential(subject, w.platform.classicAddress, p.type);
+  const r = await grantCredential({
+    subject: p.subject,
+    type: p.type,
+    platform: w.platform,
+    ...(p.uri ? { uri: p.uri } : {}),
+    ...(p.accept === false ? { accept: false } : {}),
+    ...(p.projectId ? { projectId: p.projectId } : {}),
+  });
+  const subject = typeof p.subject === "string" && isValidClassicAddress(p.subject) ? p.subject : addr(p.subject);
+  const createTx = r.createTx ?? (await existingCredentialCreateTx(subject, w.platform.classicAddress, p.type));
+  const event = r.events.find((e) => e.kind === "credential_issued") ??
+    toChainEvent(createTx, { projectId: p.projectId ?? PLATFORM_SCOPE, kind: "credential_issued", actor: w.platform.classicAddress });
+  return { createTx, ...(r.acceptTx ? { acceptTx: r.acceptTx } : {}), event, status: r.status, txs: r.txs, events: r.events };
+}
+
+/** The CredentialCreate behind an existing Credential: its PreviousTxnID, or one hop back if that was the CredentialAccept. */
+async function existingCredentialCreateTx(subject: string, issuer: string, type: CredentialType): Promise<TxResult> {
+  const c = await getCredential(subject, issuer, type);
+  if (!c) throw new Error(`issueCredential: ${type} for ${subject} not found after grant`);
+  let tx = await validatedTx(c.PreviousTxnID);
+  if (tx.tx.TransactionType === "CredentialAccept") {
+    const nodes = (tx.meta.AffectedNodes ?? []) as { ModifiedNode?: { LedgerEntryType?: string; LedgerIndex?: string; PreviousTxnID?: string } }[];
+    const prev = nodes.find((n) => n.ModifiedNode?.LedgerEntryType === "Credential" && n.ModifiedNode.LedgerIndex === c.index)?.ModifiedNode?.PreviousTxnID;
+    if (prev) tx = await validatedTx(prev);
+  }
+  return tx;
+}
+
+async function validatedTx(hash: string): Promise<TxResult> {
+  const client = await getClient();
+  const res = await client.request({ command: "tx", transaction: hash });
+  const r = res.result as unknown as Record<string, unknown>;
+  const meta = (r.meta ?? {}) as Record<string, unknown>;
   return {
-    createTx,
-    acceptTx,
-    event: toChainEvent(createTx, { projectId: p.projectId ?? PLATFORM_SCOPE, kind: "credential_issued", actor: w.platform.classicAddress }),
+    hash,
+    explorerUrl: explorerTxUrl(hash),
+    result: String(meta.TransactionResult ?? "unknown"),
+    ...(typeof r.ledger_index === "number" ? { ledgerIndex: r.ledger_index } : {}),
+    tx: (r.tx_json ?? r) as Record<string, unknown>,
+    meta,
   };
 }
 

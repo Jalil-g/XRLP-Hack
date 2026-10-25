@@ -1,7 +1,18 @@
 // Offline: wallet-file migration + RLUSD plan (no devnet).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { migrateWalletFile, RLUSD_HOLDERS, rlusdTopUpPlan, WALLET_ROLES, type StoredWallet, type WalletFile } from "../src/wallets.ts";
+import {
+  credentialPlan,
+  DEFAULT_PLATFORM_RLUSD,
+  migrateWalletFile,
+  NO_KYC_ROLES,
+  platformRlusdFor,
+  RLUSD_HOLDERS,
+  rlusdTopUpPlan,
+  WALLET_ROLES,
+  type StoredWallet,
+  type WalletFile,
+} from "../src/wallets.ts";
 
 let n = 0;
 const gen = (): StoredWallet => ({ address: `rGEN${++n}`, seed: `sGEN${n}` });
@@ -89,4 +100,32 @@ test("RLUSD plan: investors 50k, platform 25k, builder >= 250 (fee); all targets
   assert.ok(plan.find((t) => t.role === "builder")!.target >= 250);
   assert.deepEqual(rlusdTopUpPlan({ investorRlusd: 1, platformRlusd: 2, builderRlusd: 3 }).map((t) => t.target), [1, 1, 1, 2, 3]);
   assert.equal((RLUSD_HOLDERS as readonly string[]).includes("issuer"), false);
+});
+
+test("credential plan: KYC investor1/2 (never investor3), VERIFIED_INSPECTOR x3, builder only when pre-verified", () => {
+  const plan = credentialPlan().map((g) => `${g.role}:${g.type}`);
+  assert.deepEqual(plan, [
+    "investor1:KYC_INVESTOR",
+    "investor2:KYC_INVESTOR",
+    "inspector1:VERIFIED_INSPECTOR",
+    "inspector2:VERIFIED_INSPECTOR",
+    "inspector3:VERIFIED_INSPECTOR",
+  ]);
+  assert.deepEqual([...NO_KYC_ROLES], ["investor3"]);
+  for (const r of NO_KYC_ROLES) assert.equal(credentialPlan({ preVerifyBuilder: true }).some((g) => g.role === r), false, `${r} must stay uncredentialed (tecNO_AUTH beat)`);
+  assert.equal(plan.some((g) => g.startsWith("builder:")), false, "VERIFIED_BUILDER is earned, not pre-issued");
+  assert.deepEqual(credentialPlan({ preVerifyBuilder: true }).at(-1), { role: "builder", type: "VERIFIED_BUILDER" });
+});
+
+test("platform RLUSD budget: default covers 3 concurrent demo projects (prestage A/B/C), sized via platformRlusdFor", () => {
+  const demo = (principal: string) => ({ principal, interestRateBps: 1000, termDays: 30, paymentIntervalDays: 15 });
+  // one 30k project: cover 3 328 (10% of principal+interest, +10% headroom) + 10% slack -> 4 000
+  assert.equal(platformRlusdFor([demo("30000")]), 4_000);
+  assert.equal(platformRlusdFor([demo("30000"), demo("30000"), demo("30000")]), 11_000);
+  // all 150k of investor money across 3 projects fits the default with room to spare
+  assert.ok(platformRlusdFor([demo("50000"), demo("50000"), demo("50000")]) <= DEFAULT_PLATFORM_RLUSD);
+  assert.ok(platformRlusdFor([demo("68000"), demo("68000"), demo("68000")]) <= DEFAULT_PLATFORM_RLUSD);
+  assert.ok(platformRlusdFor([demo("70000"), demo("70000"), demo("70000")]) > DEFAULT_PLATFORM_RLUSD);
+  assert.equal(platformRlusdFor([]), 0);
+  assert.equal(rlusdTopUpPlan().find((t) => t.role === "platform")!.target, DEFAULT_PLATFORM_RLUSD);
 });
