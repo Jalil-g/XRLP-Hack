@@ -36,7 +36,7 @@ import { z } from "zod";
 import type { AuditReportInput, CoreApi, EvidenceUpload, KeeperIssue, KeeperTickResult, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
-import { DomainError } from "./errors.ts";
+import { DomainError, ledgerErrorCode } from "./errors.ts";
 import { canonicalJson, fakeAddress, newId, sha256Hex, slugify } from "./ids.ts";
 import { fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
 import { PLATFORM_SCOPE } from "./ports.ts";
@@ -188,7 +188,7 @@ export class CoreService implements CoreApi {
     } catch (e) {
       if (e instanceof DomainError) throw e;
       if (e instanceof LedgerError) {
-        const code = e.code === "too_soon" ? "TOO_SOON" : e.code === "unsafe_release" ? "UNSAFE_RELEASE" : "LEDGER_ERROR";
+        const code = ledgerErrorCode(e);
         throw new DomainError(code, `${what}: ${e.message}`, e, { txResult: e.txResult, txHash: e.txHash });
       }
       throw new DomainError("LEDGER_ERROR", `${what} failed: ${(e as Error).message}`, e);
