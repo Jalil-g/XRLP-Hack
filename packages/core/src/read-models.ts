@@ -17,6 +17,7 @@ import type {
   VaultSnapshot,
   XrplAddress,
 } from "@xrlp/shared";
+import { canonicalJson, sha256Hex } from "./ids.ts";
 import { DomainError } from "./errors.ts";
 import { fromMicro, sumMicro, toMicro, totalOwedMicro } from "./money.ts";
 import { evaluateRelease } from "./release-policy.ts";
@@ -49,10 +50,18 @@ export const currentRound = (db: DbState, mid: string): number =>
   db.evidence.filter((e) => e.milestoneId === mid).reduce((r, e) => Math.max(r, e.round), 0);
 export const roundEvidence = (db: DbState, mid: string, round: number): EvidenceRecord[] =>
   db.evidence.filter((e) => e.milestoneId === mid && e.round === round);
-export const roundAudits = (db: DbState, mid: string, round: number) => db.audits.filter((a) => a.milestoneId === mid && a.round === round);
-export const latestVerdict = (db: DbState, mid: string): VerdictRecord | undefined => db.verdicts.filter((v) => v.milestoneId === mid).at(-1);
+export const roundAudits = (db: DbState, mid: string, round: number) =>
+  [...new Map(db.audits.filter((a) => a.milestoneId === mid && a.round === round).map((a) => [a.inspector, a])).values()];
+/** Stored verdicts authorize only the exact evidence and latest inspector reports they evaluated. */
+export const checksInputHash = (db: DbState, mid: string, round: number): string =>
+  sha256Hex(canonicalJson({ round, evidence: roundEvidence(db, mid, round), audits: roundAudits(db, mid, round) }));
+export const latestVerdict = (db: DbState, mid: string): VerdictRecord | undefined => {
+  const v = db.verdicts.filter((v) => v.milestoneId === mid).at(-1);
+  const round = currentRound(db, mid);
+  return v?.round === round && v.inputHash === checksInputHash(db, mid, round) ? v : undefined;
+};
 export const latestDecision = (db: DbState, mid: string, round: number) =>
-  db.decisions.filter((d) => d.milestoneId === mid && d.round === round).at(-1);
+  db.decisions.filter((d) => d.milestoneId === mid && d.round === round && !!d.verdictTxHash && d.verdictTxHash === latestVerdict(db, mid)?.txHash).at(-1);
 
 const stripRecord = <T extends object>(r: T): T => {
   const { projectId: _p, round: _r, ...rest } = r as T & { projectId?: string; round?: number };

@@ -7,9 +7,11 @@ import { DomainError } from "../errors.ts";
 import type { PreimageVault } from "../release-service.ts";
 import type { CoreService, CoreServiceOptions } from "../service.ts";
 import type { Store } from "../store.ts";
+import type { PrestageAuditSigner } from "./prestage-audit.ts";
 import type { Log } from "./scenario.ts";
 
 export interface PrestageSeedDeps {
+  auditSigner?: PrestageAuditSigner;
   env: Record<string, string | undefined>;
   dataDir: string;
   store: Store;
@@ -38,13 +40,15 @@ export function prestageSeedOptions(d: PrestageSeedDeps): Pick<CoreServiceOption
     defaultSeed: "prestage",
     checkSeed: async (name) => {
       if (name !== "prestage") return d.other ? undefined : refuse(name);
-      await (await load()).planPrestageImport(await opts());
+      const plan = await (await load()).planPrestageImport(await opts());
+      if (!d.auditSigner) throw new DomainError("VALIDATION", "Prestage requires an assigned-inspector audit signer");
+      await d.auditSigner.checkInspector(plan.result.file.projects.A!.assignedInspector);
     },
     seed: async (name) => {
       if (name !== "prestage") return d.other ? d.other(name) : refuse(name);
       const m = await load();
       const imported = await m.importPrestage(await opts());
-      await m.stagePrestageEvidence(d.service(), imported, d.log);
+      await m.stagePrestageEvidence(d.service(), imported, d.auditSigner!, d.log);
     },
   };
 }

@@ -5,6 +5,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { SoftwareSigner, buildAttestationTx } from "@xrlp/attest-signer";
+import { createPrestageAuditSigner } from "../src/demo/prestage-audit.ts";
 import { conditionFromPreimage, type PrestageFile, type PrestagePreimagesFile, type PrestageProject } from "@xrlp/xrpl";
 import { explorerTxUrl, type AttestMemo, type EscrowSnapshot, type LedgerPort, type TxResult } from "@xrlp/shared";
 import { FakeClock } from "../src/clock.ts";
@@ -12,7 +14,7 @@ import { conditionFromFulfillment } from "../src/conditions.ts";
 import { importPrestage, planPrestageImport, RESTAGE_HINT } from "../src/demo/prestage-import.ts";
 import { DomainError } from "../src/errors.ts";
 import { createCore } from "../src/factory.ts";
-import { fakeAddress, fakeHash } from "../src/ids.ts";
+import { fakeAddress, fakeHash, sha256Hex } from "../src/ids.ts";
 import { MemoryPreimageVault } from "../src/release-service.ts";
 import { MemoryStore } from "../src/store.ts";
 
@@ -22,8 +24,9 @@ const DAY = 86_400_000;
 const at = (ms: number) => new Date(Date.parse(NOW) + ms).toISOString();
 const isCode = (code: string, re?: RegExp) => (e: unknown) => e instanceof DomainError && e.code === code && (!re || re.test(e.message));
 
+const testSigner = (label: string) => SoftwareSigner.fromEntropy(Buffer.from(sha256Hex(label).slice(0, 32), "hex"));
 const ACCOUNTS = Object.fromEntries(
-  ["issuer", "platform", "releaseService", "builder", "investor1", "investor2", "investor3", "inspector1", "inspector2", "inspector3", "aiAgent", "trustee"].map((r) => [r, fakeAddress(`ps:${r}`)]),
+  ["issuer", "platform", "releaseService", "builder", "investor1", "investor2", "investor3", "inspector1", "inspector2", "inspector3", "aiAgent", "trustee"].map((r) => [r, testSigner(`ps:${r}`).wallet.classicAddress]),
 );
 
 type Esc = { state: "open" | "expired" | "finished"; cancelAfter: string };
@@ -35,7 +38,7 @@ function project(key: "A" | "B" | "C", run: string, escrows: Esc[], extra: Parti
   const principal = key === "C" ? "12000" : "30000";
   const keys = ["foundation", "framing", "dry_in"];
   const titles = ["Foundation", "Framing", "Roof & Dry-in"];
-  const spv = fakeAddress(`ps:${id}:spv`);
+  const spv = testSigner(`ps:${id}:spv`).wallet.classicAddress;
   const loanSetAt = at(-20 * MIN);
   const preimages: Record<string, { condition: string; preimage: string; createdAt: string }> = {};
   const txs: PrestageProject["txs"] = [];
@@ -196,6 +199,10 @@ class StubLedger {
   async attest(p: { signer: string; spv: string; memo: AttestMemo }) {
     return this.tx(`attest:${p.memo.kind}`, p, p.memo.kind === "audit" ? "audit_attested" : p.memo.kind === "verdict" ? "verdict_attested" : undefined);
   }
+  async submitSignedBlob(blob: string) {
+    // Core has already verified this blob; record only public transaction identifiers in the test ledger.
+    return this.tx("signed:audit", { signed: true }, "audit_attested");
+  }
   async finishEscrow(p: { owner: string; offerSequence: number; condition: string; fulfillment: string }) {
     const e = this.escrows.get(`${p.owner}:${p.offerSequence}`);
     assert.ok(e?.open, "finish of an unknown/closed escrow");
@@ -228,7 +235,11 @@ function devnetCore(f: Fixture) {
   const paths = write(f);
   const stub = new StubLedger(f);
   const clock = new FakeClock(NOW);
-  const core = createCore({ inMemory: true, clock, ledger: asPort(stub), env: { LEDGER_MODE: "devnet", PRESTAGE_FILE: paths.prestagePath, PRESTAGE_PREIMAGES_FILE: paths.preimagesPath } });
+  const core = createCore({ inMemory: true, clock, ledger: asPort(stub), prestageAuditSigner: createPrestageAuditSigner(async (address) => {
+    const signer = ["inspector1", "inspector2", "inspector3"].map((role) => testSigner(`ps:${role}`)).find((s) => s.wallet.classicAddress === address);
+    if (!signer) throw new Error("no assigned signer");
+    return signer;
+  }, async (p) => ({ ...buildAttestationTx(p), Fee: "12", Sequence: 1, LastLedgerSequence: 999999 })), env: { LEDGER_MODE: "devnet", PRESTAGE_FILE: paths.prestagePath, PRESTAGE_PREIMAGES_FILE: paths.preimagesPath } });
   return { ...paths, stub, clock, core, svc: core.service };
 }
 
@@ -391,7 +402,7 @@ describe("CORE-07 devnet route 21 (stub ledger)", () => {
     assert.deepEqual(a.inspectors.map((i) => i.address), [ACCOUNTS.inspector1]);
     // 04 §Pre-staged: M1 + M2 evidence and audits uploaded (2 audit attestations on the ledger)
     assert.deepEqual(a.project.milestones.map((m) => m.status), ["audited", "audited", "escrowed"]);
-    assert.equal(stub.submitted.filter((s) => s.type === "attest:audit").length, 2);
+    assert.equal(stub.submitted.filter((s) => s.type === "signed:audit").length, 2);
 
     const [m1, m2] = a.project.milestones;
     const r1 = await svc.runChecks(fa.projectId, m1!.id);
@@ -443,5 +454,29 @@ describe("CORE-07 fake mode untouched", () => {
     await assert.rejects(core.service.resetDemo({ seed: "prestage" }), isCode("VALIDATION", /LEDGER_MODE=devnet/));
     await core.service.resetDemo({});
     assert.equal((await core.service.listProjects()).length, 0);
+  });
+});
+
+describe("prestage signer precheck", () => {
+  it("missing signer fails before reset changes the existing store", async () => {
+    const f = fixture();
+    const { core, stub, clock, prestagePath, preimagesPath, svc } = devnetCore(f);
+    await svc.resetDemo({});
+    const before = await core.store.read((db) => structuredClone(db));
+    const submitted = stub.submitted.length;
+    const missing = createCore({ inMemory: true, store: core.store, clock, ledger: asPort(stub), env: {
+      LEDGER_MODE: "devnet", PRESTAGE_FILE: prestagePath, PRESTAGE_PREIMAGES_FILE: preimagesPath,
+    } });
+    await assert.rejects(missing.service.resetDemo({}), isCode("VALIDATION", /audit signer/));
+    assert.deepEqual(await core.store.read((db) => db), before);
+    assert.equal(stub.submitted.length, submitted);
+  });
+});
+
+
+describe("prestage signer identity", () => {
+  it("refuses a resolver that returns a different inspector", async () => {
+    const signer = createPrestageAuditSigner(async () => testSigner("wrong-inspector"), async (p) => ({ ...buildAttestationTx(p), Fee: "12", Sequence: 1, LastLedgerSequence: 999999 }));
+    await assert.rejects(signer.checkInspector(ACCOUNTS.inspector1!), isCode("VALIDATION", /unavailable or mismatched/));
   });
 });

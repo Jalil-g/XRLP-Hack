@@ -20,8 +20,8 @@ export const MILESTONE_TRANSITIONS_V2: Record<MilestoneStatusV2, readonly Milest
   escrowed: ["evidence_submitted", "expired"],
   evidence_submitted: ["audited", "failed", "expired"],
   audited: ["verified", "failed", "needs_human", "expired"],
-  needs_human: ["verified", "failed"], // platform operator, signed reason
-  verified: ["released"],
+  needs_human: ["verified", "failed", "audited"], // operator decision or a corrected inspector audit
+  verified: ["released", "audited"], // correction invalidates checks before an escrow has released
   failed: ["evidence_submitted", "audited", "expired"], // resubmit evidence or re-audit
   released: [],
   expired: ["refunded"],

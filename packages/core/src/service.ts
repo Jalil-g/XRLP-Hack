@@ -43,6 +43,8 @@ import { redemptionShares, fromMicro, maxMicro, sumMicro, toMicro, totalOwedMicr
 import { PLATFORM_SCOPE } from "./ports.ts";
 import {
   assignedInspectors,
+  checksInputHash,
+  checksFor,
   currentRound,
   getMilestoneOrThrow,
   getProjectOrThrow,
@@ -757,6 +759,7 @@ export class CoreService implements CoreApi {
           b: this.builderOf(db, p),
           evidence: roundEvidence(db, mid, round).map(stripEvidence),
           audits: roundAudits(db, mid, round),
+          inputHash: checksInputHash(db, mid, round),
           // ALL projects' evidence except this milestone's own submissions (cross-project duplicate detection)
           prior: db.evidence.filter((e) => e.milestoneId !== mid),
           assigned: assignedInspectors(db, id),
@@ -787,7 +790,7 @@ export class CoreService implements CoreApi {
       await this.store.write((db) => {
         const p = this.projectIn(db, id);
         const m = getMilestoneOrThrow(p, mid);
-        db.verdicts.push({ ...verdict, projectId: id, round, verdictHash, policy2: policy, txHash: tx.hash });
+        db.verdicts.push({ ...verdict, projectId: id, round, inputHash: ctx.inputHash, verdictHash, policy2: policy, txHash: tx.hash });
         db.attestations.push({
           milestoneId: mid,
           role: "ai_agent",
@@ -818,6 +821,8 @@ export class CoreService implements CoreApi {
   private async releaseVerifiedLocked(id: string, mid: string): Promise<{ finish: { txHash: string; explorerUrl: string }; events: ChainEvent[] }> {
     const { p, m, b } = await this.read((db) => {
       const p = this.projectIn(db, id);
+      if (checksFor(db, p, getMilestoneOrThrow(p, mid)).outcome !== "pass")
+        throw new DomainError("ILLEGAL_TRANSITION", "Release requires checks over the current evidence and latest audits");
       return { p, m: getMilestoneOrThrow(p, mid), b: this.builderOf(db, p) };
     });
     assertMilestoneStatus(mid, m.status, ["verified"], "release");
@@ -886,7 +891,7 @@ export class CoreService implements CoreApi {
       const milestone = await this.store.write((db) => {
         const p = this.projectIn(db, id);
         const m = getMilestoneOrThrow(p, mid);
-        db.decisions.push({ projectId: id, milestoneId: mid, round: ctx.round, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
+        db.decisions.push({ projectId: id, milestoneId: mid, round: ctx.round, verdictTxHash: ctx.verdict!.txHash, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
         db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round });
         this.applyOutcome(m, evaluation);
         db.chainEvents.push(...events);

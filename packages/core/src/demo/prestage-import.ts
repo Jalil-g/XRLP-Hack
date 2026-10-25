@@ -33,6 +33,7 @@ import { fromMicro, sumMicro, toMicro } from "../money.ts";
 import type { PreimageEntry, PreimageVault } from "../release-service.ts";
 import type { CoreService, EvidenceFile } from "../service.ts";
 import { emptyDb, type DbState, type EvidenceRecord, type Repayment, type Store } from "../store.ts";
+import type { PrestageAuditSigner } from "./prestage-audit.ts";
 import { demoPhoto, nearby } from "./fixtures.ts";
 import { auditBody, DEMO, doc, invoice, mapleInput, photos, sovFromTemplate, type Log } from "./scenario.ts";
 
@@ -456,9 +457,9 @@ function donorEvidence(p: PrestageProject, m: PrestageProject["milestones"][numb
 
 /**
  * Project A: M1 evidence + inspector audit, M2 evidence (one photo re-uploaded from a released milestone of another project)
- * + audit. Audits are attested on-ledger by CoreService (platform-submitted, `signed-for` the assigned inspector).
+ * + audit. Audits are attested on-ledger by CoreService using canonical blobs signed by the assigned inspector.
  */
-export async function stagePrestageEvidence(svc: CoreService, imported: ImportedPrestage, log: Log = () => {}): Promise<void> {
+export async function stagePrestageEvidence(svc: CoreService, imported: ImportedPrestage, signer: PrestageAuditSigner, log: Log = () => {}): Promise<void> {
   const id = imported.ids.A;
   if (!id) return;
   const { project } = await svc.getProject(id);
@@ -476,15 +477,19 @@ export async function stagePrestageEvidence(svc: CoreService, imported: Imported
     invoice("concrete-rebar-invoice.pdf", m1.amount),
     doc("footing-inspection.pdf", "Footing inspection: PASSED"),
   ];
-  await svc.submitEvidence(id, m1.id, m1Evidence);
-  await svc.submitAudit(id, m1.id, auditBody(project, m1.id, inspector, m1Evidence, "Slab cured, anchor bolts set, no framing yet."));
+  const submit = async (mid: string, evidence: EvidenceFile[], notes: string) => {
+    const body = auditBody(project, mid, inspector, evidence, notes);
+    const signedTxBlob = await signer.sign({ ...body.report, milestoneId: mid, photos: body.photos }, project.chain.spv!);
+    await svc.submitEvidence(id, mid, evidence);
+    await svc.submitAudit(id, mid, { ...body, signedTxBlob });
+  };
+  await submit(m1.id, m1Evidence, "Slab cured, anchor bolts set, no framing yet.");
   const m2Evidence = [
     ...photos(site, "Framing — Maple St", 3, at(0.5), "framing", 45),
     ...(imported.reusedPhoto ? [{ ...imported.reusedPhoto, filename: "IMG_2231.jpg" }] : []),
     invoice("lumber-package-invoice.pdf", m2.amount),
   ];
-  await svc.submitEvidence(id, m2.id, m2Evidence);
-  await svc.submitAudit(id, m2.id, auditBody(project, m2.id, inspector, m2Evidence, "Walls framed; sheathing started."));
+  await submit(m2.id, m2Evidence, "Walls framed; sheathing started.");
   log(`${project.name}: M1 + M2 evidence and audits uploaded (M2 contains IMG_2231.jpg reused from another project)`);
 }
 

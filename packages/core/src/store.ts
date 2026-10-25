@@ -45,9 +45,10 @@ export interface ProjectMeta {
 /** `round` = 1-based evidence submission round for the milestone (resubmission after a failure = new round). */
 export type EvidenceRecord = Evidence & { projectId: string; milestoneId: string; round: number };
 export type AuditRecord = InspectorAudit & { projectId: string; round: number };
-export type VerdictRecord = Verdict & { projectId: string; round: number; verdictHash: string; policy2: ReleasePolicy; txHash?: string };
+export type VerdictRecord = Verdict & { projectId: string; round: number; verdictHash: string; policy2: ReleasePolicy; inputHash?: string; txHash?: string };
 export type VerificationRecord = ProjectVerification & { projectId: string; verificationHash: string; txHash?: string };
 export interface DecisionRecord {
+  verdictTxHash?: string;
   projectId: string;
   milestoneId: string;
   round: number;

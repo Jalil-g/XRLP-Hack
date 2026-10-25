@@ -466,3 +466,84 @@ describe("persisted redemption", () => {
     assert.deepEqual(await a.ledger.getVaultSnapshot({ vaultId: detail.project.chain.vaultId! }), (await a.service.getProject(MAPLE_ID)).vault);
   });
 });
+
+describe("re-audit freshness", () => {
+  it("replaces the active audit per inspector and invalidates the prior verdict", async () => {
+    const { svc, core, clock, project, inspector } = await mapleEscrowed();
+    const m = project.milestones[0]!;
+    const ev = goodEvidence(clock);
+    await svc.submitEvidence(project.id, m.id, ev);
+    const body = auditBody(project, m.id, inspector, ev);
+    await svc.submitAudit(project.id, m.id, { ...body, report: { ...body.report, checklist: body.report.checklist.map((c) => ({ ...c, status: "not_done" })) } });
+    assert.equal((await svc.runChecks(project.id, m.id)).verdict.decision, "fail");
+    await svc.submitAudit(project.id, m.id, body);
+    assert.equal((await svc.getProject(project.id)).checks[m.id]!.outcome, "pending");
+    const { roundAudits } = await import("../src/read-models.ts");
+    const db = await core.store.read((db) => db);
+    assert.equal(db.audits.filter((a) => a.milestoneId === m.id).length, 2, "retain history");
+    assert.equal(roundAudits(db, m.id, 1).length, 1);
+    assert.ok(roundAudits(db, m.id, 1)[0]!.checklist.every((c) => c.status === "done"));
+    assert.equal((await svc.runChecks(project.id, m.id)).verdict.decision, "pass");
+  });
+
+  it("a prior pass cannot release changed evidence through keeper retry", async () => {
+    const { svc, core, clock, project, inspector, ledger } = await mapleEscrowed();
+    const m = project.milestones[0]!;
+    const ev = goodEvidence(clock);
+    await svc.submitEvidence(project.id, m.id, ev);
+    await svc.submitAudit(project.id, m.id, auditBody(project, m.id, inspector, ev));
+    ledger.setTrustLine(DEMO.builders.hudson.address, false);
+    await assert.rejects(svc.runChecks(project.id, m.id), isCode("UNSAFE_RELEASE"));
+    assert.equal((await svc.getProject(project.id)).checks[m.id]!.outcome, "pass");
+    await core.store.write((db) => { db.evidence.find((e) => e.milestoneId === m.id)!.sha256 = "00".repeat(32); });
+    ledger.setTrustLine(DEMO.builders.hudson.address, true);
+    assert.equal((await svc.getProject(project.id)).checks[m.id]!.outcome, "pending");
+    await svc.keeperTick();
+    assert.equal((await svc.getProject(project.id)).project.milestones[0]!.status, "verified");
+    assert.ok(await ledger.getEscrow(m.escrow!.owner, m.escrow!.offerSequence));
+    assert.equal(ledger.submitted.filter((tx) => tx.kind === "escrow_finished").length, 0);
+  });
+});
+
+
+describe("correcting a pending release audit", () => {
+  it("reopens checks after an earlier pass and cannot reuse that pass", async () => {
+    const { svc, clock, project, inspector, ledger } = await mapleEscrowed();
+    const m = project.milestones[0]!;
+    const ev = goodEvidence(clock);
+    await svc.submitEvidence(project.id, m.id, ev);
+    const body = auditBody(project, m.id, inspector, ev);
+    await svc.submitAudit(project.id, m.id, body);
+    ledger.setTrustLine(DEMO.builders.hudson.address, false);
+    await assert.rejects(svc.runChecks(project.id, m.id), isCode("UNSAFE_RELEASE"));
+    await svc.submitAudit(project.id, m.id, { ...body, report: { ...body.report, checklist: body.report.checklist.map((c) => ({ ...c, status: "not_done" })) } });
+    ledger.setTrustLine(DEMO.builders.hudson.address, true);
+    const d = await svc.getProject(project.id);
+    assert.equal(d.project.milestones[0]!.status, "audited");
+    assert.equal(d.checks[m.id]!.outcome, "pending");
+    await svc.keeperTick();
+    assert.equal((await svc.runChecks(project.id, m.id)).verdict.decision, "fail");
+    assert.equal(ledger.submitted.filter((tx) => tx.kind === "escrow_finished").length, 0);
+    assert.ok(await ledger.getEscrow(m.escrow!.owner, m.escrow!.offerSequence));
+  });
+});
+
+describe("operator decision freshness", () => {
+  it("does not carry approval into a new verdict after an audit correction", async () => {
+    const { svc, clock, project, inspector, ledger } = await mapleEscrowed();
+    const m = project.milestones[0]!;
+    const ev = goodEvidence(clock, "foundation", true);
+    const body = auditBody(project, m.id, inspector, ev);
+    await svc.submitEvidence(project.id, m.id, ev);
+    await svc.submitAudit(project.id, m.id, body);
+    await svc.runChecks(project.id, m.id);
+    ledger.setTrustLine(DEMO.builders.hudson.address, false);
+    await assert.rejects(svc.resolveNeedsHuman(project.id, m.id, { actor: svc.platformAddress, decision: "approve", reason: "Checked original report" }), isCode("UNSAFE_RELEASE"));
+    await svc.submitAudit(project.id, m.id, { ...body, report: { ...body.report, notes: "Corrected report: confirmation still needed" } });
+    ledger.setTrustLine(DEMO.builders.hudson.address, true);
+    await svc.runChecks(project.id, m.id);
+    assert.equal((await svc.getProject(project.id)).checks[m.id]!.outcome, "needs_human");
+    await svc.keeperTick();
+    assert.equal(ledger.submitted.filter((tx) => tx.kind === "escrow_finished").length, 0);
+  });
+});

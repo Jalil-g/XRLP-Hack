@@ -10,6 +10,7 @@ import { UploadedEvidenceMeta } from "./adapters/evidence-meta.ts";
 import { CoreVerifierAdapter } from "./adapters/verifier.ts";
 import type { ReleaseServicePort } from "./api-surface.ts";
 import { FakeClock, systemClock, type Clock } from "./clock.ts";
+import { devnetPrestageAuditSigner, type PrestageAuditSigner } from "./demo/prestage-audit.ts";
 import { prestageSeedOptions } from "./demo/prestage-seed.ts";
 import { DEMO_ADDRESSES, demoCancelAfter, seedDemo, SEED_BACKDATE_MS } from "./demo/scenario.ts";
 import { FakeLedger } from "./fakes/fake-ledger.ts";
@@ -32,6 +33,7 @@ export interface Core {
 }
 
 export interface CreateCoreOptions extends Partial<CoreServiceOptions> {
+  prestageAuditSigner?: PrestageAuditSigner;
   /** In-memory store, ledger state and preimage vault (tests / simulate). Default false -> files under DATA_DIR. */
   inMemory?: boolean;
   dataDir?: string;
@@ -115,7 +117,7 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   // CORE-07: devnet route 21 loads the XRPL prestage (A/B/C) into this store and the release service's vault.
   const prestage =
     !opts.seed && !opts.release && (env.LEDGER_MODE ?? "fake") === "devnet"
-      ? prestageSeedOptions({ env, dataDir: dataDir ?? resolveDataDir(env), store, vault, ledger, service: () => service, other: seed, walletsPlatform: devnet?.identities.platform })
+      ? prestageSeedOptions({ auditSigner: opts.prestageAuditSigner ?? (devnet ? devnetPrestageAuditSigner() : undefined), env, dataDir: dataDir ?? resolveDataDir(env), store, vault, ledger, service: () => service, other: seed, walletsPlatform: devnet?.identities.platform })
       : {};
 
   const ids = devnet?.identities;
