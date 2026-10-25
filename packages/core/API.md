@@ -27,6 +27,9 @@ attested **first**; can't override a failed check) → cancel per milestone (Esc
 other milestones continue) → repay → withdraw (Redemption only).
 
 `keeperTick()` cancels expired escrows (+ refund), retries pending refunds, and retries releases for `verified` milestones
-(e.g. after an `unsafe_release`). Idempotent. `tryStealDemo()` records a `release_refused` event with `tecCRYPTOCONDITION_ERROR`.
+(e.g. after an `unsafe_release`). Idempotent per step: the cancel and the refund LoanPay commit separately, so a failed
+refund is retried alone, and an escrow already cancelled by someone else is refunded without a second cancel. Returns
+`{ events, issues }`; each issue is a step (`cancel` | `refund` | `release`) that failed this tick and will be retried.
+`KEEPER=1` runs it every 30 s in `serve` (`KEEPER_INTERVAL_MS` overrides; ticks never overlap). `tryStealDemo()` records a `release_refused` event with `tecCRYPTOCONDITION_ERROR`.
 
 Errors: `DomainError` → `toApiError()` → `{ error: { code, message, txResult?, txHash? } }` (codes per 05 §1).
