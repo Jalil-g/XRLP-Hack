@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ActionButton } from "@/components/action-button";
 import { AutoRefresh } from "@/components/auto-refresh";
 import { Address, TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
@@ -45,12 +44,12 @@ export default async function ProjectPage({ params, searchParams }: Props) {
   const d = await load(id);
   const { project: p, builder } = d;
   const who = namer(session.parties);
+  const names = Object.fromEntries([...session.parties, ...d.inspectors].map((x) => [x.address, x.name]));
   const title = (mid?: string) => p.milestones.find((m) => m.id === mid)?.title ?? "a milestone";
   const selected = p.milestones.find((m) => m.id === selectedId) ?? focusMilestone(p.milestones);
   const raised = d.investments.reduce((a, i) => a + toCents(i.amount), 0);
   const sum = (statuses: Milestone["status"][]) => p.milestones.filter((m) => statuses.includes(m.status)).reduce((a, m) => a + toCents(m.amount), 0);
   const status = PROJECT_STATUS[p.status];
-  const canRun = selected && ["evidence_submitted", "audited", "failed"].includes(selected.status);
 
   return (
     <div className="space-y-10">
@@ -100,17 +99,9 @@ export default async function ProjectPage({ params, searchParams }: Props) {
               audits={d.audits[selected.id] ?? []}
               attestations={d.attestations[selected.id] ?? []}
               builderName={builder.name}
-              action={
-                canRun ? (
-                  <ActionButton
-                    variant={selected.status === "failed" ? "secondary" : "primary"}
-                    afterHref={`?m=${encodeURIComponent(selected.id)}`}
-                    action={{ kind: "runChecks", projectId: p.id, milestoneId: selected.id }}
-                  >
-                    {selected.status === "failed" ? "Run again" : "Run checks"}
-                  </ActionButton>
-                ) : undefined
-              }
+              evidence={d.evidence?.[selected.id]}
+              names={names}
+              run={{ projectId: p.id, pinHref: `?m=${encodeURIComponent(selected.id)}` }}
             />
           </>
         )}
