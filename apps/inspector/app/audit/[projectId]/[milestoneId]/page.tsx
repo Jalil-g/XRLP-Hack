@@ -19,13 +19,14 @@ import { Badge } from "@/components/ui/badge";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ApiError, api, API_MODE } from "@/lib/api";
+import { api, API_MODE } from "@/lib/api";
 import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, withBrowserExif, type AuditDraft } from "@/lib/audit";
 import { evidenceStatus } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
 import type { ChecksStatus, Inspector, InspectorTask, SubmitAuditResult } from "@/lib/types";
 import { BRAND, cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
 import { isAuditSubmitShortcut } from "@/lib/shortcuts";
+import { submitErrorView, type SubmitErrorView } from "@/lib/submit-error";
 
 type AuditTask = InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> };
 
@@ -134,7 +135,7 @@ function AuditForm({
   const [showErrors, setShowErrors] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [phase, setPhase] = useState<"idle" | "signing" | "filing">("idle");
-  const [submitError, setSubmitError] = useState<{ message: string; stale: boolean }>();
+  const [submitError, setSubmitError] = useState<SubmitErrorView>();
   const [result, setResult] = useState<{ res: SubmitAuditResult; signed?: SignedAttestation }>();
   const [bundle, setBundle] = useState<string>();
   const [key, setKey] = useState<InspectorKey | null>();
@@ -199,12 +200,14 @@ function AuditForm({
       return;
     }
     submitting.current = true;
+    let signedHere = false;
     try {
       const report = await buildAudit(task, inspector, draft, new Date().toISOString());
       let signed: SignedAttestation | undefined;
       if (sign && key && spv) {
         setPhase("signing");
         signed = await signAuditAttestation(report, spv, key);
+        signedHere = true;
       }
       setPhase("filing");
       const res = await api.submitAudit({
@@ -218,8 +221,7 @@ function AuditForm({
       setResult({ res, signed });
     } catch (err) {
       setReviewing(false);
-      const message = (err as Error).message;
-      setSubmitError({ message, stale: err instanceof ApiError && err.code === "validation" && message.includes("evidenceBundleHash") });
+      setSubmitError(submitErrorView(err, signedHere));
     } finally {
       submitting.current = false;
       setPhase("idle");

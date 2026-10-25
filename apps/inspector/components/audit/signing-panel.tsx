@@ -75,7 +75,7 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
         </Button>
       </div>
       {error && <p className="text-caption text-bad">{error}</p>}
-      <p className="text-caption text-muted">Stored in this browser only (devnet). Without a key, core attests the audit on your behalf.</p>
+      <p className="text-caption text-muted">Stored in this browser only (devnet). Without a key, only a fake-ledger core attests the audit on your behalf; devnet core requires your signature.</p>
     </form>
   );
 }

@@ -80,7 +80,7 @@ export default function QueuePage() {
               <CardContent className="py-10 text-center text-small text-muted">
                 {groups.none.length
                   ? "Nothing to audit right now. New work shows up here as soon as a builder submits evidence."
-                  : "No projects assigned to you yet. The AI assigns inspectors from the verified panel at lock-terms."}
+                  : "No projects assigned to you yet. Inspectors are assigned from the verified panel at lock-terms."}
               </CardContent>
             </Card>
           )}
