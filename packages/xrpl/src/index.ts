@@ -209,3 +209,46 @@ export type { FinishEscrowParams, CancelReadiness, EscrowTiming } from "./escrow
 export { loanPayMultisig, loanPayFlags, planLoanPayment, ceilMicro, LoanPayAmountError, LSF_LOAN_OVERPAYMENT } from "./loan.ts";
 export type { LoanPayMode, LoanPayPlan } from "./loan.ts";
 export { withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
+// XRPL-15: loan default + first-loss cover (LoanManage impair / unimpair / default by the broker owner). Guards mirror
+// rippled 3.4.1 with fixCleanup3_4_0 (exclusive due / due+grace boundaries); exposure follows the vault's accounting
+// (cash basis on devnet: principal only). See docs/xrpl-protocol-notes.md §3c.
+export {
+  defaultLoan,
+  impairLoan,
+  unimpairLoan,
+  fetchLoanManageState,
+  checkLoanManage,
+  canDefaultAt,
+  canImpairAt,
+  defaultableAfter,
+  impairableAfter,
+  expectedDefaultCovered,
+  loanExposure,
+  vaultAccounting,
+  parseDefaultOutcome,
+  parseImpairOutcome,
+  LoanManageTooSoonError,
+  LoanManageRefusedError,
+  LOAN_MANAGE_FLAG,
+  VAULT_VERSION_CASH_BASIS,
+} from "./default.ts";
+export type {
+  DefaultLoanResult,
+  DefaultOutcome,
+  DefaultCoverInput,
+  ImpairResult,
+  ImpairOutcome,
+  VaultFigures,
+  VaultAccounting,
+  LoanManageAction,
+  LoanManageCheck,
+  LoanManageCheckInput,
+  LoanManageRefusal,
+  LoanManageRefused,
+  LoanManageParams,
+  LoanManageState,
+  LoanManageLoan,
+  LoanManageEntry,
+  LoanBrokerManageEntry,
+  VaultManageEntry,
+} from "./default.ts";

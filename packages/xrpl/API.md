@@ -11,6 +11,7 @@ pnpm --filter @xrlp/xrpl demo           # full money path on devnet, prints a tx
 pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding, lending math, wallet-file migration)
 pnpm --filter @xrlp/xrpl spike:broker   # XRPL-04 devnet proof: rates, mandatory cover, origination fee
 pnpm --filter @xrlp/xrpl spike:close    # XRPL-06 devnet proof: LoanSet + 3 escrows, SPV liquid = 0, bad input refused with nothing submitted
+pnpm --filter @xrlp/xrpl spike:default  # XRPL-15 devnet proof: impair / unimpair / default, first-loss cover absorbs DefaultCovered (~5 min)
 pnpm --filter @xrlp/xrpl compliance     # XRPL-08 devnet proof: credentials x3, domain, private vault, fee, attestations
 pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
 pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one account, all tesSUCCESS
@@ -297,6 +298,63 @@ one ledger index. `PreflightSnapshot.escrow` is the raw `PreflightEscrow` (the o
 alias in preflight.ts; it is not the shared `EscrowSnapshot`). Devnet proof:
 `pnpm --filter @xrlp/xrpl spike:preflight` (a builder with no trust line is refused and nothing is submitted, then it finishes once the line exists; a short-`CancelAfter` escrow is refused inside the margin).
 
+### Default handling (XRPL-15, `src/default.ts`)
+
+Released-but-unrepaid money is credit loss (stall path, `docs/03-architecture.md`). The platform, as LoanBroker owner, writes it
+off with `LoanManage`: the first-loss cover absorbs `DefaultCovered`, and the vault writes down the rest. Only the broker owner may
+submit. Devnet proof and numbers: `docs/xrpl-protocol-notes.md` §3c (`pnpm --filter @xrlp/xrpl spike:default`).
+
+| Function | Tx | Returns |
+|---|---|---|
+| `defaultLoan({loanId, projectId, brokerOwner?="platform", skipGuard?})` | `LoanManage tfLoanDefault` | `{tx, event: loan_default (amount = DefaultAmount, at = ledger close time), outcome: DefaultOutcome, alreadyDefaulted}` |
+| `impairLoan({loanId, brokerOwner?, skipGuard?})` | `LoanManage tfLoanImpair` | `{tx, outcome: ImpairOutcome}`. **No ChainEvent**: shared v2 has no impairment kind, and `loan_default` would claim a default that hasn't happened |
+| `unimpairLoan({loanId, brokerOwner?, skipGuard?})` | `LoanManage tfLoanUnimpair` | `{tx, outcome: ImpairOutcome}` (no ChainEvent) |
+| `fetchLoanManageState(loanId)` | — | `{ledgerIndex, now, loan, broker, vault}`, all from one validated ledger |
+
+**Guard first, nothing submitted on refusal.** The pure `checkLoanManage({action, loan, now, submitter?, brokerOwner?, vault?})` runs
+rippled 3.4.1's checks in rippled's order, against the latest validated ledger, under `withAccountLock(platform)` (XRPL-12):
+
+| Rule (devnet: `fixCleanup3_4_0` = exclusive boundaries) | Ledger would say | Thrown |
+|---|---|---|
+| default only when ledger close time **>** `NextPaymentDueDate + GracePeriod` | `tecTOO_SOON` | `LoanManageTooSoonError`: the shared `TooSoonError` (`code: "too_soon"`) plus `allowedAfter` (Ripple s) / `allowedAfterIso` for the retry |
+| impair only when ledger close time **>** `NextPaymentDueDate` (payment overdue) | `tecTOO_SOON` | 〃 |
+| submitter ≠ `LoanBroker.Owner` | `tecNO_PERMISSION` | `LoanManageRefusedError`: shared `LedgerError` (`code: "ledger_error"`) with `reason` + `expectedResult` |
+| loan defaulted / fully paid / impair twice / unimpair an unimpaired loan | `tecNO_PERMISSION` | 〃 |
+| impair would push `LossUnrealized` above `AssetsTotal − AssetsAvailable` | `tecLIMIT_EXCEEDED` | 〃 |
+| no such loan | `tecNO_ENTRY` | 〃 |
+
+rippled checks the timing **before** the owner, so a non-owner defaulting too early gets `tecTOO_SOON`, not `tecNO_PERMISSION`.
+`skipGuard: true` is for negative spikes only (it lets the ledger's `tec` land on-ledger).
+
+**Exposure follows the vault's accounting.** `Vault.LEVersion 1` (`LendingProtocolV1_1` cash basis, every devnet vault): `DebtTotal`
+and `AssetsTotal` hold principal only, so impair/default use `Loan.PrincipalOutstanding`. A legacy accrual vault (no `LEVersion`) uses
+`TotalValueOutstanding − ManagementFeeOutstanding` (XLS-66 §3.10.5). `loanExposure(loan, vaultAccounting(vault))`.
+
+**Cover math** (pure, exact decimals): `expectedDefaultCovered({debtTotal, coverRateMinimum, coverRateLiquidation, defaultAmount,
+coverAvailable, loanScale?})` = `min(roundUp(min(DebtTotal × CRM × CRL, DefaultAmount), 10^LoanScale), CoverAvailable)`, rates in 1/10 bps
+(÷ 100000 each). With our rates (10% / 100%): **10% of `DebtTotal` at default time**, capped by the exposure and by the posted cover.
+Note `DebtTotal` falls as principal is repaid, so the cover a default can draw shrinks with it.
+
+`DefaultOutcome` (from the tx metadata, so before/after are atomic; Rlusd figures truncated to 6 dp, `exact` holds the ledger decimals):
+`{loanId, accounting, wasImpaired, defaultAmount, defaultCovered, expectedDefaultCovered, vaultLoss, debtTotal {before, after},
+coverAvailable {before, after}, vault {before, after}: {assetsTotal, assetsAvailable, lossUnrealized, sharePrice, netSharePrice},
+sharesOutstanding, exact}`. `sharePrice` uses the `getVaultSnapshot` formula (AssetsTotal per whole share, what the UI shows);
+`netSharePrice` is the XLS-65 §3.1.7.1 exchange rate `(AssetsTotal − LossUnrealized) / shares`, what a withdrawal pays.
+`ImpairOutcome` = `{loanId, action, accounting, exposure, vault {before, after}, nextPaymentDueDate, sharesOutstanding}`.
+
+**Idempotent default.** Calling `defaultLoan` on a loan that is already defaulted submits nothing. It returns the original default tx,
+found through `Loan.PreviousTxnID` (nothing can modify a defaulted loan), with its outcome and event and `alreadyDefaulted: true`.
+Two concurrent keeper calls give one default and one replay, because the guard runs inside the account lock.
+
+Pure helpers: `checkLoanManage`, `canDefaultAt(loan, now)`, `canImpairAt(loan, now)`, `defaultableAfter(loan)`, `impairableAfter(loan)`,
+`expectedDefaultCovered`, `loanExposure`, `vaultAccounting`, `parseDefaultOutcome(meta, {loanId, sharesOutstanding})`,
+`parseImpairOutcome(meta, {loanId, action, sharesOutstanding})` (offline tests: `test/default.test.ts`, incl. recorded devnet txs).
+
+**LedgerPort:** shared v2 has no default method yet. Proposed on #53: `defaultLoan(p: { project: Project }): Promise<TxResult & { outcome:
+DefaultOutcome }>` for core's keeper (CORE-06); the adapter maps it to `defaultLoan({ loanId: project.chain.loanId, projectId: project.id })`
+inside `withLedgerErrors`, `kind: "loan_default"`. The keeper calls it once `canDefaultAt(loan, ledgerNow)` holds, or retries at
+`err.allowedAfter` after a `LoanManageTooSoonError`.
+
 ### Mapping to core's `LedgerPort` (origin/scaffold/core `packages/core/src/ports.ts`)
 
 This package is the building block. The `LedgerPort` adapter (`packages/core/src/adapters/xrpl-ledger.ts`)
@@ -388,3 +446,4 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `compliance.ts` | XRPL-08 high-level: fee, `grantCredential`, `createDomain`, `attest`, `submitSignedBlob` |
 | `events.ts` | `TxResult` → shared `ChainEvent` |
 | `reads.ts` | read models: vault/loan snapshots, escrows, balances, trust lines (pure parsers + thin fetches) |
+| `default.ts` | XRPL-15: `LoanManage` impair / unimpair / default with a rippled-order guard, cover math, outcome parsers (pure + thin submit) |
