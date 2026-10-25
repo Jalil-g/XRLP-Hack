@@ -3,10 +3,10 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { expectationErrors, runEvaluation } from "../src/eval.ts";
 
-test("recursive manifest eval exercises all five milestones and three projects through real mock paths", async () => {
+test("recursive manifest eval exercises milestones, projects and adversarial fixtures through real mock paths", async () => {
   const report = await runEvaluation({ mode: "mock", repeat: 2 });
   assert.equal(report.passed, true, JSON.stringify(report.rows.filter((row) => !row.passed)));
-  assert.equal(report.rows.length, 16);
+  assert.equal(report.rows.length, 28);
   assert.equal(report.liveCallsRequested, 0);
   for (const key of ["A", "B", "C", "D", "E", "project-pass", "project-expired-insurance", "project-over-market"]) assert.equal(report.rows.filter((row) => row.key === key).length, 2);
 });

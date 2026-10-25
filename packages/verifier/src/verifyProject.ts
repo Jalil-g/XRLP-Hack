@@ -5,6 +5,7 @@ import { normalizeName } from "./util.ts";
 import { verifyBuilder, type BuilderRegistry } from "./verifyBuilder.ts";
 import type { VerifierMode } from "./types.ts";
 import { canonicalJson } from "./hash.ts";
+import { withDeadline } from "./deadline.ts";
 
 export interface ProjectHistory { openProjects: number; priorMilestones: number; passedMilestones: number }
 export interface VerifyProjectInput extends SharedInput {
@@ -16,7 +17,7 @@ export interface VerifyProjectInput extends SharedInput {
 export type ProjectVerificationResult = ProjectVerification & { inspectorPreVisitRequired: boolean; registryIsMock: boolean };
 const ReviewSection = z.object({ result: z.enum(["pass", "fail", "warn"]), confidence: z.number().min(0).max(1), reason: z.string().min(1) });
 export const ProjectReview = z.object({ identity: ReviewSection, feasibility: ReviewSection, capability: ReviewSection });
-export interface ProjectVerifyOptions { judge?: (input: VerifyProjectInput) => Promise<z.infer<typeof ProjectReview>> }
+export interface ProjectVerifyOptions { judge?: (input: VerifyProjectInput) => Promise<z.infer<typeof ProjectReview>>; timeoutMs?: number }
 
 const History = z.object({ openProjects: z.number().int().nonnegative(), priorMilestones: z.number().int().nonnegative(), passedMilestones: z.number().int().nonnegative() });
 const shares: Record<string, number> = { concrete: 0.25, framing: 0.30, roofing: 0.20, finish: 0.25 };
@@ -91,7 +92,7 @@ export async function verifyProject(input: VerifyProjectInput, options: ProjectV
   if (resolveMode(input.mode) === "live") {
     try {
       const judge = options.judge ?? (await import("./llm/project.ts")).reviewProjectLive;
-      const sections = ProjectReview.parse(await judge(input));
+      const sections = ProjectReview.parse(await withDeadline(() => judge(input), options.timeoutMs ?? 20_000));
       for (const section of ["identity", "feasibility", "capability"] as const) {
         const target = section === "identity" ? identity : section === "feasibility" ? feasibility : capability;
         const review = sections[section];
