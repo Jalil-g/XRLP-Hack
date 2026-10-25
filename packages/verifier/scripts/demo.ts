@@ -18,6 +18,10 @@ console.log(c(90, "The AI checks that evidence is CONSISTENT (place, time, origi
 
 let mismatches = 0;
 for (const s of SCENARIOS.filter((x) => !only || x.key === only)) {
+  if (s.pending) {
+    console.log(`[${s.key}] PENDING ${s.pending}: ${s.title}`);
+    continue;
+  }
   const { verdict, checks } = await verifyMilestoneDetailed(await s.input());
   if (json) {
     console.log(JSON.stringify(verdict, null, 2));

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "note": "Ground truth for the verifier eval harness (VER-10) and tests. `failingChecks` must come back `fail`, `warnChecks` must come back `warn`. Audit checks are produced from VER-03 onward. Photos: see SOURCES.txt.",
+  "scenarios": [
+    {
+      "key": "A",
+      "title": "Milestone 1 (Foundation) — honest submission, inspector audit all done",
+      "milestoneId": "ms_maple_1",
+      "evidence": [
+        "evidence/maple-st/foundation/foundation-01-wide.jpg",
+        "evidence/maple-st/foundation/foundation-02-bolts.jpg",
+        "evidence/maple-st/foundation/foundation-03-walls.jpg",
+        "evidence/maple-st/foundation/invoice_GRM-24117.txt",
+        "evidence/maple-st/foundation/footing_inspection.txt",
+        "evidence/maple-st/foundation/lien_waiver_GRM-24117.txt"
+      ],
+      "audit": "evidence/maple-st/audits/foundation.json",
+      "expect": "pass",
+      "failingChecks": [],
+      "warnChecks": []
+    },
+    {
+      "key": "B",
+      "title": "Milestone 2 (Framing) — a photo copied from the Oak Ave project (fresh EXIF date, neutral file name); inspector marks sheathing partial",
+      "milestoneId": "ms_maple_2",
+      "evidence": [
+        "evidence/maple-st/framing/framing-01-wide.jpg",
+        "evidence/maple-st/framing/framing-02-corner.jpg",
+        "evidence/maple-st/framing/framing-03-wall.jpg",
+        "evidence/maple-st/framing/IMG_5121.jpg",
+        "evidence/maple-st/framing/invoice_BLS-88310.txt"
+      ],
+      "audit": "evidence/maple-st/audits/framing.json",
+      "expect": "fail",
+      "failingChecks": [
+        "no_duplicate_photo"
+      ],
+      "warnChecks": [
+        "audit_checklist_complete"
+      ]
+    },
+    {
+      "key": "C",
+      "title": "Milestone 1 — one photo geotagged 2.6 km from the site",
+      "milestoneId": "ms_maple_1",
+      "evidence": [
+        "evidence/maple-st/foundation/foundation-01-wide.jpg",
+        "evidence/maple-st/foundation/foundation-02-bolts.jpg",
+        "evidence/maple-st/foundation/foundation-03-walls-b.jpg",
+        "evidence/maple-st/foundation/invoice_GRM-24117.txt",
+        "evidence/maple-st/foundation/footing_inspection.txt"
+      ],
+      "audit": "evidence/maple-st/audits/foundation_offsite.json",
+      "expect": "needs_human",
+      "failingChecks": [
+        "gps_within_site"
+      ],
+      "warnChecks": []
+    },
+    {
+      "key": "D",
+      "title": "Milestone 1 — invoices cover only 73.6% of the requested draw",
+      "milestoneId": "ms_maple_1",
+      "evidence": [
+        "evidence/maple-st/foundation/foundation-01-wide.jpg",
+        "evidence/maple-st/foundation/foundation-02-bolts.jpg",
+        "evidence/maple-st/foundation/foundation-03-walls.jpg",
+        "evidence/maple-st/foundation/invoice_GRM-24117_short.txt",
+        "evidence/maple-st/foundation/footing_inspection.txt"
+      ],
+      "audit": "evidence/maple-st/audits/foundation_short_invoice.json",
+      "expect": "fail",
+      "failingChecks": [
+        "invoice_matches_budget"
+      ],
+      "warnChecks": []
+    },
+    {
+      "key": "E",
+      "title": "Milestone 1 — honest evidence but the inspector has filed NO audit",
+      "milestoneId": "ms_maple_1",
+      "evidence": [
+        "evidence/maple-st/foundation/foundation-01-wide.jpg",
+        "evidence/maple-st/foundation/foundation-02-bolts.jpg",
+        "evidence/maple-st/foundation/foundation-03-walls.jpg",
+        "evidence/maple-st/foundation/invoice_GRM-24117.txt",
+        "evidence/maple-st/foundation/footing_inspection.txt",
+        "evidence/maple-st/foundation/lien_waiver_GRM-24117.txt"
+      ],
+      "audit": null,
+      "expect": "fail",
+      "failingChecks": [
+        "inspector_audit_present"
+      ],
+      "warnChecks": [],
+      "pending": "VER-03"
+    }
+  ]
+}
