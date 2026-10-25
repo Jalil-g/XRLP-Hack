@@ -4,7 +4,8 @@
 // Proves on devnet (SPV: master disabled, SignerList {platform, builder, inspector, trustee} w1, quorum 3):
 //   1. EscrowCreate (SPV multisig, PREIMAGE-SHA-256 Condition, CancelAfter) -> EscrowFinish by releaseService
 //   2. EscrowFinish with a wrong fulfillment -> tecCRYPTOCONDITION_ERROR on-ledger, escrow still open
-//   3. EscrowFinish to a destination without an RLUSD trust line -> tecNO_LINE; the Fulfillment is now public
+//   3. EscrowFinish to a destination without an RLUSD trust line: finishEscrow() refuses client-side (XRPL-14
+//      preflight, nothing submitted); forced with skipPreflight -> tecNO_LINE; the Fulfillment is now public
 //      on-ledger while the escrow is still open; a third party finishes it once the line exists
 //   4. EscrowFinish after CancelAfter -> tecNO_PERMISSION (or whatever devnet says); EscrowCancel -> RLUSD back to SPV
 // Env: SPIKE_SIGNERS=platform,inspector,trustee (which 3 SPV signers sign EscrowCreate), SPIKE_CANCEL_S=75.
@@ -13,6 +14,7 @@ import { disconnect, getClient, ledgerTime, signAndSubmit, waitForLedgerTimeAfte
 import { generateMilestoneCondition, type MilestoneCondition } from "../src/condition.ts";
 import { cancelEscrow, createMilestoneEscrow, finishEscrow, listEscrows, type CreatedEscrow } from "../src/escrow.ts";
 import { configureIssuer, ensureTrustline, issueRlusd, rlusdBalance } from "../src/rlusd.ts";
+import { UnsafeReleaseError } from "../src/preflight.ts";
 import { getSpvInfo } from "../src/spv.ts";
 import { Spike } from "./spike-lib.ts";
 
@@ -124,8 +126,18 @@ try {
   // ── Case 3: destination without trust line -> tecNO_LINE, preimage leaks ───────────────────────────
   const c3 = generateMilestoneCondition();
   const e3 = await create("3", "builder2", "25", c3, longCancel);
-  const err3 = await spike.fails("3: EscrowFinish (correct fulfillment) -> builder2 without RLUSD trust line", "tecNO_LINE", () =>
-    finishEscrow({ submitter: w.releaseService, owner: spv, offerSequence: e3.offerSequence, condition: c3.condition, fulfillment: c3.fulfillment }),
+  // finishEscrow() preflights (XRPL-14) and refuses without submitting ...
+  try {
+    await finishEscrow({ submitter: w.releaseService, owner: spv, offerSequence: e3.offerSequence, condition: c3.condition, fulfillment: c3.fulfillment });
+    throw new Error("finishEscrow to builder2 (no trust line) should have been refused by preflight");
+  } catch (e) {
+    if (!(e instanceof UnsafeReleaseError)) throw e;
+    spike.rows.push({ step: "3: finishEscrow -> builder2 without trust line: preflight refuses, nothing submitted", result: `${e.code}/${e.reason}` });
+    spike.log(`  ✔ 3: preflight refused: ${e.message}`);
+  }
+  // ... so skip it to reproduce the leak the preflight exists to prevent.
+  const err3 = await spike.fails("3: EscrowFinish (correct fulfillment, preflight skipped) -> builder2 without RLUSD trust line", "tecNO_LINE", () =>
+    finishEscrow({ submitter: w.releaseService, owner: spv, offerSequence: e3.offerSequence, condition: c3.condition, fulfillment: c3.fulfillment, skipPreflight: true }),
   );
   const t3 = await fetchTx(err3.hash!);
   const open3 = await escrowOpen(spv, e3.tx.hash);
