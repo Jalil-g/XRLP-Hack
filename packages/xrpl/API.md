@@ -9,6 +9,7 @@ pnpm --filter @xrlp/xrpl bootstrap      # fund + configure demo wallets -> $WALL
 pnpm --filter @xrlp/xrpl demo           # full money path on devnet, prints a tx table with explorer links
 pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding, lending math, wallet-file migration)
 pnpm --filter @xrlp/xrpl spike:broker   # XRPL-04 devnet proof: rates, mandatory cover, origination fee
+pnpm --filter @xrlp/xrpl spike:close    # XRPL-06 devnet proof: LoanSet + 3 escrows, SPV liquid = 0, bad input refused with nothing submitted
 pnpm --filter @xrlp/xrpl compliance     # XRPL-08 devnet proof: credentials x3, domain, private vault, fee, attestations
 pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
 pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one account, all tesSUCCESS
@@ -108,7 +109,7 @@ tops up XRP below 30, skips existing issuer flags / trust lines, and mints only 
 | `bootstrapWallets({fresh?, investorRlusd?, platformRlusd?, builderRlusd?, log?})` | faucet, issuer `AccountSet` (DefaultRipple, AllowTrustLineLocking), `TrustSet`s (RLUSD holders), RLUSD `Payment`s | `{wallets, txs}` (idempotent, 2nd run `txs = []`) |
 | `setupProjectOnChain(project, {subscriptionEndsAt?, redemptionAt?, paymentTotal?, paymentIntervalS?, coverDeposit?, coverRateMinimum?, coverRateLiquidation?, managementFeeRate?, lockSpv=true, spvSigners?: {builder?, inspector?, platform?, trustee?}})` | SPV faucet + `TrustSet`, `SignerListSet` {platform, builder, inspector, trustee} w1 quorum 3, `AccountSet asfDisableMaster`, `VaultCreate` (closed-ended, `AssetsMaximum = principal`), `LoanBrokerSet` (cover rates + management fee), **mandatory** `LoanBrokerCoverDeposit` | `{spv, vaultId, loanBrokerId, shareMptIssuanceId, vaultPseudoAccount, subscriptionEndsAt, redemptionAt, cover, coverEvent, events, txs, spvWallet}` |
 | `depositToVault({projectId, vaultId, investor, amount})` | `VaultDeposit` | `{tx, event: vault_deposit}` |
-| `closeLoanAndCreateEscrows(project, {conditions, builderAddress?, paymentTotal?, paymentIntervalS?, defaultCancelAfter?, waitForInvestmentPhase=true, spvSigners?, spvSingleKey?, allowOverpayment=true, originationFee?, originationFeePayer="builder"})` | (if needed) payer → SPV RLUSD `Payment` for the origination-fee shortfall, `LoanSet` with `LoanOriginationFee` (platform signs, SPV multisig countersigns), then one `EscrowCreate` per milestone, back to back | `{loanId, loanSetTx, originationFee, originationFeeTopUpTx?, escrows: [{milestoneId, owner, offerSequence, condition, createTx, cancelAfter, amount, escrow}], events}` |
+| `closeLoanAndCreateEscrows(project, {conditions, cancelAfters?, builderAddress?, paymentTotal?, paymentIntervalS?, defaultCancelAfter?, waitForInvestmentPhase=true, spvSigners?, spvSingleKey?, allowOverpayment=true, originationFee?, originationFeePayer="builder"})` — see **Loan close (XRPL-06)** | validation first (nothing submitted on bad input), then (if needed) payer → SPV RLUSD `Payment` for the origination-fee shortfall, `LoanSet` with `LoanOriginationFee` (platform signs under its account lock, SPV multisig countersigns), then one `EscrowCreate` per milestone, back to back | `{loanId, loanSetTx, originationFee, originationFeeTopUpTx?, escrows: [{milestoneId, owner, offerSequence, condition, createTx, cancelAfter, amount, escrow}], txs, maturity, events}` |
 | `attestApproval({projectId, spv, milestoneId, role, signer, decision, notes?, verdictHash?, condition?})` | 1-drop `Payment` approver → SPV with a JSON memo (`xrlp/attestation/v1`) | `{tx, event: approval_attested, attestation}` |
 | `releaseMilestone({projectId, milestoneId, escrow:{owner, offerSequence, condition}, fulfillment, amount?, submitter?})` | `EscrowFinish` | `{tx, event: escrow_finished}` |
 | `cancelExpiredMilestone({projectId, milestoneId, escrow, cancelAfter?, wait?, amount?})` | `EscrowCancel` | `{tx, event: escrow_cancelled}` |
@@ -149,8 +150,8 @@ Pure helpers in `src/lending-math.ts` (exported from the package root, unit-test
   the RLUSD. Pass `originationFee: "0"` to skip the fee.
 
 Defaults: `repayLoan` pays `PeriodicPayment + LoanServiceFee` and picks `late` if past due.
-`closeLoanAndCreateEscrows` uses `milestone.cancelAfter` when set, otherwise `defaultCancelAfter`
-(default: now + termDays). SPV quorum for `LoanSet`/`EscrowCreate`/`LoanPay` defaults to **platform + builder + trustee**
+`closeLoanAndCreateEscrows` takes CancelAfter from `cancelAfters[i]`, else `milestone.cancelAfter`, else `defaultCancelAfter`
+(default: maturity − one payment interval); every one must be before loan maturity. SPV quorum for `LoanSet`/`EscrowCreate`/`LoanPay` defaults to **platform + builder + trustee**
 (`defaultSpvSignerWallets()`). Those three are the same for every project whichever inspector was assigned. Pass
 `spvSigners` / `signers` to sign with the inspector instead. Any 3 of the 4 work. The AI key is never a signer.
 
@@ -199,19 +200,49 @@ Paths/SendMax/DeliverMin/flags, exactly one valid `xrlp/attest/v1` memo, and a v
 `encodeAttestMemo`, `decodeAttestMemo(txJson)`, `validateAttestMemo`, `decodeAnyAttestation` (also reads the v1
 `xrlp/attestation/v1` memo still written by `attestApproval`).
 
-### Escrow gating (inspector-held preimage, no Shamir)
+### Loan close (XRPL-06): `closeLoanAndCreateEscrows`
+
+Conditions are **generated by core's release service** (CORE-12, preimage unique per escrow, encrypted at rest) and passed in.
+This package never generates preimages on the close path. `generateMilestoneCondition` is out of the public API (only a
+`@deprecated` re-export remains so `scripts/demo.ts` compiles); tests and spikes use `test/support/conditions.ts` (`testConditionPair[s]`).
 
 ```ts
-import { generateMilestoneCondition, fulfillmentMatches } from "@xrlp/xrpl";
-// INSPECTOR side (pure, offline). One per escrow and never reused.
-const { condition, fulfillment } = generateMilestoneCondition(); // A0258020…810120 / A0228020…
-// Only `condition` goes to closeLoanAndCreateEscrows. The platform never stores `fulfillment`.
-// At release, the inspector hands over `fulfillment` and releaseMilestone checks it and submits EscrowFinish.
+const close = await closeLoanAndCreateEscrows(project, {
+  conditions,              // string[] by milestone index | Record<milestoneId, cond> | {milestoneId, condition}[]
+  cancelAfters,            // optional ISO[] by milestone index (overrides milestone.cancelAfter / defaultCancelAfter)
+  builderAddress: builder.address,
+  waitForInvestmentPhase: false, // LedgerPort semantics: throw TooSoonError instead of waiting
+});
+// close.escrows[i] = { milestoneId, owner, offerSequence, condition, cancelAfter, createTx, amount, escrow } (≅ shared EscrowRef)
+// close.txs = [LoanSet, EscrowCreate × N] (shared CloseResult.txs); close.maturity = ISO lower bound of loan maturity
 ```
 
-AI + inspector + platform approvals go on-chain as memo attestations (an audit trail), but they are
-**not** release keys. Trust assumption: whoever holds the fulfillment can release to the builder (and
-only to the builder). Signers can't redirect escrowed funds.
+Order: vault phase gate → `planLoanClose` (pure) + SPV quorum check → origination-fee top-up → `LoanSet` → `EscrowCreate × N`.
+**Everything is checked before the first tx**, so bad input never leaves principal liquid in the SPV:
+
+| Check | Error (nothing submitted) |
+|---|---|
+| vault still in Subscription and `waitForInvestmentPhase: false` (default `true` waits) | shared `TooSoonError` (`code: "too_soon"`). A `tecTOO_SOON` LoanSet is rethrown as `TooSoonError` too |
+| `PaymentTotal` integer ≥ 2, `PaymentInterval` integer ≥ 60 s, `0 < InterestRate ≤ 100000` (1/10 bps) | `CloseValidationError` (`code: "validation"`, `issues: string[]`, all problems at once) |
+| loan fits the vault: `now + interval × total + 60 ≤ RedemptionDate` | 〃 |
+| one condition per milestone (no extras / unknown ids), each `A0258020<64 hex>810120` (78 hex, case-insensitive, stored uppercase) | 〃 |
+| no duplicate condition within the call, none already on an **open escrow of the SPV** (`account_objects`): also guards against re-running a close | 〃 |
+| `ledger now + 60 s` (`MIN_ESCROW_LIFETIME_S`) `< CancelAfter_i < maturity`, where maturity = `ledger now + interval × total` (lower bound: the real LoanSet starts later) | 〃 |
+| milestone amounts > 0, ≤ 6 decimals, sum ≤ principal; SPV signers reach the on-ledger quorum | 〃 |
+
+LoanSet terms: platform = `Account`, SPV = `Counterparty` (multisig, default platform + builder + trustee), `tfLoanOverpayment`,
+no late fees, origination fee as in XRPL-04. `loanSet` itself also rejects `PaymentTotal < 2` / `InterestRate ≤ 0`.
+If an `EscrowCreate` fails **after** LoanSet: `CloseLoanPartialError` (extends shared `LedgerError`, `code: "ledger_error"`,
+`txResult`/`txHash` of the failed EscrowCreate) with `loanId`, `loanSetTx`, `created: CreatedEscrowRef[]`, `pending: milestoneId[]`
+(failed one first). The caller can then create the pending escrows or repay. Pure validator: `planLoanClose(input)` (`src/loan-close.ts`,
+offline tests in `test/loan-close.test.ts`). Devnet proof: `docs/xrpl-protocol-notes.md` §2c.
+
+### Escrow gating (release-service-held preimage, no Shamir)
+
+At release, core's release service passes the `fulfillment` to `releaseMilestone`, which checks it (`fulfillmentMatches`),
+runs `preflightFinish` and submits `EscrowFinish`. AI, inspector and platform approvals go on-chain as memo attestations
+(an audit trail), but they are **not** release keys. Trust assumption: whoever holds the fulfillment can release to the builder
+(and only to the builder). Signers can't redirect escrowed funds.
 
 ### Pre-reveal safety: `preflightFinish` (XRPL-14)
 
@@ -239,8 +270,9 @@ This package is the building block. The `LedgerPort` adapter (`packages/core/src
 is a follow-up ticket. It maps 1:1:
 - `setupProjectOnChain({project, builder, inspectors})` → `setupProjectOnChain(project, {...})`. Persist
   `subscriptionEndsAt`/`redemptionAt` (not in the shared `Project` contract yet).
-- `closeLoanAndCreateEscrows({project, builder, conditions})` → pass `conditions` (array accepted) +
-  `builderAddress: builder.address`. `escrows[i]` already has `{milestoneId, owner, offerSequence, condition, createTx}`.
+- `closeLoanAndCreateEscrows({project, builder, conditions, cancelAfters})` → `closeLoanAndCreateEscrows(project, {conditions,
+  cancelAfters, builderAddress: builder.address, waitForInvestmentPhase: false})`. Result `{loanId, escrows, txs}` is the shared
+  `CloseResult` (`escrows[i]` ≅ `EscrowRef`). Map `CloseValidationError` → `validation`, `TooSoonError` → `too_soon`, `CloseLoanPartialError` → `ledger_error`.
 - `attestApproval({project, milestone, role, signer, ...})` → `signer` may be the address.
 - `releaseMilestone({project, milestone, fulfillment})` → `escrow: milestone.escrow`.
 - `cancelExpiredMilestone({project, milestone})` → `escrow: milestone.escrow`.
@@ -285,10 +317,11 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `wallets.ts` | wallet store (`WALLETS_FILE`), roles, pure `migrateWalletFile` / `rlusdTopUpPlan`, faucet funding, role resolution |
 | `rlusd.ts` | issuer flags, trust lines, issue/pay, balances |
 | `vault.ts` | closed-ended `VaultCreate`, deposit/withdraw, share balance, phase |
-| `loan.ts` | `LoanBrokerSet` (default rates), `LoanBrokerCoverDeposit`, dual-signed `LoanSet`, multisig `LoanPay` |
+| `loan.ts` | `LoanBrokerSet` (default rates), `LoanBrokerCoverDeposit`, dual-signed `LoanSet` (platform account lock), multisig `LoanPay` |
 | `lending-math.ts` | pure: broker-rate validation, cover sizing, origination/management fee, vault date math |
 | `spv.ts` | `createSpv`, v2 `SignerListSet`, disable master, `submitMultisigned` (+ local quorum check), `getSpvInfo` |
-| `condition.ts` | PREIMAGE-SHA-256 DER encoding (pure) |
+| `condition.ts` | PREIMAGE-SHA-256 DER encoding + condition-format check (pure); no generation on the close path |
+| `loan-close.ts` | XRPL-06: pure `planLoanClose` validation, `CloseValidationError`, `CloseLoanPartialError` |
 | `escrow.ts` | IOU `EscrowCreate` (SPV multisig), `EscrowFinish` (preflighted), `EscrowCancel` |
 | `preflight.ts` | pre-reveal safety: `preflightFinish`, pure `evaluatePreflight`, `unsafe_release` mapping |
 | `attest.ts` | memo attestations encode/decode |

@@ -53,6 +53,10 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
 
+- [10-25] `closeLoanAndCreateEscrows` validates everything before the first tx (`planLoanClose`): `PaymentTotal ≥ 2`, `0 < InterestRate ≤ 100%`, `PaymentInterval ≥ 60s`, loan fits `RedemptionDate`, 32-byte PREIMAGE-SHA-256 conditions only (`A0258020…810120`), unique within the call **and vs the SPV's open escrows** (doubles as a re-run guard), `now + 60s < CancelAfter < maturity` with maturity = ledger now + interval × total (a lower bound of the real one), SPV signer quorum. Failure after LoanSet → `CloseLoanPartialError {loanId, created, pending}`. — never leave principal liquid in the SPV because escrow #2 was bad (Jalil's agent, XRPL-06)
+- [10-25] Default escrow `CancelAfter` = **maturity − one payment interval** (was now + termDays, which equals maturity and would now be rejected) — a refunded escrow still lands in time to pay the last installment. Callers (core, demo, prestage) should pass `cancelAfters` explicitly. (Jalil's agent, XRPL-06)
+- [10-25] `generateMilestoneCondition` dropped from the public API (only a `@deprecated` re-export so `scripts/demo.ts` compiles); tests/spikes use `packages/xrpl/test/support/conditions.ts`. Remove the deprecated export once demo.ts and the G-owned spikes switch. (Jalil's agent, XRPL-06)
+
 ## Open
 
 - Product name.
