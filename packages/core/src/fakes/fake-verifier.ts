@@ -247,11 +247,18 @@ export class FakeVerifier implements VerifierPort {
         unclear.map((p) => p.id),
       ),
     );
+    // The inspector marking a line not done / partial is a disagreement with the builder's claim that the stage is done:
+    // say so (warn) instead of "agrees", so the row never contradicts the inspector's checklist on screen.
+    const behind = items.filter((i) => i.status !== "done");
     checks.push(
       check(
         "audit_matches_evidence",
-        audits.length ? "pass" : "fail",
-        audits.length ? "[mock] Inspector checklist agrees with builder evidence" : "No audit to compare",
+        !audits.length ? "fail" : behind.length ? "warn" : "pass",
+        !audits.length
+          ? "No audit to compare"
+          : behind.length
+            ? `[mock] Inspector marked ${behind.length} of ${items.length} item${items.length === 1 ? "" : "s"} not done; the builder's evidence claims the stage complete`
+            : "[mock] Inspector checklist agrees with builder evidence",
       ),
     );
     checks.push(check("document_consistency", "pass", "[mock] Dates, parties and site address agree across documents"));
