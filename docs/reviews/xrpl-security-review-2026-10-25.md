@@ -7,8 +7,8 @@ port (`packages/core/src/factory.ts`, `release-service.ts`, `errors.ts`, `http/a
 path; **Medium** = a secret or guarantee depends on input that isn't checked, or a likely footgun; **Low** = hardening /
 narrow trigger.
 
-Status values: **fixed** (this branch, with a regression test), **deferred** (with the reason), **issue** (outside
-packages/xrpl, filed for core).
+Status values: **fixed** (branch `jalil-g/xrpl-security-fixes`, with a regression test), **deferred** (with the reason),
+**issue** (outside packages/xrpl, filed for core as [#149](https://github.com/Jalil-g/XRLP-Hack/issues/149)).
 
 ## Summary
 
@@ -31,11 +31,11 @@ packages/xrpl, filed for core).
 | L4 | Low | `setupProjectOnChain` funds + locks a new SPV before checking `subscriptionEndsAt` is in the future | fixed |
 | L5 | Low | Pre-reveal timing is a heuristic (≤ 5 s/ledger) + inherent TOCTOU between the validated-ledger read and apply (builder DepositAuth / trust-line removal, issuer freeze) | deferred (documented) |
 | L6 | Low | `planLoanClose` allows milestones summing to less than principal; the remainder stays liquid in the SPV | deferred (core enforces sum == principal, `service.ts:433`) |
-| L7 | Low | Adapter `repayLoan({source:"builder"})` is two txs and not idempotent: a retry after a failed/unknown LoanPay pays the builder's RLUSD into the SPV again | issue (core must not blind-retry) |
-| L8 | Low | `defaultLoan` doesn't look at the borrower SPV's liquid RLUSD: defaulting while escrow refunds sit in the SPV strands them (a defaulted loan can't be paid) | deferred → keeper ordering (issue) |
+| L7 | Low | Adapter `repayLoan({source:"builder"})` is two txs and not idempotent: a retry after a failed/unknown LoanPay pays the builder's RLUSD into the SPV again | issue #149 (core must not blind-retry) |
+| L8 | Low | `defaultLoan` doesn't look at the borrower SPV's liquid RLUSD: defaulting while escrow refunds sit in the SPV strands them (a defaulted loan can't be paid) | deferred → keeper ordering (issue #149) |
 | L9 | Low | A LoanSet with an unknown outcome throws a plain `XrplTxError` (hash only), not a `CloseLoanPartialError`, so there is no resume path if it did apply | deferred (vault `AssetsMaximum = principal` prevents a double loan; hash is in the error) |
-| C1 | — | core `release()`: marks the key exposed on *every* finish error, including `unsafe_release` (nothing sent); doesn't reconcile a finish that applied but threw | issue |
-| C2 | — | Port `submitSignedBlob(blob)` has no expected signer/SPV; core must check the decoded signer is the assigned inspector | issue |
+| C1 | — | core `release()`: marks the key exposed on *every* finish error, including `unsafe_release` (nothing sent); doesn't reconcile a finish that applied but threw | issue #149 |
+| C2 | — | Port `submitSignedBlob(blob)` has no expected signer/SPV; core must check the decoded signer is the assigned inspector | issue #149 |
 | I1 | Info | Git history (433 commits, 272 refs incl. open PRs) and tracked fixtures: **no seeds, private keys, API keys or live fulfillments** | — |
 | I2 | Info | `skipPreflight` with the real fulfillment is used once, deliberately: `spike-escrow.ts` case 3 (the documented preimage-leak proof, throwaway wallets). Not reachable from `releaseMilestone`, the adapter or core | — |
 
@@ -192,8 +192,10 @@ packages/xrpl, filed for core).
 - **L2 · Secret paths outside `.gitignore`** (`src/config.ts:25-26`): `WALLETS_FILE` / `DATA_DIR` inside the repo must sit
   under a `.data` directory (or be named `wallets.json`), else the package refuses to start. **Fixed**, `test/config.test.ts`.
 - **L3 · Master key** (`src/api.ts:540-547`): the multisig close path now refuses an SPV whose master key is still enabled
-  (single-key control of the principal); `spvSingleKey` stays the explicit fallback. **Fixed** (pure helper test).
-- **L4 · Setup order** (`src/api.ts:243-257`): the subscription-end check moved before the SPV is created. **Fixed**.
+  (single-key control of the principal); `spvSingleKey` stays the explicit fallback. **Fixed**, `test/spv.test.ts`
+  (`spvCountersignProblems`).
+- **L4 · Setup order** (`src/api.ts:243-257`): the signer and subscription-end checks moved before the SPV is created (the
+  subscription end is re-checked right before VaultCreate). **Fixed** (a reorder of network reads; no offline test).
 - **L5 · Pre-reveal heuristics** (`src/preflight.ts:136-139, 222-232`): the CancelAfter margin assumes ≤ 5 s per ledger;
   between the validated read and the apply the builder can set DepositAuth or drop the trust line and the issuer can freeze.
   A failed finish past CancelAfter only exposes a cancel-only escrow. **Deferred**: inherent to a two-phase check; margins
@@ -207,7 +209,7 @@ packages/xrpl, filed for core).
 - **L9 · LoanSet unknown outcome** (`src/api.ts:567-587`): **deferred**; with H2 fixed this is only the "connection lost
   six times" case, the error carries the LoanSet hash, and the vault can't fund a second LoanSet.
 
-## Core (filed as an issue, `area:core`)
+## Core (filed as [#149](https://github.com/Jalil-g/XRLP-Hack/issues/149), `area:core`)
 
 - **C1** `release-service.ts:204-219`: `unsafe_release` from `finishEscrow` now means "nothing was sent" (H3): don't mark
   the key exposed then. For any other error, reconcile before deciding: `getEscrow` null after a finish error usually
