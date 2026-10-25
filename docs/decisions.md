@@ -131,6 +131,15 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   lanes (Jalil XRPL/trust, Sean core/release, Elmir AI/fraud, Roro inspector, Bri product/market/regulatory) and replace 08 §5 once Bri
   confirms on #72. (Jalil's agent, PITCH-09)
 
+## Inspector presentation controls (INS-08)
+
+- Projector mode is opt-in and session-local: larger text and stronger secondary
+  contrast, without changing API mode, identity, or audit data. The header wraps
+  to keep its identity picker and presentation control usable on narrow screens.
+- Ctrl/Cmd+Enter activates the existing audit submit button, including all normal
+  validation and signing checks. Repeated/composing/handled keys are ignored,
+  disabled buttons remain disabled, and an in-flight ref prevents duplicate filing.
+
 ## Open
 
 - Product name.

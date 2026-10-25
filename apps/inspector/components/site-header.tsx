@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { useIdentity } from "@/components/identity";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
 import { API_MODE } from "@/lib/api";
+import { ProjectorToggle } from "@/components/projector-toggle";
 import { BRAND, shortAddress } from "@/lib/utils";
 
 function Logo() {
@@ -29,14 +30,14 @@ function IdentityPicker() {
     return <span className="text-xs text-faint">{status === "error" ? "Panel unavailable" : "Loading panel…"}</span>;
   }
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2">
       <VerifiedInspectorBadge inspector={inspector} />
-      <label className="relative">
+      <label className="relative max-w-full min-w-0">
         <span className="sr-only">Signed in as</span>
         <select
           value={inspector.address}
           onChange={(e) => select(e.target.value)}
-          className="h-8 appearance-none rounded-md border border-line-strong bg-surface pr-8 pl-3 text-[13px] font-medium text-ink shadow-xs hover:bg-subtle focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:outline-none"
+          className="h-8 max-w-full appearance-none rounded-md border border-line-strong bg-surface pr-8 pl-3 text-[13px] font-medium text-ink shadow-xs hover:bg-subtle focus-visible:ring-2 focus-visible:ring-brand/40 focus-visible:outline-none"
         >
           {inspectors.map((i) => (
             <option key={i.address} value={i.address}>
@@ -53,15 +54,16 @@ function IdentityPicker() {
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/85 backdrop-blur supports-[backdrop-filter]:bg-surface/75">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4 sm:px-6">
+      <div className="mx-auto flex min-h-14 max-w-6xl flex-wrap items-center gap-3 px-4 py-2 sm:px-6">
         <Logo />
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex max-w-full min-w-0 flex-wrap items-center gap-3">
           <span className="hidden items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs font-medium text-muted md:inline-flex">
             <span className="size-2 rounded-full bg-emerald-500" />
             {BRAND.network}
             <span className="text-faint">· {API_MODE === "mock" ? "mock data" : "core"}</span>
           </span>
           <IdentityPicker />
+          <ProjectorToggle />
         </div>
       </div>
     </header>

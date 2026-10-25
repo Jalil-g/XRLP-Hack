@@ -4,7 +4,7 @@
 // attestation (XRPL-08 Payment to the SPV) in this browser and route 10 carries it as signedTxBlob.
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CalendarClock, CheckCircle2, ExternalLink, Fingerprint, PenLine, RotateCcw } from "lucide-react";
 import { Checklist } from "@/components/audit/checklist";
 import { EvidenceGallery } from "@/components/audit/evidence-gallery";
@@ -21,7 +21,8 @@ import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, type AuditDr
 import { evidenceStatus } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, signAuditAttestation, type InspectorKey, type SignedAttestation } from "@/lib/signing";
 import type { InspectorTask, SubmitAuditResult } from "@/lib/types";
-import { cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
+import { BRAND, cn, formatDateTime, formatRlusd, shortAddress, shortHash } from "@/lib/utils";
+import { isAuditSubmitShortcut } from "@/lib/shortcuts";
 
 type AuditTask = InspectorTask & { milestone: NonNullable<InspectorTask["milestone"]> };
 
@@ -101,6 +102,19 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
   const [key, setKey] = useState<InspectorKey | null>();
   const [keyVersion, setKeyVersion] = useState(0);
   const spv = m.escrow?.owner;
+  const submitButton = useRef<HTMLButtonElement>(null);
+  const submitting = useRef(false);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const button = submitButton.current;
+      if (!isAuditSubmitShortcut(event) || !button || button.disabled || submitting.current) return;
+      event.preventDefault();
+      button.click();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -139,12 +153,14 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
 
   /** `sign`: attestation signed here with the inspector's key. Otherwise core signs it with the inspector's demo key. */
   async function submit(sign: boolean) {
+    if (submitting.current) return;
     setShowErrors(true);
     setSubmitError(undefined);
     if (problems.length) {
       document.getElementById(problems[0]!.field)?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
+    submitting.current = true;
     try {
       const report = await buildAudit(task, inspector, draft, new Date().toISOString());
       let signed: SignedAttestation | undefined;
@@ -165,6 +181,7 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
       const message = (err as Error).message;
       setSubmitError({ message, stale: err instanceof ApiError && err.code === "validation" && message.includes("evidenceBundleHash") });
     } finally {
+      submitting.current = false;
       setPhase("idle");
     }
   }
@@ -196,6 +213,7 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
             </Badge>
           </div>
         </div>
+        <p className="max-w-3xl text-sm text-muted">{BRAND.tagline}</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
@@ -312,10 +330,11 @@ function AuditForm({ task, inspector, back, onReload }: { task: AuditTask; inspe
                 </div>
               )}
               {key !== undefined && spv && <SigningPanel address={inspector} inspectorKey={key} onChange={() => setKeyVersion((v) => v + 1)} />}
-              <Button variant="brand" size="lg" className="w-full" onClick={() => void submit(canSign)} disabled={busy || !bundle || key === undefined}>
+              <Button ref={submitButton} variant="brand" size="lg" className="w-full" aria-keyshortcuts="Control+Enter Meta+Enter" onClick={() => void submit(canSign)} disabled={busy || !bundle || key === undefined}>
                 {canSign && <PenLine />}
                 {phase === "signing" ? "Signing attestation…" : phase === "filing" ? "Filing audit…" : canSign ? "Sign & file audit" : "File audit (core signs)"}
               </Button>
+              <p className="text-center text-xs text-muted">Ctrl+Enter or ⌘+Enter files this audit using the same checks as the button.</p>
             </CardContent>
           </Card>
         </div>
