@@ -253,8 +253,10 @@ export interface PrivateSetupOptions {
 /**
  * Beat 2 "lock terms": SPV (v2 list platform/builder/inspector/trustee, quorum 3, master disabled) + PRIVATE closed-ended
  * vault (tfVaultPrivate + DomainID + non-transferable shares, AssetsMaximum = principal) + LoanBroker (cover rates,
- * management fee) + mandatory first-loss cover. Same steps as `setupProjectOnChain`, which has no `domainId` option yet.
- * TODO(XRPL): switch to setupProjectOnChain({ domainId, nonTransferableShares }) once it takes them.
+ * management fee) + mandatory first-loss cover. Same steps as `setupProjectOnChain`, which takes `domainId` /
+ * `nonTransferableShares` since XRPL-10 but fixes SubscriptionDate from a Date chosen before the SPV's 3-4 txs; here it is
+ * ledger time after the SPV lock + `subscriptionInS`, so the 60 s DEMO/PRESTAGE_SUBSCRIPTION_S window still fits the deposits.
+ * TODO(XRPL): switch once setupProjectOnChain can anchor SubscriptionDate on ledger time at VaultCreate.
  */
 export async function setupPrivateProject(log: TxLog, project: Project, o: PrivateSetupOptions): Promise<ProjectChainSetup & { domainId: string; signers: SpvSigners }> {
   const w = loadWallets();
@@ -376,6 +378,8 @@ export class ReleaseServiceStandIn {
 /**
  * LoanSet + one EscrowCreate per milestone (XRPL-06 closeLoanAndCreateEscrows). `conditions` / `cancelAfters` (ISO) by
  * milestone index; every CancelAfter must be before loan maturity (planLoanClose rejects it otherwise, nothing submitted).
+ * 2..8 milestones → batch mode (XRPL-13b): the escrows land in ONE tfAllOrNothing Batch (`close.batchTx`, its own row);
+ * each milestone's row and `createTx` is its inner EscrowCreate.
  */
 export async function closeProject(
   log: TxLog,
@@ -398,10 +402,12 @@ export async function closeProject(
   if (o.onWait) process.stdout.write("\n");
   log.rec(`Payment builder -> SPV ${close.originationFee} (origination fee at closing)`, close.originationFeeTopUpTx);
   log.rec(`LoanSet ${project.terms.principal} (SPV multisig countersign, fee ${close.originationFee})`, close.loanSetTx);
+  log.rec(`Batch tfAllOrNothing: ${close.escrows.length} × EscrowCreate (SPV multisig)`, close.batchTx);
+  const inner = close.batchTx ? " (inner)" : "";
   close.escrows.forEach((e, i) => {
     const ev = close.events.find((x) => x.kind === "escrow_created" && x.milestoneId === e.milestoneId)!;
-    log.rows.push({ beat: log.beat, step: `EscrowCreate m${i + 1} ${e.amount} (CancelAfter ${e.cancelAfter.slice(0, 19)})`, type: "EscrowCreate", result: "tesSUCCESS", url: ev.explorerUrl, hash: e.createTx });
-    log.info(`✓ EscrowCreate m${i + 1} ${e.amount.padEnd(6)} seq=${e.offerSequence} ${ev.explorerUrl}`);
+    log.rows.push({ beat: log.beat, step: `EscrowCreate${inner} m${i + 1} ${e.amount} (CancelAfter ${e.cancelAfter.slice(0, 19)})`, type: "EscrowCreate", result: "tesSUCCESS", url: ev.explorerUrl, hash: e.createTx });
+    log.info(`✓ EscrowCreate${inner} m${i + 1} ${e.amount.padEnd(6)} seq=${e.offerSequence} ${ev.explorerUrl}`);
   });
   close.escrows.forEach((e, i) => (project.milestones[i]!.cancelAfter = e.cancelAfter));
   project.chain.loanId = close.loanId;

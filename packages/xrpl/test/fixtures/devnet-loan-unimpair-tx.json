@@ -1,0 +1,114 @@
+{
+  "capturedAt": "2026-10-25T01:08:36.707Z",
+  "network": "devnet",
+  "description": "LoanManage tfLoanUnimpair right after the impair",
+  "loanId": "7C5B9880B21D5789D09192514186A820B78DA6BD50C7EE54A67007683D584A1D",
+  "sharesOutstanding": "1000000000",
+  "tx": {
+    "hash": "7E7BF819E4B6BAC8BC7994688C7CD6BF8597616C6B1E73EB89B509964D251DE3",
+    "ledgerIndex": 6392469,
+    "result": "tesSUCCESS",
+    "tx_json": {
+      "Account": "rYYkLCVeSK1naw4oTm51FJLQwsgyYJgfk",
+      "Fee": "1",
+      "Flags": 262144,
+      "LastLedgerSequence": 6392487,
+      "LoanID": "7C5B9880B21D5789D09192514186A820B78DA6BD50C7EE54A67007683D584A1D",
+      "Sequence": 6392416,
+      "SigningPubKey": "EDFD019E1A5C4CFCCB3C4133653935980D6E2C1D6C64A231516BB78E52C065D5EA",
+      "TransactionType": "LoanManage",
+      "TxnSignature": "ACC47E17E22877364AEFD6DAF56A6C5A7D166EC3B062047C7B74D52320AAC4A15A591E1540E2C14C37EBD2B947FCE9EB85DC2DC25E104F4FFB24BA9D95F16500",
+      "ctid": "C0618A9500040002",
+      "date": 846205710,
+      "ledger_index": 6392469
+    },
+    "meta": {
+      "AffectedNodes": [
+        {
+          "ModifiedNode": {
+            "FinalFields": {
+              "Account": "rNdUALiupLDzognow7y56yHXWB3LqQFU58",
+              "Asset": {
+                "currency": "524C555344000000000000000000000000000000",
+                "issuer": "rDCgHTF927ivi7X7PvBEyagzNZh9GnKhHR"
+              },
+              "AssetsMaximum": "1000",
+              "AssetsTotal": "1000",
+              "Data": "78726C703A7370696B652D7872706C3135",
+              "Flags": 0,
+              "LEVersion": 1,
+              "Owner": "rYYkLCVeSK1naw4oTm51FJLQwsgyYJgfk",
+              "OwnerNode": "0",
+              "RedemptionDate": 846209452,
+              "Scale": 6,
+              "Sequence": 6392409,
+              "ShareMPTID": "00000001957293033674C92F169F2DCAE49902778218E299",
+              "SubscriptionDate": 846205612,
+              "VaultKind": 1,
+              "WithdrawalPolicy": 1
+            },
+            "LedgerEntryType": "Vault",
+            "LedgerIndex": "2175909DD5B79BA0804E917368289F24534BC1FE87EB6110475347274DE94560",
+            "PreviousFields": {
+              "LossUnrealized": "1000"
+            },
+            "PreviousTxnID": "9BE6ECDC18D7E9151390C17353E850F55300346B01A71E7913A2E9145E3C79F5",
+            "PreviousTxnLgrSeq": 6392467
+          }
+        },
+        {
+          "ModifiedNode": {
+            "FinalFields": {
+              "Borrower": "r942XfTDKxrn1BABbz7PZLMs6euSjE3WaL",
+              "Flags": 262144,
+              "GracePeriod": 60,
+              "InterestRate": 10000,
+              "LoanBrokerID": "C66D3132E3820919C093E9F51CC411177A155A631D27ED4847FD49119C23BEE8",
+              "LoanBrokerNode": "0",
+              "LoanOriginationFee": "15",
+              "LoanScale": -12,
+              "LoanSequence": 1,
+              "ManagementFeeOutstanding": "0.000038051568",
+              "NextPaymentDueDate": 846205691,
+              "OwnerNode": "0",
+              "PaymentInterval": 60,
+              "PaymentRemaining": 3,
+              "PeriodicPayment": "333.3334601718946356",
+              "PrincipalOutstanding": "1000",
+              "StartDate": 846205631,
+              "TotalValueOutstanding": "1000.000380515684"
+            },
+            "LedgerEntryType": "Loan",
+            "LedgerIndex": "7C5B9880B21D5789D09192514186A820B78DA6BD50C7EE54A67007683D584A1D",
+            "PreviousFields": {
+              "Flags": 393216
+            },
+            "PreviousTxnID": "9BE6ECDC18D7E9151390C17353E850F55300346B01A71E7913A2E9145E3C79F5",
+            "PreviousTxnLgrSeq": 6392467
+          }
+        },
+        {
+          "ModifiedNode": {
+            "FinalFields": {
+              "Account": "rYYkLCVeSK1naw4oTm51FJLQwsgyYJgfk",
+              "Balance": "99799991",
+              "Flags": 0,
+              "OwnerCount": 6,
+              "Sequence": 6392417
+            },
+            "LedgerEntryType": "AccountRoot",
+            "LedgerIndex": "A1919D3C00BF2031DADBD74A59467C73F3EC8C13BA30F414AFC194749425E0DB",
+            "PreviousFields": {
+              "Balance": "99799992",
+              "Sequence": 6392416
+            },
+            "PreviousTxnID": "9BE6ECDC18D7E9151390C17353E850F55300346B01A71E7913A2E9145E3C79F5",
+            "PreviousTxnLgrSeq": 6392467
+          }
+        }
+      ],
+      "TransactionIndex": 4,
+      "TransactionResult": "tesSUCCESS"
+    }
+  }
+}

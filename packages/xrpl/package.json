@@ -14,6 +14,7 @@
     "spike:loanset": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-loanset.ts",
     "spike:broker": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-broker.ts",
     "spike:preflight": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-preflight.ts",
+    "spike:close-batch": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-close-batch.ts",
     "compliance": "NODE_USE_ENV_PROXY=1 tsx scripts/compliance.ts",
     "capture:reads": "NODE_USE_ENV_PROXY=1 tsx scripts/capture-read-fixtures.ts",
     "stress": "NODE_USE_ENV_PROXY=1 tsx scripts/stress-submit.ts",
@@ -22,6 +23,7 @@
     "spike:close": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-close.ts",
     "spike:batch": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-batch.ts",
     "spike:release": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-release.ts",
+    "spike:default": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-default.ts",
     "adapter:e2e": "NODE_USE_ENV_PROXY=1 tsx scripts/adapter-e2e.ts",
     "test": "tsx --test test/*.test.ts"
   },
