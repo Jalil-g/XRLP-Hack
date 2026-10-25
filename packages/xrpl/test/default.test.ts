@@ -379,3 +379,11 @@ test("devnet impair / unimpair txs: LossUnrealized 0 <-> 1000, net share price 1
   assert.equal(a.nextPaymentDueDate, "2026-10-25T01:08:11.000Z");
   assert.equal(b.nextPaymentDueDate, a.nextPaymentDueDate);
 });
+
+test("devnet stall-path variant (600 repaid first): 10% of the 400.000190257666 still owed, rounded UP at LoanScale -12", () => {
+  // spike:default with SPIKE_PREPAY=600, default tx 6FE6525D…: the ledger moved exactly 40.000019025767 (CoverAvailable
+  // 110.000043 -> 70.000023974233). Unrounded, 10% is 40.0000190257666.
+  const p = { debtTotal: "400.000190257666", coverRateMinimum: 10_000, coverRateLiquidation: 100_000, defaultAmount: "400.000190257666", coverAvailable: "110.000043" };
+  assert.equal(expectedDefaultCovered({ ...p, loanScale: -12 }), "40.000019025767");
+  assert.equal(expectedDefaultCovered(p), "40.0000190257666");
+});
