@@ -44,6 +44,14 @@ export interface EvidenceUpload extends StoredFile {
 /** Route 10 report body (the JSON part of the multipart). Photos come as StoredFile[]. */
 export type AuditReportInput = Pick<InspectorAudit, "inspector" | "evidenceBundleHash" | "checklist" | "notes">;
 
+/** Public demo identities for the presenter role picker; never wallet material. */
+export interface DemoParty {
+  address: XrplAddress;
+  name: string;
+  role: "investor" | "builder" | "inspector" | "platform" | "release_service" | "ai_agent" | "spv";
+  kyc?: boolean;
+}
+
 /** One step the keeper tried and could not finish this tick; it retries the same step on the next tick. */
 export interface KeeperIssue {
   projectId: string;
@@ -60,6 +68,7 @@ export interface KeeperTickResult {
 }
 
 export interface CoreApi {
+  listDemoParties(): Promise<DemoParty[]>;
   listProjects(q?: { status?: ProjectStatus }): Promise<ProjectSummary[]>; // 1
   getProject(id: string): Promise<ProjectDetail>; // 2
   createProject(input: CreateProjectInput): Promise<Project>; // 3

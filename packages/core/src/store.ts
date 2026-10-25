@@ -62,6 +62,8 @@ export interface DecisionRecord {
 export type AttestationRecord = Attestation & { projectId: string; round: number };
 
 export interface Withdrawal {
+  /** Whole share units burned; absent in legacy records that require reconciliation. */
+  sharesBurned?: string;
   projectId: string;
   investor: XrplAddress;
   amount: Rlusd;

@@ -1,9 +1,11 @@
 // Inspector audit attestations in the XRPL-08 format (packages/xrpl/src/attest.ts, docs/decisions.md): a 1-drop XRP Payment
 // from the inspector to the project SPV carrying exactly one memo — MemoType `xrlp/attest/v1`, MemoFormat `application/json`,
-// MemoData `{v:1, kind:"audit", milestoneId, hash}`. Core runs `verifyAttestBlob` on the blob before submitting it, so the
+// MemoData `{v:1, kind:"audit", milestoneId, hash}`. Core runs `verifyAuditBlob` on the blob before submitting it, so the
 // shape here must stay byte-for-byte what that check accepts (test/attestation.test.ts pins it).
 // Browser-safe: no Node built-ins (hashing via Web Crypto, which Node also provides).
-import { convertHexToString, convertStringToHex, type Payment, type Transaction } from "xrpl";
+import { deriveAddress } from "ripple-keypairs";
+import { verifySignedBlob } from "./multisig.ts";
+import { decode, convertHexToString, convertStringToHex, type Payment, type Transaction } from "xrpl";
 
 export const ATTEST_MEMO_TYPE = "xrlp/attest/v1";
 export const ATTEST_MEMO_FORMAT = "application/json";
@@ -139,4 +141,29 @@ export function auditHash(audit: AuditForHash): Promise<string> {
 /** The memo an inspector signs for an audit. */
 export async function auditMemo(audit: AuditForHash): Promise<AttestMemo> {
   return { v: 1, kind: "audit", milestoneId: audit.milestoneId, hash: await auditHash(audit) };
+}
+
+/** Offline validation of the exact inspector-app transaction, before any ledger submission.
+ * Supports the app's single master-key signatures. Regular keys need ledger authorization lookup.
+ */
+export async function verifyAuditBlob(blob: string, audit: AuditForHash, spv: string): Promise<void> {
+  const tx = decode(blob) as unknown as Payment;
+  const allowed = new Set(["TransactionType", "Account", "Destination", "Amount", "Memos", "Fee", "Sequence", "LastLedgerSequence", "SigningPubKey", "TxnSignature", "Flags", "NetworkID"]);
+  if (Object.keys(tx).some((key) => !allowed.has(key))) throw new Error("audit blob: unexpected transaction field");
+  if (tx.TransactionType !== "Payment" || tx.Amount !== ATTEST_AMOUNT_DROPS || tx.Flags)
+    throw new Error("audit blob: expected a plain one-drop Payment");
+  if (tx.Account !== audit.inspector || tx.Destination !== spv)
+    throw new Error("audit blob: inspector or project destination mismatch");
+  if (!tx.SigningPubKey || deriveAddress(tx.SigningPubKey) !== audit.inspector)
+    throw new Error("audit blob: signature must use the inspector's master key");
+  verifySignedBlob(blob);
+  if (!tx.LastLedgerSequence || !tx.Sequence || !tx.Fee || !/^\d+$/.test(tx.Fee) || BigInt(tx.Fee) <= 0n)
+    throw new Error("audit blob: Fee, Sequence and LastLedgerSequence required");
+  const m = tx.Memos?.[0]?.Memo;
+  if (tx.Memos?.length !== 1 || !m?.MemoType || !m.MemoFormat || !m.MemoData ||
+      convertHexToString(m.MemoType) !== ATTEST_MEMO_TYPE || convertHexToString(m.MemoFormat) !== ATTEST_MEMO_FORMAT)
+    throw new Error("audit blob: exactly one audit memo required");
+  const memo = validateAttestMemo(JSON.parse(convertHexToString(m.MemoData)));
+  if (memo.kind !== "audit" || memo.milestoneId !== audit.milestoneId || memo.hash !== await auditHash(audit))
+    throw new Error("audit blob: memo does not commit to this report and its uploaded photos");
 }

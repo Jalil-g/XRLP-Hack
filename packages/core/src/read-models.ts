@@ -61,6 +61,14 @@ const stripRecord = <T extends object>(r: T): T => {
 
 // ---------- money ----------
 
+function burnedShares(db: DbState, projectId: string, investor?: string): bigint {
+  return db.withdrawals.filter((w) => w.projectId === projectId && (!investor || w.investor === investor)).reduce((sum, w) => {
+    if (w.sharesBurned === undefined || !/^\d+$/.test(w.sharesBurned))
+      throw new DomainError("CONFLICT", "Legacy withdrawal has no share-burn record; reconcile ledger shares or reset the fake demo");
+    return sum + BigInt(w.sharesBurned);
+  }, 0n);
+}
+
 export const paymentTotalOf = (p: Project) => Math.max(2, Math.round(p.terms.termDays / p.terms.paymentIntervalDays));
 
 export function vaultTotals(db: DbState, p: Project) {
@@ -71,7 +79,7 @@ export function vaultTotals(db: DbState, p: Project) {
   const owed = loaned ? totalOwedMicro(p.terms.principal, p.terms.interestRateBps, p.terms.termDays) : 0n;
   const outstanding = owed > repaid ? owed - repaid : 0n;
   const available = deposits - loaned + repaid - withdrawn;
-  const shares = deposits - withdrawn; // 1 share unit per micro-RLUSD deposited (XLS-65 IOU vault start ratio)
+  const shares = deposits - burnedShares(db, p.id); // Subscription starts at one share unit per micro-RLUSD
   const total = available + outstanding;
   return { deposits, withdrawn, loaned, repaid, owed, outstanding, available, shares, total };
 }
@@ -118,11 +126,11 @@ export function investorTotals(db: DbState, p: Project, investor: string) {
   const deposited = sumMicro(db.investments.filter((i) => i.projectId === p.id && i.investor === investor).map((i) => i.amount));
   const withdrawn = sumMicro(db.withdrawals.filter((w) => w.projectId === p.id && w.investor === investor).map((w) => w.amount));
   const v = vaultTotals(db, p);
-  const shares = deposited - withdrawn;
+  const shares = deposited - burnedShares(db, p.id, investor);
   const value = v.shares > 0n ? (shares * (v.total > 0n ? v.total : 0n)) / v.shares : 0n;
   // Liquid claim, pro rata by shares, capped by what the vault holds.
   const claim = v.shares > 0n ? (shares * (v.available > 0n ? v.available : 0n)) / v.shares : 0n;
-  return { deposited, withdrawn, shares, value, withdrawable: claim };
+  return { deposited, withdrawn, shares, value, withdrawable: claim, assetsTotal: v.total, sharesOutstanding: v.shares };
 }
 
 // ---------- checks ----------
