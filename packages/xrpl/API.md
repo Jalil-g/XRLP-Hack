@@ -11,6 +11,7 @@ pnpm --filter @xrlp/xrpl demo           # full money path on devnet, prints a tx
 pnpm --filter @xrlp/xrpl test           # offline unit tests (condition encoding, lending math, wallet-file migration)
 pnpm --filter @xrlp/xrpl spike:broker   # XRPL-04 devnet proof: rates, mandatory cover, origination fee
 pnpm --filter @xrlp/xrpl spike:close    # XRPL-06 devnet proof: LoanSet + 3 escrows, SPV liquid = 0, bad input refused with nothing submitted
+pnpm --filter @xrlp/xrpl spike:close-batch  # XRPL-13b devnet proof: escrows in ONE all-or-nothing Batch; rollback + partial close → resumeEscrowCreation (~8 min)
 pnpm --filter @xrlp/xrpl compliance     # XRPL-08 devnet proof: credentials x3, domain, private vault, fee, attestations
 pnpm --filter @xrlp/xrpl capture:reads  # re-record test/fixtures/*.json from fresh devnet objects (~2 min)
 pnpm --filter @xrlp/xrpl stress         # devnet: 20 parallel Payments from one account, all tesSUCCESS
@@ -134,7 +135,8 @@ A stray investor3 KYC is removed on the next run
 | `bootstrapWallets({fresh?, investorRlusd?, platformRlusd=25000, builderRlusd?, credentials=true, preVerifyBuilder=false, log?})` | faucet, issuer `AccountSet` (DefaultRipple, AllowTrustLineLocking), `TrustSet`s (RLUSD holders), RLUSD `Payment`s, `CredentialCreate` + `CredentialAccept` (KYC_INVESTOR investor1/2, VERIFIED_INSPECTOR inspector1..3, VERIFIED_BUILDER builder if `preVerifyBuilder`), `CredentialDelete` of a stray investor3 KYC | `{wallets, txs, credentials: [{role, type, status}]}` (idempotent, 2nd run `txs = []`) |
 | `setupProjectOnChain(project, {subscriptionEndsAt?, redemptionAt?, paymentTotal?, paymentIntervalS?, coverDeposit?, coverRateMinimum?, coverRateLiquidation?, managementFeeRate?, lockSpv=true, spvSigners?: {builder?, inspector?, platform?, trustee?}})` | SPV faucet + `TrustSet`, `SignerListSet` {platform, builder, inspector, trustee} w1 quorum 3, `AccountSet asfDisableMaster`, `VaultCreate` (closed-ended, `AssetsMaximum = principal`), `LoanBrokerSet` (cover rates + management fee), **mandatory** `LoanBrokerCoverDeposit` | `{spv, vaultId, loanBrokerId, shareMptIssuanceId, vaultPseudoAccount, subscriptionEndsAt, redemptionAt, cover, coverEvent, events, txs, spvWallet}` |
 | `depositToVault({projectId, vaultId, investor, amount})` | `VaultDeposit` | `{tx, event: vault_deposit}` |
-| `closeLoanAndCreateEscrows(project, {conditions, cancelAfters?, builderAddress?, paymentTotal?, paymentIntervalS?, defaultCancelAfter?, waitForInvestmentPhase=true, spvSigners?, spvSingleKey?, allowOverpayment=true, originationFee?, originationFeePayer="builder"})` — see **Loan close (XRPL-06)** | validation first (nothing submitted on bad input), then (if needed) payer → SPV RLUSD `Payment` for the origination-fee shortfall, `LoanSet` with `LoanOriginationFee` (platform signs under its account lock, SPV multisig countersigns), then one `EscrowCreate` per milestone, back to back | `{loanId, loanSetTx, originationFee, originationFeeTopUpTx?, escrows: [{milestoneId, owner, offerSequence, condition, createTx, cancelAfter, amount, escrow}], txs, maturity, events}` |
+| `closeLoanAndCreateEscrows(project, {conditions, cancelAfters?, builderAddress?, paymentTotal?, paymentIntervalS?, defaultCancelAfter?, waitForInvestmentPhase=true, spvSigners?, spvSingleKey?, allowOverpayment=true, originationFee?, originationFeePayer="builder", escrowMode?, onTx?})` — see **Loan close (XRPL-06, XRPL-13b)** | validation first (nothing submitted on bad input), then (if needed) payer → SPV RLUSD `Payment` for the origination-fee shortfall, `LoanSet` with `LoanOriginationFee` (platform signs under its account lock, SPV multisig countersigns), then the escrows: **one all-or-nothing `Batch`** of every `EscrowCreate` for 2..8 milestones (`escrowMode: "batch"`, default), else one `EscrowCreate` per milestone, back to back | `{loanId, loanSetTx, originationFee, originationFeeTopUpTx?, escrows: [{milestoneId, owner, offerSequence, condition, createTx, cancelAfter, amount, escrow}], txs, maturity, events, escrowMode, batchTx?}` |
+| `resumeEscrowCreation(err \| {project, loanId, created?, pending?, conditions, cancelAfters?, loanSetTx?}, {escrowMode?, spvSigners?, spvSingleKey?, builderAddress?, issuer?, waitForInFlight=true, onTx?})` — see **Recovering a partial close** | re-reads the SPV's escrows (by condition) + history first, then only the missing `EscrowCreate`s (one `Batch` for 2..8) | the completed `CloseLoanResult` + `resumed: {created, alreadyPresent, submitted}` |
 | `attestApproval({projectId, spv, milestoneId, role, signer, decision, notes?, verdictHash?, condition?})` | 1-drop `Payment` approver → SPV with a JSON memo (`xrlp/attestation/v1`) | `{tx, event: approval_attested, attestation}` |
 | `releaseMilestone({projectId, milestoneId, escrow:{owner, offerSequence, condition}, fulfillment, amount?, submitter="releaseService", destination?, lastLedgerMargin=60, marginS=120})` | preflight (no tx) → `EscrowFinish` | `{tx, event: escrow_finished}` (amount from the escrow) |
 | `tryFinishWithWrongFulfillment({owner, offerSequence, condition, projectId?, milestoneId?, submitter="platform"})` | `EscrowFinish` with a random wrong fulfillment → **`tecCRYPTOCONDITION_ERROR`** (resolves, does not throw) | `{tx, event: release_refused + result}` |
@@ -230,7 +232,7 @@ Paths/SendMax/DeliverMin/flags, exactly one valid `xrlp/attest/v1` memo, and a v
 `encodeAttestMemo`, `decodeAttestMemo(txJson)`, `validateAttestMemo`, `decodeAnyAttestation` (also reads the v1
 `xrlp/attestation/v1` memo still written by `attestApproval`).
 
-### Loan close (XRPL-06): `closeLoanAndCreateEscrows`
+### Loan close (XRPL-06, XRPL-13b): `closeLoanAndCreateEscrows`
 
 Conditions are **generated by core's release service** (CORE-12, preimage unique per escrow, encrypted at rest) and passed in.
 This package never generates preimages on the close path. `generateMilestoneCondition` is out of the public API (only a
@@ -242,12 +244,15 @@ const close = await closeLoanAndCreateEscrows(project, {
   cancelAfters,            // optional ISO[] by milestone index (overrides milestone.cancelAfter / defaultCancelAfter)
   builderAddress: builder.address,
   waitForInvestmentPhase: false, // LedgerPort semantics: throw TooSoonError instead of waiting
+  // escrowMode: "batch" (default for 2..8 milestones) | "sequential"; onTx: (e) => log(e.step, e.tx.explorerUrl)
 });
 // close.escrows[i] = { milestoneId, owner, offerSequence, condition, cancelAfter, createTx, amount, escrow } (≅ shared EscrowRef)
 // close.txs = [LoanSet, EscrowCreate × N] (shared CloseResult.txs); close.maturity = ISO lower bound of loan maturity
+// close.escrowMode = "batch" → close.batchTx = the outer Batch; escrows[i].createTx / txs[1..N] are its inner EscrowCreates
 ```
 
-Order: vault phase gate → `planLoanClose` (pure) + SPV quorum check → origination-fee top-up → `LoanSet` → `EscrowCreate × N`.
+Order: vault phase gate → (SPV submit lock) `planLoanClose` (pure) + SPV quorum check → origination-fee top-up → `LoanSet` →
+one `Batch` of `EscrowCreate × N` (or `EscrowCreate × N`).
 **Everything is checked before the first tx**, so bad input never leaves principal liquid in the SPV:
 
 | Check | Error (nothing submitted) |
@@ -262,10 +267,71 @@ Order: vault phase gate → `planLoanClose` (pure) + SPV quorum check → origin
 
 LoanSet terms: platform = `Account`, SPV = `Counterparty` (multisig, default platform + builder + trustee), `tfLoanOverpayment`,
 no late fees, origination fee as in XRPL-04. `loanSet` itself also rejects `PaymentTotal < 2` / `InterestRate ≤ 0`.
-If an `EscrowCreate` fails **after** LoanSet: `CloseLoanPartialError` (extends shared `LedgerError`, `code: "ledger_error"`,
-`txResult`/`txHash` of the failed EscrowCreate) with `loanId`, `loanSetTx`, `created: CreatedEscrowRef[]`, `pending: milestoneId[]`
-(failed one first). The caller can then create the pending escrows or repay. Pure validator: `planLoanClose(input)` (`src/loan-close.ts`,
-offline tests in `test/loan-close.test.ts`). Devnet proof: `docs/xrpl-protocol-notes.md` §2c.
+If an escrow step fails **after** LoanSet (an `EscrowCreate`, a Batch that did not apply, an `onTx` throw): `CloseLoanPartialError`
+(extends shared `LedgerError`, `code: "ledger_error"`, `txResult`/`txHash` of the failed EscrowCreate or Batch) with `loanId`,
+`loanSetTx`, `created: CreatedEscrowRef[]`, `pending: milestoneId[]` (failed one first) and `context` (the plan, escrow mode, the
+Batch's hash / LastLedgerSequence / outcome, whether a tx may still be in flight). Recover with `resumeEscrowCreation(err)` (below)
+or repay. Pure validator: `planLoanClose(input)` (`src/loan-close.ts`, offline tests in `test/loan-close.test.ts`). Devnet proof:
+`docs/xrpl-protocol-notes.md` §2c (sequential), §2e (batch).
+
+**Escrow mode (XRPL-13b).** For 2..8 milestones (the XLS-56 inner-tx limit) the escrows go in **one all-or-nothing Batch**
+(`escrowMode: "batch"`, the default): outer = SPV, multisigned by `spvSigners` (or signed by `spvSingleKey`), `tfAllOrNothing`,
+one inner `EscrowCreate` per milestone. Either every escrow exists or none does, and the SPV holds liquid principal only from the
+LoanSet ledger to the Batch ledger (§2e). Other counts, or `escrowMode: "sequential"`, create one EscrowCreate per milestone (the
+XRPL-06 path); `"batch"` for 1 or 9+ milestones → `CloseValidationError`. LoanSet itself can't join the Batch on devnet yet
+(`temINVALID_INNER_BATCH` until `LendingProtocolV1_2`, §2d).
+- `escrows[i].createTx` / `txs[1..N]` / the `escrow_created` events carry the Batch's **inner** EscrowCreates (their own on-ledger
+  txs, `ParentBatchID` in the metadata); `offerSequence` = the inner Sequence; the outer Batch is `close.batchTx`.
+- Every escrow passes `planLoanClose`, then `validateEscrowSpecs` again right before signing (`createEscrowsAtomic` and
+  `closeLoanAtomic` run it too, the latter before its LoanSet): a malformed condition never reaches the ledger in either mode.
+- **Rollback detection.** A Batch whose inner txs did not apply is still `tesSUCCESS` (the outer pays the fee) and its metadata
+  looks the same either way (only the outer account's fee + Sequence). So every inner hash is looked up **in the Batch's own
+  ledger**: `meta.ParentBatchID` must match; not found with `searched_all` = provably not applied (`BatchNotAppliedError`,
+  `batch.outcome: "rolled_back"`) → `CloseLoanPartialError` with **all** milestones pending (`txResult: "inner_failed"`,
+  `txHash` = the Batch). Each applied inner must also have created the expected `Escrow` (SPV → builder, same condition).
+- `onTx(e)` is awaited after each validated tx: `origination_fee`, `loan_set`, then `escrow_batch` or `escrow_create`.
+- Validation through the last escrow holds the SPV's submit lock: a concurrent second close of the same project in this process
+  waits, then is refused before any tx (its conditions are on the SPV's escrows).
+
+### Recovering a partial close (XRPL-13b): `resumeEscrowCreation`
+
+`resumeEscrowCreation(err)` creates **exactly the missing escrows** and returns the completed `CloseLoanResult` plus `resumed`.
+It is idempotent: before submitting anything it re-reads the SPV's escrows and matches them **by condition**, so a retry never
+double-creates and a second run submits nothing.
+
+```ts
+let close: CloseLoanResult;
+try {
+  close = await closeLoanAndCreateEscrows(project, { conditions, cancelAfters, builderAddress, waitForInvestmentPhase: false });
+} catch (e) {
+  if (!(e instanceof CloseLoanPartialError)) throw e; // nothing submitted, or the LoanSet itself failed
+  // fix a persistent cause first (frozen line, missing RLUSD), then:
+  close = await resumeEscrowCreation(e);
+  // without the error object (e.g. after a restart):
+  // close = await resumeEscrowCreation({ project, loanId, created, pending, conditions, cancelAfters }, { builderAddress });
+}
+// close.resumed = { created: ["m2", "m3"], alreadyPresent: [{ milestoneId: "m1", source: "created" }], submitted: [<Batch>] }
+```
+
+In order (nothing is submitted before step 5):
+1. **In-flight wait.** If the failed submit's outcome was unknown (`context.uncertain`: connection lost, incomplete server history),
+   wait until that tx can no longer validate: past the Batch's `LastLedgerSequence`, else one `DEFAULT_LLS_MARGIN` (20 ledgers).
+2. **Loan.** It must exist with `Borrower` = the SPV. Its real maturity (`NextPaymentDueDate + interval × (remaining − 1)`) bounds
+   every new CancelAfter.
+3. **What exists** (`planEscrowResume`, pure). A milestone is *present* (never re-created) when the failed close reported it
+   (`created`), when an **open SPV escrow** has its condition (`account_objects`), or when the SPV's history has a successful
+   EscrowCreate with it that is gone (finished or cancelled: re-creating it with a possibly published fulfillment could pay twice).
+   A present escrow must go to the builder for the milestone's amount, else `CloseValidationError`. Missing ones must pass the
+   close's checks: well-formed, unique, `now + 60 s < CancelAfter < maturity`. `{project, ...}` form: CancelAfter = `cancelAfters[i]`
+   → `milestone.cancelAfter` → real maturity − one payment interval.
+4. **Funds.** The SPV must hold the RLUSD for the missing escrows (else `CloseValidationError`, no fee burnt on a doomed Batch).
+5. **Create** under the SPV's submit lock: one Batch for 2..8 missing escrows, else sequential (`escrowMode` overrides). A failure
+   here → a new `CloseLoanPartialError` (resume that one).
+
+The result lists every milestone in project order; `txs` / `events` for escrows that already existed are rebuilt from the SPV's
+history. `deps` injects every network call (the escrow lister `listEscrowNodes`, `accountTx`, `getLoan`, `ledgerNow`, `rlusdBalance`,
+`fetchTx`, `createEscrowsAtomic`, `createMilestoneEscrow`, `sleep`): offline tests in `test/close-batch.test.ts` (recorded devnet
+Batches: `test/fixtures/batch-*.json`, re-record with `scripts/capture-batch-fixtures.ts`). Devnet proof: `docs/xrpl-protocol-notes.md` §2e.
 
 ### Escrow gating (release-service-held preimage, no Shamir)
 
@@ -415,7 +481,8 @@ Observed on devnet while recording (2026-10-24): with tiny interest (50 %/yr ove
 | `lending-math.ts` | pure: broker-rate validation, cover sizing, origination/management fee, vault date math |
 | `spv.ts` | `createSpv`, v2 `SignerListSet`, disable master, `submitMultisigned` (+ local quorum check), `getSpvInfo` |
 | `condition.ts` | PREIMAGE-SHA-256 DER encoding + condition-format check (pure); no generation on the close path |
-| `loan-close.ts` | XRPL-06: pure `planLoanClose` validation, `CloseValidationError`, `CloseLoanPartialError` |
+| `loan-close.ts` | XRPL-06: pure `planLoanClose` validation, `CloseValidationError`, `CloseLoanPartialError`; XRPL-13b: escrow mode, `validateEscrowSpecs`, partial-close `context`, pure resume planner (`planEscrowResume`) + ledger parsers |
+| `batch.ts` | XRPL-13: XLS-56 Batch build/sign/submit (`submitBatch`, `mergeBatchSigners`), `createEscrowsAtomic`, `closeLoanAtomic`; XRPL-13b: inner lookups pinned to the Batch's ledger (`classifyInnerLookup`, `batchOutcome`), `BatchNotAppliedError`, metadata-checked escrows, `closePartialError` |
 | `escrow.ts` | IOU `EscrowCreate` (SPV multisig), `EscrowFinish` (preflighted, rebuilt once if retriable), `EscrowCancel` (TooSoon-gated), wrong-fulfillment demo finish |
 | `preflight.ts` | pre-reveal safety: `preflightFinish`, pure `evaluatePreflight`, `unsafe_release` mapping |
 | `attest.ts` | memo attestations encode/decode |
