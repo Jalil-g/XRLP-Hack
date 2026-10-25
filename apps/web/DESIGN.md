@@ -57,6 +57,7 @@ Blue means "you can act". Green / red / amber mean a verdict and always come wit
 ## Motion
 
 150–200ms ease-out on hover/press and on state changes. One authored moment: after "Run checks" every row shows running, then rows resolve top to bottom 110ms apart (skipped under `prefers-reduced-motion`). The reveal starts only when real results arrive; it never stands in for progress.
+State feedback: a money-map node flashes once (1.4s) when its amount changes, so a release or refund is seen moving.
 No page-load choreography, no pulsing dots.
 
 ## Don't
