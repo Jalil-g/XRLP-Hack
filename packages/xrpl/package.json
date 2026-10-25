@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit -p .",
     "bootstrap": "NODE_USE_ENV_PROXY=1 tsx scripts/bootstrap.ts",
     "demo": "NODE_USE_ENV_PROXY=1 tsx scripts/demo.ts",
+    "prestage": "NODE_USE_ENV_PROXY=1 tsx scripts/prestage.ts",
     "spike:loanset": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-loanset.ts",
     "spike:broker": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-broker.ts",
     "spike:preflight": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-preflight.ts",
