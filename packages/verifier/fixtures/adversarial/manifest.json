@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "note": "Synthetic adversarial transformations of licensed real photo fixtures. Mock outcomes demonstrate deterministic gating, not live model resistance to every prompt attack.",
+  "scenarios": [
+    { "key": "adversarial-image-approved", "expect": "fail", "failingChecks": ["inspector_audit_present"], "warnChecks": [] },
+    { "key": "adversarial-audit-instructions", "expect": "fail", "failingChecks": ["inspector_audit_present"], "warnChecks": [] },
+    { "key": "adversarial-missing-exif", "expect": "needs_human", "failingChecks": [], "warnChecks": ["gps_within_site", "photo_fresh"] },
+    { "key": "adversarial-wrong-gps", "expect": "fail", "failingChecks": ["gps_within_site"], "warnChecks": [] },
+    { "key": "adversarial-corrupt-image", "expect": "needs_human", "failingChecks": [], "warnChecks": ["evidence_readable"] },
+    { "key": "adversarial-document-instructions", "expect": "fail", "failingChecks": ["invoice_matches_budget"], "warnChecks": [] }
+  ]
+}

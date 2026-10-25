@@ -1,22 +1,13 @@
 // XRPL-10 · XrplLedgerAdapter: the shared LedgerPort (packages/shared/src/ports.ts) over devnet.
 // Core wires it for LEDGER_MODE=devnet. Keys come from the demo wallet store (WALLETS_FILE, see wallets.ts): every
 // address core passes (builder, investor, credential subject) must be a wallet in that file.
-// Pure mapping (results, errors, signer choice, input checks) lives in adapter-map.ts.
+// Pure mapping (results, errors, signer choice) lives in adapter-map.ts; input and phase checks run in the api.ts calls.
 import { isAbsolute, resolve } from "node:path";
-import { TooSoonError, type Builder, type CloseResult, type LedgerPort, type Project, type ProjectChainSetup, type TxResult as PortTxResult } from "@xrlp/shared";
-import { rippleTimeToISOTime, type Wallet } from "xrpl";
+import { TooSoonError, type CloseResult, type LedgerPort, type Project, type ProjectChainSetup, type TxResult as PortTxResult } from "@xrlp/shared";
+import type { Wallet } from "xrpl";
+import { apiCodeOf, pickQuorumSigners, toAdapterError, toPortTx, XrplLedgerError } from "./adapter-map.ts";
 import {
-  apiCodeOf,
-  pickQuorumSigners,
-  repayMode,
-  tecToPortTx,
-  toEscrowSnapshot,
-  toLedgerError,
-  toPortTx,
-  validateCloseInputs,
-  XrplLedgerError,
-} from "./adapter-map.ts";
-import {
+  builderPayToSpv,
   cancelExpiredMilestone,
   closeLoanAndCreateEscrows as closeLoanApi,
   depositToVault,
@@ -24,22 +15,20 @@ import {
   releaseMilestone,
   repayLoan as repayLoanApi,
   setupProjectOnChain as setupProjectApi,
+  tryFinishWithWrongFulfillment,
   withdrawFromVault,
 } from "./api.ts";
-import { ledgerTime, signAndSubmit, XrplTxError, type TxResult } from "./client.ts";
+import { ledgerTime, type TxResult } from "./client.ts";
 import { attest, ATTEST_EVENT_KIND, createDomain, grantCredential, payVerificationFee, submitSignedBlob } from "./compliance.ts";
-import { generateMilestoneCondition } from "./condition.ts";
 import { config, REPO_ROOT } from "./config.ts";
-import { loanScheduleFromTerms } from "./lending-math.ts";
-import { getLoan } from "./loan.ts";
+import { FINISH_LLS_MARGIN } from "./escrow.ts";
+import { getLoan, planLoanPayment } from "./loan.ts";
 import { preflightFinish } from "./preflight.ts";
-import { getBalance, getEscrow, getLoanSnapshot, getVaultSnapshot, listEscrowsParsed } from "./reads.ts";
-import { payRlusd } from "./rlusd.ts";
+import { getBalance, getEscrowSnapshot, getLoanSnapshot, getVaultSnapshot, listEscrowsParsed } from "./reads.ts";
 import { getSpvInfo } from "./spv.ts";
-import { getVault } from "./vault.ts";
 import { loadWallets, type DemoWallets } from "./wallets.ts";
 
-export { XrplLedgerError, apiCodeOf, toLedgerError } from "./adapter-map.ts";
+export { XrplLedgerError, apiCodeOf, toAdapterError } from "./adapter-map.ts";
 
 type Arg<K extends keyof LedgerPort> = LedgerPort[K] extends (p: infer P, ...rest: never[]) => unknown ? P : never;
 
@@ -50,12 +39,19 @@ export interface XrplLedgerAdapterOptions {
   log?: (line: string) => void;
   /** Private vault gated by the platform's KYC_INVESTOR PermissionedDomain + non-transferable shares. Default true. */
   privateVault?: boolean;
+  /**
+   * EscrowFinish LastLedgerSequence headroom (ledgers) and preflight's minimum seconds to CancelAfter. `preflightFinish`
+   * and `finishEscrow` both use them, so a preflight `ok` is not then refused by the finish. Defaults: FINISH_LLS_MARGIN
+   * (60 ledgers, so preflight wants >= 300 s before CancelAfter) and preflight's 120 s. Short-dated spikes: `{ lastLedgerMargin: 20, marginS: 60 }`.
+   */
+  finishMargins?: { lastLedgerMargin?: number; marginS?: number };
 }
 
 export class XrplLedgerAdapter implements LedgerPort {
   readonly mode = "devnet" as const;
   private readonly log: (line: string) => void;
   private readonly privateVault: boolean;
+  private readonly finishMargins: { lastLedgerMargin: number; marginS?: number };
   /** projectId -> builder address, learned at setup/close (Project only carries builderId). */
   private readonly builders = new Map<string, string>();
 
@@ -63,6 +59,10 @@ export class XrplLedgerAdapter implements LedgerPort {
     if (opts.walletsFile) config.walletsFile = isAbsolute(opts.walletsFile) ? opts.walletsFile : resolve(REPO_ROOT, opts.walletsFile);
     this.log = opts.log ?? (() => {});
     this.privateVault = opts.privateVault ?? true;
+    this.finishMargins = {
+      lastLedgerMargin: opts.finishMargins?.lastLedgerMargin ?? FINISH_LLS_MARGIN,
+      ...(opts.finishMargins?.marginS !== undefined ? { marginS: opts.finishMargins.marginS } : {}),
+    };
   }
 
   // ------------------------------------------------------------ onboarding / compliance
@@ -148,44 +148,47 @@ export class XrplLedgerAdapter implements LedgerPort {
       const vaultId = chain(p.project, "vaultId");
       const snap = await getVaultSnapshot(vaultId);
       if (!snap) throw new XrplLedgerError("not_found", `vault ${vaultId} not found`);
+      // Port contract: TooSoonError before RedemptionDate. withdrawFromVault only refuses the Investment phase (the ledger
+      // allows Subscription-phase withdrawals), so this stricter check stays.
       if (snap.phase !== "redemption") throw new TooSoonError(`withdrawals open at RedemptionDate ${snap.redemptionDate} (vault is in ${snap.phase})`);
-      // after XRPL-07 merge: withdrawFromVault throws TooSoonError itself; the pre-check above stays (no tx fee on a refusal).
       const { tx } = await withdrawFromVault({ projectId: p.project.id, vaultId, investor: this.key(p.investor, "investor"), amount: p.amount });
       return this.tx(`VaultWithdraw ${p.amount}`, tx, "vault_withdraw");
     });
   }
 
-  /** TooSoonError (nothing submitted) until the validated ledger is past SubscriptionDate. Inputs validated before any tx. */
+  /**
+   * LoanSet + EscrowCreate x N via api.ts `closeLoanAndCreateEscrows`, which checks everything before the first tx:
+   * TooSoonError while the ledger is at or before SubscriptionDate; `planLoanClose` (one PREIMAGE-SHA-256 condition +
+   * CancelAfter per milestone by index, no duplicates incl. the SPV's open escrows, now + 60 s < CancelAfter < maturity)
+   * -> CloseValidationError -> `validation`. An EscrowCreate failing after LoanSet -> CloseLoanPartialError (`ledger_error`).
+   */
   closeLoanAndCreateEscrows(p: Arg<"closeLoanAndCreateEscrows">): Promise<CloseResult> {
     return this.run("closeLoanAndCreateEscrows", async () => {
       const spv = chain(p.project, "spv");
-      const vaultId = chain(p.project, "vaultId");
+      chain(p.project, "vaultId");
       chain(p.project, "loanBrokerId");
-      const [vault, now] = await Promise.all([getVault(vaultId), ledgerTime()]);
-      if (!vault) throw new XrplLedgerError("not_found", `vault ${vaultId} not found`);
-      const sub = vault.SubscriptionDate ?? 0;
-      if (now <= sub) throw new TooSoonError(`LoanSet allowed after SubscriptionDate ${rippleTimeToISOTime(sub)} (ledger now ${rippleTimeToISOTime(now)}, ${sub - now + 1}s to go)`);
-      const sched = loanScheduleFromTerms(p.project.terms);
-      validateCloseInputs({
-        milestoneCount: p.project.milestones.length,
-        conditions: p.conditions,
-        cancelAfters: p.cancelAfters,
-        nowRipple: now,
-        maturityFloorRipple: Math.max(now, sub) + sched.paymentTotal * sched.paymentIntervalS,
-      });
       const w = this.wallets();
       const signers = await this.spvQuorum(spv, [p.builder.address, w.platform.classicAddress, w.trustee.classicAddress]);
       this.builders.set(p.project.id, p.builder.address);
-
-      const r = await this.closeLoan(p.project, p.builder, p.conditions, p.cancelAfters, signers);
-      const loanSet = this.tx("LoanSet", r.loanSetTx, "loan_set");
-      const escrowTxs = r.escrowTxs.map((t, i) => {
-        this.log(`  EscrowCreate ${p.project.milestones[i]?.id} seq ${r.escrows[i]?.offerSequence}: ${t.result} ${t.explorerUrl}`);
-        return t;
+      const r = await closeLoanApi(p.project, {
+        conditions: p.conditions,
+        cancelAfters: p.cancelAfters,
+        builderAddress: p.builder.address,
+        ...(this.held(p.builder.address) ? { originationFeePayer: p.builder.address } : {}),
+        spvSigners: signers,
+        waitForInvestmentPhase: false,
       });
-      // Extra txs go LAST so txs[0] = LoanSet and txs[1..N] = EscrowCreate per milestone stays true.
-      const extra = r.originationFeeTopUpTx ? [this.tx("origination fee top-up (builder -> SPV)", r.originationFeeTopUpTx)] : [];
-      return { loanId: r.loanId, escrows: r.escrows, txs: [loanSet, ...escrowTxs, ...extra] };
+      // r.txs = [LoanSet, EscrowCreate x N]. Extra txs go LAST so txs[0] = LoanSet and txs[1..N] = EscrowCreate per milestone stays true.
+      const txs = [
+        this.tx("LoanSet", r.loanSetTx, "loan_set"),
+        ...r.txs.slice(1).map((t, i) => this.tx(`EscrowCreate ${r.escrows[i]?.milestoneId} seq ${r.escrows[i]?.offerSequence}`, t, "escrow_created")),
+        ...(r.originationFeeTopUpTx ? [this.tx("origination fee top-up (builder -> SPV)", r.originationFeeTopUpTx)] : []),
+      ];
+      return {
+        loanId: r.loanId,
+        escrows: r.escrows.map((e) => ({ milestoneId: e.milestoneId, owner: e.owner, offerSequence: e.offerSequence, condition: e.condition, cancelAfter: e.cancelAfter, createTx: e.createTx })),
+        txs,
+      };
     });
   }
 
@@ -194,7 +197,14 @@ export class XrplLedgerAdapter implements LedgerPort {
   /** Read-only. Checks as the releaseService (the account that will submit the finish). */
   preflightFinish(p: Arg<"preflightFinish">): Promise<{ ok: boolean; reason?: string }> {
     return this.run("preflightFinish", async () => {
-      const r = await preflightFinish({ owner: p.owner, offerSequence: p.offerSequence, destination: p.destination, submitter: this.wallets().releaseService.classicAddress });
+      const r = await preflightFinish({
+        owner: p.owner,
+        offerSequence: p.offerSequence,
+        destination: p.destination,
+        submitter: this.wallets().releaseService.classicAddress,
+        lastLedgerOffset: this.finishMargins.lastLedgerMargin,
+        ...(this.finishMargins.marginS !== undefined ? { marginS: this.finishMargins.marginS } : {}),
+      });
       if (r.ok) return { ok: true };
       this.log(`  preflight refused ${p.owner}/${p.offerSequence}: ${r.reason}`);
       return { ok: false, reason: `${r.reason}: ${r.message}` };
@@ -210,26 +220,29 @@ export class XrplLedgerAdapter implements LedgerPort {
         escrow: { owner: p.owner, offerSequence: p.offerSequence, condition: p.condition },
         fulfillment: p.fulfillment,
         submitter: this.wallets().releaseService,
+        ...this.finishMargins,
       });
       return this.tx(`EscrowFinish ${p.owner}/${p.offerSequence}`, tx, "escrow_finished");
     });
   }
 
-  /** Route 23: platform submits EscrowFinish with a random (wrong) fulfillment. Resolves with the tec result. */
+  /**
+   * Route 23: platform submits EscrowFinish with a random (wrong) fulfillment. Resolves with the tec result
+   * (`tecCRYPTOCONDITION_ERROR`). Refuses (`unsafe_release`, nothing submitted) if the escrow is gone or near/past CancelAfter.
+   */
   tryFinishWithWrongFulfillment(p: Arg<"tryFinishWithWrongFulfillment">): Promise<PortTxResult> {
     return this.run("tryFinishWithWrongFulfillment", async () => {
-      const t = await this.submitWrongFulfillment(p.owner, p.offerSequence, p.condition);
-      this.log(`  EscrowFinish (wrong fulfillment) ${p.owner}/${p.offerSequence}: ${t.result} ${t.explorerUrl}`);
-      return t;
+      const { tx } = await tryFinishWithWrongFulfillment({ owner: p.owner, offerSequence: p.offerSequence, condition: p.condition, submitter: this.wallets().platform });
+      return this.tx(`EscrowFinish (wrong fulfillment) ${p.owner}/${p.offerSequence}`, tx, "release_refused");
     });
   }
 
-  /** EscrowCancel by releaseService. not_found if consumed; TooSoonError (nothing submitted) before CancelAfter. */
+  /**
+   * EscrowCancel by releaseService. Checked on one validated ledger before submitting: consumed -> `not_found`
+   * (local tecNO_TARGET); ledger time at or before CancelAfter -> TooSoonError. Nothing is submitted in either case.
+   */
   cancelEscrow(p: Arg<"cancelEscrow">): Promise<PortTxResult> {
     return this.run("cancelEscrow", async () => {
-      const e = await getEscrow(p.owner, p.offerSequence);
-      if (!e) throw new XrplLedgerError("not_found", `escrow ${p.owner}/${p.offerSequence} not found (already finished or cancelled)`);
-      if (!e.cancellable) throw new TooSoonError(`escrow ${p.owner}/${p.offerSequence} can be cancelled after CancelAfter ${e.cancelAfter ?? "(none)"}`);
       const { tx } = await cancelExpiredMilestone({
         projectId: PLATFORM_SCOPE,
         milestoneId: "",
@@ -241,9 +254,11 @@ export class XrplLedgerAdapter implements LedgerPort {
   }
 
   /**
-   * LoanPay from the SPV (multisig). source "builder": the builder first pays `amount` RLUSD into the SPV (logged; the
-   * port returns only the LoanPay). "escrow_refund": the SPV already holds the refunded RLUSD. More than one periodic
-   * payment -> tfLoanOverpayment (extra goes to principal).
+   * LoanPay from the SPV (multisig). source "builder": the builder first pays `amount` RLUSD into the SPV
+   * (`builderPayToSpv`, logged; the port returns only the LoanPay). "escrow_refund": the SPV already holds the refunded
+   * RLUSD. Mode comes from `planLoanPayment`: past due -> late; escrow_refund above one periodic payment -> overpayment
+   * (extra goes to principal); else regular. The amount is checked before ANY tx (LoanPayAmountError -> `validation`),
+   * and so is the SPV quorum, so a refused LoanPay never strands the builder's Payment in the SPV.
    */
   repayLoan(p: Arg<"repayLoan">): Promise<PortTxResult> {
     return this.run("repayLoan", async () => {
@@ -252,22 +267,15 @@ export class XrplLedgerAdapter implements LedgerPort {
       const w = this.wallets();
       const [loan, now] = await Promise.all([getLoan(loanId), ledgerTime()]);
       if (!loan) throw new XrplLedgerError("not_found", `loan ${loanId} not found (paid off or never created)`);
+      planLoanPayment({ loan, nowRipple: now, amount: p.amount, source: p.source });
       const builder = await this.builderOf(p.project);
-      if (p.source === "builder") {
-        // after XRPL-07 merge: builderPayToSpv({ projectId, builder, spv, amount }) and repayLoan({ ..., source }) does both.
-        const pay = await payRlusd(this.key(builder, "builder"), spv, w.issuer.classicAddress, p.amount);
-        this.tx(`builder -> SPV ${p.amount} RLUSD`, pay);
-      }
-      const mode = repayMode({
-        amount: p.amount,
-        periodicPayment: loan.PeriodicPayment ?? "0",
-        serviceFee: loan.LoanServiceFee,
-        nowRipple: now,
-        ...(loan.NextPaymentDueDate != null ? { nextPaymentDueRipple: loan.NextPaymentDueDate } : {}),
-      });
       const signers = await this.spvQuorum(spv, [builder, w.platform.classicAddress, w.trustee.classicAddress]);
-      const { tx } = await repayLoanApi({ projectId: p.project.id, spv, loanId, amount: p.amount, mode, signers });
-      return this.tx(`LoanPay ${p.amount} (${mode}, ${p.source})`, tx, "loan_payment");
+      if (p.source === "builder") {
+        const pay = await builderPayToSpv({ projectId: p.project.id, spv, amount: p.amount, builder: this.key(builder, "builder") });
+        this.tx(`builder -> SPV ${p.amount} RLUSD`, pay.tx);
+      }
+      const r = await repayLoanApi({ projectId: p.project.id, spv, loanId, amount: p.amount, source: p.source, signers });
+      return this.tx(`LoanPay ${r.amount} (${r.mode}, ${p.source})`, r.tx, "loan_payment");
     });
   }
 
@@ -305,50 +313,11 @@ export class XrplLedgerAdapter implements LedgerPort {
 
   /** `null` = consumed (finished / cancelled) or never created. */
   getEscrow(owner: string, offerSequence: number) {
-    return this.run("getEscrow", async () => {
-      const v = await getEscrow(owner, offerSequence);
-      return v ? toEscrowSnapshot(v, offerSequence) : null;
-    });
+    return this.run("getEscrow", () => getEscrowSnapshot(owner, offerSequence));
   }
 
   getBalance(account: string, currency: "XRP" | "RLUSD"): Promise<string> {
     return this.run("getBalance", () => getBalance(account, currency, currency === "RLUSD" ? { issuer: this.wallets().issuer.classicAddress } : {}));
-  }
-
-  // ------------------------------------------------------------ package calls that change when XRPL-06/07 merge
-
-  private async closeLoan(project: Project, builder: Builder, conditions: string[], cancelAfters: string[], signers: Wallet[]) {
-    // after XRPL-06 merge (1 line): closeLoanApi(project, { conditions, cancelAfters, builderAddress: builder.address, spvSigners: signers, waitForInvestmentPhase: false })
-    const withDeadlines: Project = { ...project, milestones: project.milestones.map((m, i) => ({ ...m, cancelAfter: cancelAfters[i]! })) };
-    const r = await closeLoanApi(withDeadlines, {
-      conditions: project.milestones.map((m, i) => ({ milestoneId: m.id, condition: conditions[i]! })),
-      builderAddress: builder.address,
-      ...(this.held(builder.address) ? { originationFeePayer: builder.address } : {}),
-      spvSigners: signers,
-      waitForInvestmentPhase: false,
-    });
-    const created = r.events.filter((e) => e.kind === "escrow_created");
-    return {
-      loanId: r.loanId,
-      loanSetTx: r.loanSetTx,
-      originationFeeTopUpTx: r.originationFeeTopUpTx,
-      escrows: r.escrows.map((e) => ({ milestoneId: e.milestoneId, owner: e.owner, offerSequence: e.offerSequence, condition: e.condition, cancelAfter: e.cancelAfter, createTx: e.createTx })),
-      escrowTxs: created.map((e): PortTxResult => ({ hash: e.txHash, explorerUrl: e.explorerUrl, result: "tesSUCCESS", kind: "escrow_created", at: e.at })),
-    };
-  }
-
-  private async submitWrongFulfillment(owner: string, offerSequence: number, condition: string): Promise<PortTxResult> {
-    // after XRPL-07 merge (1 line): return toPortTx((await tryFinishWithWrongFulfillment({ owner, offerSequence, condition, submitter: platform })).tx, "release_refused")
-    const platform = this.wallets().platform;
-    const wrong = generateMilestoneCondition().fulfillment; // fresh random preimage: never a stored one
-    try {
-      const tx = await signAndSubmit(platform, { TransactionType: "EscrowFinish", Account: platform.classicAddress, Owner: owner, OfferSequence: offerSequence, Condition: condition, Fulfillment: wrong });
-      return toPortTx(tx, "escrow_finished"); // 2^-256: the random preimage matched
-    } catch (e) {
-      const t = e instanceof XrplTxError ? tecToPortTx(e, "release_refused") : undefined;
-      if (t) return t;
-      throw e;
-    }
   }
 
   // ------------------------------------------------------------ helpers
@@ -395,7 +364,7 @@ export class XrplLedgerAdapter implements LedgerPort {
     try {
       return await fn();
     } catch (e) {
-      const err = toLedgerError(e, op);
+      const err = toAdapterError(e, op);
       this.log(`  ${op} failed [${apiCodeOf(err)}]: ${err.message}`);
       throw err;
     }

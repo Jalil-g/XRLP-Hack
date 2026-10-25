@@ -5,23 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { LedgerError, TooSoonError, type Builder, type LedgerPort, type Project } from "@xrlp/shared";
-import { isoTimeToRippleTime, rippleTimeToISOTime, Wallet } from "xrpl";
+import { rippleTimeToISOTime, Wallet } from "xrpl";
 import { XrplLedgerAdapter } from "../src/adapter.ts";
-import {
-  apiCodeOf,
-  pickQuorumSigners,
-  repayMode,
-  tecToPortTx,
-  toEscrowSnapshot,
-  toLedgerError,
-  toPortTx,
-  validateCloseInputs,
-  XrplLedgerError,
-} from "../src/adapter-map.ts";
+import { apiCodeOf, pickQuorumSigners, toAdapterError, toPortTx, XrplLedgerError } from "../src/adapter-map.ts";
 import type { TxResult } from "../src/client.ts";
-import { generateMilestoneCondition } from "../src/condition.ts";
 import { XrplTxError } from "../src/errors.ts";
+import { LoanPayAmountError } from "../src/loan.ts";
+import { CloseLoanPartialError, CloseValidationError } from "../src/loan-close.ts";
 import { UnsafeReleaseError, type PreflightResult } from "../src/preflight.ts";
+import { toEscrowSnapshot } from "../src/reads.ts";
 import { WALLET_ROLES, type WalletFile } from "../src/wallets.ts";
 
 const HASH = "AB".repeat(32);
@@ -49,22 +41,10 @@ test("toPortTx omits kind/at when unknown", () => {
   assert.equal("at" in t, false);
 });
 
-test("tecToPortTx: on-ledger tec -> TxResult with the tec result; off-ledger -> undefined", () => {
-  const onLedger = new XrplTxError("EscrowFinish", "tecCRYPTOCONDITION_ERROR", HASH);
-  assert.deepEqual(tecToPortTx(onLedger, "release_refused"), {
-    hash: HASH,
-    explorerUrl: `https://devnet.xrpl.org/transactions/${HASH}`,
-    result: "tecCRYPTOCONDITION_ERROR",
-    kind: "release_refused",
-  });
-  assert.equal(tecToPortTx(new XrplTxError("EscrowFinish", "tefPAST_SEQ", HASH)), undefined);
-  assert.equal(tecToPortTx(new XrplTxError("EscrowFinish", "tecNO_PERMISSION")), undefined);
-});
-
 // ---------------------------------------------------------------- errors
 
-test("toLedgerError: tecTOO_SOON -> shared TooSoonError (code too_soon) with txHash/txResult", () => {
-  const e = toLedgerError(new XrplTxError("LoanSet", "tecTOO_SOON", HASH), "closeLoanAndCreateEscrows");
+test("toAdapterError: tecTOO_SOON -> shared TooSoonError (code too_soon) with txHash/txResult", () => {
+  const e = toAdapterError(new XrplTxError("LoanSet", "tecTOO_SOON", HASH), "closeLoanAndCreateEscrows");
   assert.ok(e instanceof TooSoonError);
   assert.ok(e instanceof LedgerError);
   assert.equal(e.code, "too_soon");
@@ -74,7 +54,7 @@ test("toLedgerError: tecTOO_SOON -> shared TooSoonError (code too_soon) with txH
   assert.equal(apiCodeOf(e), "too_soon");
 });
 
-test("toLedgerError: engine results -> ErrorCode (not_found / validation / ledger_error), code stays in the shared union", () => {
+test("toAdapterError: engine results -> ErrorCode (not_found / validation / ledger_error), code stays in the shared union", () => {
   const cases: [string, string][] = [
     ["tecNO_TARGET", "not_found"],
     ["tecNO_ENTRY", "not_found"],
@@ -82,14 +62,14 @@ test("toLedgerError: engine results -> ErrorCode (not_found / validation / ledge
     ["temMALFORMED", "validation"],
     ["temBAD_AMOUNT", "validation"],
     ["tecNO_PERMISSION", "ledger_error"],
-    ["tecNO_LINE", "ledger_error"],
+    ["tecNO_LINE", "not_found"], // errors.ts toErrorCode
     ["tecNO_AUTH", "ledger_error"],
     ["tecINSUFFICIENT_FUNDS", "ledger_error"],
     ["tecCRYPTOCONDITION_ERROR", "ledger_error"],
     ["connection_lost", "ledger_error"],
   ];
   for (const [r, code] of cases) {
-    const e = toLedgerError(new XrplTxError("X", r, HASH));
+    const e = toAdapterError(new XrplTxError("X", r, HASH));
     assert.ok(e instanceof XrplLedgerError, r);
     assert.equal(apiCodeOf(e), code, r);
     assert.equal(e.code, "ledger_error", r);
@@ -98,33 +78,57 @@ test("toLedgerError: engine results -> ErrorCode (not_found / validation / ledge
   }
 });
 
-test("toLedgerError: UnsafeReleaseError -> code unsafe_release with the preflight reason, no txHash", () => {
+test("toAdapterError: UnsafeReleaseError (a shared LedgerError) passes through: unsafe_release + preflight reason, no txHash", () => {
   const result = { ok: false, reason: "no_trustline", message: "builder has no RLUSD trust line", failures: [], details: {} } as unknown as PreflightResult;
-  const e = toLedgerError(new UnsafeReleaseError(result), "finishEscrow");
-  assert.ok(e instanceof XrplLedgerError);
+  const unsafe = new UnsafeReleaseError(result);
+  const e = toAdapterError(unsafe, "finishEscrow");
+  assert.equal(e, unsafe);
   assert.equal(e.code, "unsafe_release");
-  assert.equal(e.reason, "no_trustline");
+  assert.equal(unsafe.reason, "no_trustline");
   assert.equal(e.txHash, undefined);
   assert.equal(apiCodeOf(e), "unsafe_release");
+  // a refused PreflightResult body (not an Error) -> XrplLedgerError unsafe_release, reason kept
+  const body = toAdapterError({ ok: false, code: "unsafe_release", reason: "expired_or_too_close", message: "CancelAfter in 30s" });
+  assert.ok(body instanceof XrplLedgerError);
+  assert.equal(body.code, "unsafe_release");
+  assert.equal(body.reason, "expired_or_too_close");
 });
 
-test("toLedgerError: shared LedgerErrors pass through unchanged", () => {
+test("toAdapterError: XRPL-06/07 client-side refusals -> validation; CloseLoanPartialError passes through as ledger_error", () => {
+  const close = toAdapterError(new CloseValidationError(["milestone m1 (#0): duplicate condition"]), "closeLoanAndCreateEscrows");
+  assert.ok(close instanceof XrplLedgerError);
+  assert.equal(apiCodeOf(close), "validation");
+  assert.equal(close.code, "ledger_error");
+  assert.match(close.message, /^closeLoanAndCreateEscrows: closeLoanAndCreateEscrows: invalid input, nothing submitted/);
+  assert.ok(close.cause instanceof CloseValidationError);
+  const pay = toAdapterError(new LoanPayAmountError("LoanPay 1000 < one periodic payment 13333.384070", "13333.384070"));
+  assert.equal(apiCodeOf(pay), "validation");
+  assert.equal(pay.txHash, undefined);
+  const partial = new CloseLoanPartialError("LOAN", HASH, [], ["m2"], new XrplTxError("EscrowCreate", "tecUNFUNDED", "CD".repeat(32)));
+  assert.equal(toAdapterError(partial), partial);
+  assert.equal(apiCodeOf(partial), "ledger_error");
+  assert.equal(partial.txResult, "tecUNFUNDED");
+});
+
+test("toAdapterError: shared LedgerErrors pass through unchanged", () => {
   const tooSoon = new TooSoonError("withdrawals open later");
-  assert.equal(toLedgerError(tooSoon), tooSoon);
+  assert.equal(toAdapterError(tooSoon), tooSoon);
   const mine = new XrplLedgerError("not_found", "gone");
-  assert.equal(toLedgerError(mine), mine);
+  assert.equal(toAdapterError(mine), mine);
 });
 
-test("toLedgerError: rippled RPC errors and plain package errors", () => {
-  assert.equal(apiCodeOf(toLedgerError({ data: { error: "entryNotFound" }, message: "x" })), "not_found");
-  assert.equal(apiCodeOf(toLedgerError({ data: { error: "actNotFound" } })), "not_found");
-  assert.equal(apiCodeOf(toLedgerError({ data: { error: "tooBusy" } })), "ledger_error");
+test("toAdapterError: rippled RPC errors and plain package errors", () => {
+  assert.equal(apiCodeOf(toAdapterError({ data: { error: "entryNotFound" }, message: "x" })), "not_found");
+  assert.equal(apiCodeOf(toAdapterError({ data: { error: "actNotFound" } })), "not_found");
+  const busy = toAdapterError({ data: { error: "tooBusy" } });
+  assert.equal(apiCodeOf(busy), "ledger_error");
+  assert.equal(busy.txResult, "tooBusy");
   assert.equal(apiCodeOf(new Error("coverDeposit 1 < protocol minimum 44 for principal 400")), "validation");
   assert.equal(apiCodeOf(new Error("RedemptionDate 1 too early for 4 x 86400s")), "validation");
   assert.equal(apiCodeOf(new Error("no demo wallet for rXYZ (role name or address from .data/wallets.json expected)")), "validation");
   assert.equal(apiCodeOf(new Error("fulfillment does not match escrow condition")), "validation");
   assert.equal(apiCodeOf(new Error("socket hang up")), "ledger_error");
-  const wrapped = toLedgerError(new Error("socket hang up"), "deposit");
+  const wrapped = toAdapterError(new Error("socket hang up"), "deposit");
   assert.equal(wrapped.message, "deposit: socket hang up");
   assert.ok((wrapped as { cause?: unknown }).cause instanceof Error);
 });
@@ -154,61 +158,9 @@ test("pickQuorumSigners: throws validation when held keys cannot reach quorum", 
   );
 });
 
-// ---------------------------------------------------------------- close inputs
-
-const NOW = 815_000_000;
-const iso = (r: number) => rippleTimeToISOTime(r);
-const conds = (n: number) => Array.from({ length: n }, () => generateMilestoneCondition().condition);
-const base = (over: Partial<Parameters<typeof validateCloseInputs>[0]> = {}) => ({
-  milestoneCount: 3,
-  conditions: conds(3),
-  cancelAfters: [iso(NOW + 3600), iso(NOW + 7200), iso(NOW + 90)],
-  nowRipple: NOW,
-  maturityFloorRipple: NOW + 4 * 86_400,
-  ...over,
-});
-
-test("validateCloseInputs: valid inputs -> CancelAfters as Ripple seconds, by milestone index", () => {
-  assert.deepEqual(validateCloseInputs(base()), [NOW + 3600, NOW + 7200, NOW + 90]);
-  // lower-case hex conditions are accepted too
-  assert.doesNotThrow(() => validateCloseInputs(base({ conditions: conds(3).map((c) => c.toLowerCase()) })));
-});
-
-test("validateCloseInputs: rejects bad shapes, duplicates, past and post-maturity CancelAfter", () => {
-  const bad = (over: Partial<Parameters<typeof validateCloseInputs>[0]>, re: RegExp) =>
-    assert.throws(() => validateCloseInputs(base(over)), (e: unknown) => e instanceof XrplLedgerError && e.apiCode === "validation" && re.test(e.message));
-  bad({ conditions: conds(2) }, /2 conditions for 3 milestones/);
-  bad({ cancelAfters: [iso(NOW + 60)] }, /1 cancelAfters for 3 milestones/);
-  bad({ milestoneCount: 0, conditions: [], cancelAfters: [] }, /no milestones/);
-  const [a, b] = conds(2);
-  bad({ conditions: [a!, b!, a!.toLowerCase()] }, /conditions\[2\] duplicates/);
-  bad({ conditions: [a!, b!, "A0228020" + "00".repeat(32)] }, /conditions\[2\] is not a PREIMAGE-SHA-256 condition/);
-  bad({ cancelAfters: [iso(NOW + 60), iso(NOW), iso(NOW + 60)] }, /cancelAfters\[1\] .* is not after ledger now/);
-  bad({ cancelAfters: [iso(NOW + 60), iso(NOW + 60), iso(NOW + 4 * 86_400)] }, /cancelAfters\[2\] .* is not before loan maturity/);
-  bad({ cancelAfters: [iso(NOW + 60), "soon", iso(NOW + 60)] }, /cancelAfters\[1\] is not an ISO date/);
-});
-
-test("validateCloseInputs matches xrpl.js isoTimeToRippleTime", () => {
-  const at = "2026-10-25T12:00:00.000Z";
-  assert.deepEqual(validateCloseInputs(base({ cancelAfters: [at, at, at], nowRipple: isoTimeToRippleTime(at) - 1, maturityFloorRipple: isoTimeToRippleTime(at) + 1 })), [
-    isoTimeToRippleTime(at),
-    isoTimeToRippleTime(at),
-    isoTimeToRippleTime(at),
-  ]);
-});
-
-// ---------------------------------------------------------------- repay
-
-test("repayMode: > one periodic payment -> overpayment; late after due date; else regular", () => {
-  assert.equal(repayMode({ amount: "200", periodicPayment: "100.1", nowRipple: NOW }), "overpayment");
-  assert.equal(repayMode({ amount: "100.1", periodicPayment: "100.1", nowRipple: NOW, nextPaymentDueRipple: NOW + 10 }), "regular");
-  assert.equal(repayMode({ amount: "100.2", periodicPayment: "100.1", serviceFee: "0.1", nowRipple: NOW }), "regular");
-  assert.equal(repayMode({ amount: "100.1", periodicPayment: "100.1", nowRipple: NOW, nextPaymentDueRipple: NOW - 1 }), "late");
-});
-
 // ---------------------------------------------------------------- reads
 
-test("toEscrowSnapshot maps reads.ts EscrowView to the shared EscrowSnapshot", () => {
+test("getEscrow: reads.ts toEscrowSnapshot maps EscrowView to the shared EscrowSnapshot", () => {
   const view = {
     index: "IDX",
     owner: "rSpv",

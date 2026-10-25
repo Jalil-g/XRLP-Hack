@@ -4,7 +4,8 @@
 // fee -> credentials x3 roles -> setup (private vault + broker + cover + SPV) -> deposits -> withdraw/close refused
 // (TooSoonError) -> close with release-service conditions -> preflight -> finish -> wrong-fulfillment finish -> cancel
 // after a short CancelAfter -> repay escrow_refund + builder -> attestations (held key + inspector-signed blob) -> reads.
-// Short dates: SubscriptionDate = now + E2E_SUBSCRIPTION_S (default 120); m3 CancelAfter = close + E2E_CANCEL_S (default 75).
+// Short dates: SubscriptionDate = now + E2E_SUBSCRIPTION_S (default 120); m3 CancelAfter = close + E2E_CANCEL_S (default 120:
+// > planLoanClose's 60 s minimum lifetime, and still in the future when step 10 tries the early cancel).
 // Writes .data/adapter-e2e.json (gitignored).
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,14 +14,14 @@ import { isoTimeToRippleTime, rippleTimeToISOTime } from "xrpl";
 import { apiCodeOf, XrplLedgerAdapter } from "../src/adapter.ts";
 import { prepareAttestTx, sha256Hex, type AttestMemo } from "../src/attest.ts";
 import { disconnect, ledgerTime, waitForLedgerTimeAfter } from "../src/client.ts";
-import { generateMilestoneCondition, type MilestoneCondition } from "../src/condition.ts";
 import { config } from "../src/config.ts";
 import { vaultDatesFor } from "../src/lending-math.ts";
-import { getLoan } from "../src/loan.ts";
+import { getLoan, planLoanPayment } from "../src/loan.ts";
 import { loadWallets } from "../src/wallets.ts";
+import { testConditionPairs } from "../test/support/conditions.ts";
 
 const SUB_S = Number(process.env.E2E_SUBSCRIPTION_S ?? 120);
-const CANCEL_S = Number(process.env.E2E_CANCEL_S ?? 75);
+const CANCEL_S = Number(process.env.E2E_CANCEL_S ?? 120);
 const DAY = 86_400;
 
 interface Row {
@@ -110,7 +111,7 @@ try {
   say("\n5. refusals before the vault dates");
   await expectRefusal("withdraw before RedemptionDate", ledger.withdraw({ project, investor: w.investor1.classicAddress, amount: "10" }), "too_soon");
   // Release service: one fresh preimage per escrow; the adapter only ever sees the conditions.
-  const keys: MilestoneCondition[] = project.milestones.map(() => generateMilestoneCondition());
+  const keys = testConditionPairs(project.milestones.length);
   const conditions = keys.map((k) => k.condition);
   const farCancel = rippleTimeToISOTime(sub + 2 * DAY);
   if ((await ledgerTime()) <= sub) {
@@ -180,7 +181,8 @@ try {
 
   say("\n11. builder repays one periodic payment (builder -> SPV, SPV LoanPay)");
   const loan = await getLoan(close.loanId);
-  const periodic = (Math.ceil((Number(loan?.PeriodicPayment ?? "0") + Number(loan?.LoanServiceFee ?? "0")) * 1e6) / 1e6).toFixed(6);
+  if (!loan) throw new Error(`loan ${close.loanId} not found`);
+  const periodic = planLoanPayment({ loan, nowRipple: await ledgerTime() }).minimum; // one periodic payment + fee, rounded up
   record(`repayLoan ${periodic} builder`, await ledger.repayLoan({ project, amount: periodic, source: "builder" }));
 
   say("\n12. reads");

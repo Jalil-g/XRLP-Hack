@@ -1,0 +1,20 @@
+# @xrlp/attest-signer — testing
+
+| Layer | Status (2026-10-25) | How |
+|---|---|---|
+| `SoftwareSigner` (seed / entropy), multisig combine + verify | **Tested** (offline) | `test/signer.test.ts` |
+| Audit attestation = XRPL-08 Payment (`xrlp/attest/v1`), signed blob accepted by `packages/xrpl` `verifyAttestBlob` (the check core runs), canonical `auditHash` golden value | **Tested** (offline) | `test/attestation.test.ts` |
+| Autofill + sign + `verifyAttestBlob` + submit on **devnet** (fresh faucet wallets) | **Tested** 2026-10-25: tesSUCCESS, memo read back, on-ledger hash = signed hash | `pnpm --filter @xrlp/attest-signer smoke:devnet` |
+| Inspector app http mode → core route 10 → `submitSignedBlob` | **Not yet testable**: core has no `CoreApi` implementation on main (CORE-03) | `apps/inspector` |
+
+## Offline unit tests
+
+```bash
+pnpm --filter @xrlp/attest-signer test        # node --import tsx --test, no network
+pnpm --filter @xrlp/attest-signer typecheck
+```
+
+`tsx` is needed only because the parity test imports `@xrlp/xrpl` (which uses TS parameter properties).
+
+The hardware-wallet (Ledger device) backend from the v1 spike was removed in INS-04 (Direction v2: no hardware-wallet work).
+It lives in git history under `packages/ledger-signer` (`src/ledger.ts`, Speculos smoke test) if it is ever revived.

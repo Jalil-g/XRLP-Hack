@@ -105,7 +105,7 @@ test("invoice_matches_budget: within tolerance, shortfall, overrun, unreadable",
   const short = checkInvoiceMatchesBudget(ctx, [inv("18400.00")], policy);
   assert.equal(short.result, "fail");
   assert.match(short.reason, /73\.6%/);
-  assert.equal(checkInvoiceMatchesBudget(ctx, [inv("40000.00")], policy).result, "warn");
+  assert.equal(checkInvoiceMatchesBudget(ctx, [inv("40000.00")], policy).result, "fail");
   assert.equal(checkInvoiceMatchesBudget(ctx, [inv()], policy).result, "warn");
   const unread = inv();
   assert.equal(checkInvoiceMatchesBudget(ctx, [unread], policy, { [unread.evidence.id]: "25000.00" }).result, "pass", "LLM total used");
@@ -127,16 +127,16 @@ test("lien_waiver_matches_invoices: match, amount mismatch, missing waiver", () 
 const o = (check: string, result: CheckOutcome["result"], confidence = 0.99, source: CheckOutcome["source"] = "deterministic"): CheckOutcome =>
   ({ check, result, reason: "r", evidenceIds: [], confidence, source });
 
-test("decide: deterministic fail -> fail; gps fail (medium) -> needs_human; all pass -> pass", () => {
+test("decide: any required failure blocks; partial results cannot become an automatic pass", () => {
   assert.equal(decide([o("no_duplicate_photo", "fail")], policy).decision, "fail");
-  assert.equal(decide([o("gps_within_site", "fail")], policy).decision, "needs_human");
+  assert.equal(decide([o("gps_within_site", "fail")], policy).decision, "fail");
   const pass = decide([o("photo_fresh", "pass"), o("stage_visually_consistent", "pass", 0.9, "llm")], policy);
-  assert.equal(pass.decision, "pass");
-  assert.equal(pass.confidence, 0.9);
+  assert.equal(pass.decision, "needs_human");
+  assert.equal(pass.confidence, 0);
 });
 
-test("decide: low-confidence LLM never fails or passes on its own -> needs_human", () => {
-  assert.equal(decide([o("stage_visually_consistent", "fail", 0.4, "llm")], policy).decision, "needs_human");
+test("decide: required LLM failure blocks; low-confidence approval and missing gates need review", () => {
+  assert.equal(decide([o("stage_visually_consistent", "fail", 0.4, "llm")], policy).decision, "fail");
   assert.equal(decide([o("stage_visually_consistent", "pass", 0.4, "llm")], policy).decision, "needs_human");
   assert.equal(decide([o("stage_visually_consistent", "fail", 0.95, "llm")], policy).decision, "fail");
 });
