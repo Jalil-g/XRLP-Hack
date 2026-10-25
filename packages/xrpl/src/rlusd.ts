@@ -76,7 +76,8 @@ export async function issueRlusd(issuer: Wallet, to: string, value: string): Pro
 export async function topUpRlusd(issuer: Wallet, to: string, target: number): Promise<TxResult | undefined> {
   const bal = Number(await rlusdBalance(to, issuer.classicAddress));
   if (bal >= target) return undefined;
-  return issueRlusd(issuer, to, String(target - bal));
+  // Whole RLUSD, rounded up: a float difference (2599.9921510000004) is rejected as "Decimal precision out of range".
+  return issueRlusd(issuer, to, String(Math.ceil(target - bal)));
 }
 
 /** Plain RLUSD payment between two holders. */

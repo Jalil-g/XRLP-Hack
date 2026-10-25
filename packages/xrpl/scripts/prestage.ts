@@ -15,7 +15,8 @@
 // Env knobs (seconds):
 //   PRESTAGE_SUBSCRIPTION_S=60      deposit window per project.
 //   PRESTAGE_B_STALL_CANCEL_S=75    B's M2 CancelAfter after B's close (prestage waits until it has passed).
-//   PRESTAGE_C_INTERVAL_S=240       C's single PaymentInterval (release x3 + repay must land inside it).
+//   PRESTAGE_C_INTERVAL_S=300       C's single PaymentInterval (escrows + release x3 + repay should land inside it;
+//                                   a late LoanPay still pays off: late fees are 0).
 //   PRESTAGE_C_CLOSE_WINDOW_S=240   C's LoanSet must land within this after C's SubscriptionDate.
 import { existsSync, readFileSync } from "node:fs";
 import { isoTimeToRippleTime } from "xrpl";
@@ -66,7 +67,7 @@ import {
 
 const SUBSCRIPTION_S = envNum("PRESTAGE_SUBSCRIPTION_S", 60);
 const B_STALL_CANCEL_S = envNum("PRESTAGE_B_STALL_CANCEL_S", 75);
-const C_INTERVAL_S = envNum("PRESTAGE_C_INTERVAL_S", 240);
+const C_INTERVAL_S = envNum("PRESTAGE_C_INTERVAL_S", 300);
 const C_CLOSE_WINDOW_S = envNum("PRESTAGE_C_CLOSE_WINDOW_S", 240);
 const MONTH_S = 30 * DAY_S;
 const CHECKS = ["required_evidence_present", "gps_within_site", "photo_fresh", "no_duplicate_photo", "invoice_matches_budget", "inspector_audit_present", "audit_checklist_complete", "stage_visually_consistent"];
@@ -229,13 +230,14 @@ async function stageClose(s: Staged) {
   s.loanSetAt = iso(s.closedAt);
 }
 
+/** withSuite: audit + verdict + release attestations (B's M1, shown in the UI); C: finish only (history, saves ledgers). */
 async function releaseM(s: Staged, esc: MilestoneEscrowInfo, withSuite: boolean) {
   const w = loadWallets();
   if (withSuite) {
     await attestAudit(s.log, s.project, esc.milestoneId, w.inspector1, { milestoneId: esc.milestoneId, inspector: w.inspector1.classicAddress, checklist: [{ sovCode: "F-01", status: "done" }] });
     await attestVerdict(s.log, s.project, esc.milestoneId, { milestoneId: esc.milestoneId, decision: "pass", confidence: 0.93, model: "mock", checks: CHECKS });
   }
-  const r = await releaseWithSuite(s.log, s.project, esc, rs, { passed: CHECKS });
+  const r = await releaseWithSuite(s.log, s.project, esc, rs, { passed: CHECKS, attestRelease: withSuite });
   s.finished[esc.milestoneId] = r.finish.hash;
 }
 
@@ -251,7 +253,7 @@ async function stageC(s: Staged) {
   const w = loadWallets();
   const snap = await snapshot(project);
   const due = Number(snap.loan?.periodicPayment ?? "0");
-  const short = Math.ceil((due - Number(snap.spvRlusd)) * 100) / 100 + 0.01;
+  const short = Math.ceil((due - Number(snap.spvRlusd)) * 100) / 100 + 1; // +1: headroom if the payment lands late
   if (short > 0) {
     await ensureRlusd(log, "builder", Math.ceil(short) + 1_000);
     await builderPayToSpv(log, project.chain.spv!, short.toFixed(2));

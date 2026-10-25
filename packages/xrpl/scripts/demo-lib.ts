@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join, relative } from "node:path";
 import type { ChainEvent, Project } from "@xrlp/shared";
 import { explorerTxUrl } from "@xrlp/shared";
-import { convertStringToHex, rippleTimeToISOTime, type Wallet } from "xrpl";
+import { rippleTimeToISOTime, type Wallet } from "xrpl";
 import { closeLoanAndCreateEscrows, releaseMilestone, repayLoan, spvSignersFor, type CloseLoanResult, type MilestoneEscrowInfo, type ProjectChainSetup } from "../src/api.ts";
 import { prepareAttestTx, sha256Hex, type AttestMemo } from "../src/attest.ts";
 import { ledgerTime, signAndSubmit, XrplTxError, type TxResult } from "../src/client.ts";
@@ -18,7 +18,7 @@ import { config, REPO_ROOT } from "../src/config.ts";
 import { credentialStatus, credentialTypeHex } from "../src/credentials.ts";
 import { toChainEvent } from "../src/events.ts";
 import { COVER_RATE_LIQUIDATION, COVER_RATE_MINIMUM, defaultCoverDeposit, expectedInterest, MANAGEMENT_FEE_RATE, minimumCover, originationFeeFor } from "../src/lending-math.ts";
-import { createLoanBroker, depositBrokerCover, getLoan } from "../src/loan.ts";
+import { createLoanBroker, depositBrokerCover } from "../src/loan.ts";
 import { preflightFinish, type PreflightResult } from "../src/preflight.ts";
 import { getEscrow, getLoanSnapshot, getVaultSnapshot } from "../src/reads.ts";
 import { payRlusd, rlusdBalance, topUpRlusd } from "../src/rlusd.ts";
@@ -409,13 +409,20 @@ export async function closeProject(
 // ------------------------------------------------------------------ test suite: attestations + release
 
 /** Inspector-app flow (INS): core prepares the unsigned attestation, the inspector's software key signs, core submits the blob. */
-export async function attestAudit(log: TxLog, project: Project, milestoneId: string, inspector: Wallet, audit: unknown): Promise<{ tx: TxResult; hash: string }> {
+export async function attestAudit(
+  log: TxLog,
+  project: Project,
+  milestoneId: string,
+  inspector: Wallet,
+  audit: unknown,
+  decision: "pass" | "partial" | "fail" = "pass",
+): Promise<{ tx: TxResult; hash: string }> {
   const hash = sha256Hex(JSON.stringify(audit));
-  const memo: AttestMemo = { v: 1, kind: "audit", milestoneId, hash, decision: "pass" };
+  const memo: AttestMemo = { v: 1, kind: "audit", milestoneId, hash, decision };
   const unsigned = await prepareAttestTx({ account: inspector.classicAddress, spv: project.chain.spv!, memo });
   const { tx_blob } = inspector.sign(unsigned);
   const r = await submitSignedBlob(tx_blob, { expectSigner: inspector.classicAddress, expectSpv: project.chain.spv!, projectId: project.id });
-  log.rec(`attest audit (inspector signed blob, ${hash.slice(0, 8)}…)`, r.tx);
+  log.rec(`attest audit ${decision} (inspector signed blob, ${hash.slice(0, 8)}…)`, r.tx);
   return { tx: r.tx, hash };
 }
 
@@ -445,20 +452,22 @@ export async function releaseWithSuite(
   project: Project,
   esc: MilestoneEscrowInfo,
   rs: ReleaseServiceStandIn,
-  suite: { passed: string[] },
+  suite: { passed: string[]; attestRelease?: boolean },
 ): Promise<{ preflight: PreflightResult; finish: TxResult; event: ChainEvent }> {
   const w = loadWallets();
   const fulfillment = rs.fulfillmentFor(project.id, esc.milestoneId, esc.condition);
   const pf = await preflightFinish({ owner: esc.owner, offerSequence: esc.offerSequence, destination: w.builder.classicAddress, condition: esc.condition, fulfillment, submitter: w.releaseService.classicAddress });
   if (!pf.ok) throw new Error(`preflight refused ${esc.milestoneId}: ${pf.reason} ${pf.message ?? ""} — nothing submitted, preimage not revealed`);
   log.info(`preflight ok: escrow open, ${pf.details.secondsToCancelAfter}s to CancelAfter, builder trust line ok, condition matches (fee ${pf.details.recommendedFee} drops)`);
-  const rel = await attest({
-    signer: "releaseService",
-    spv: esc.owner,
-    projectId: project.id,
-    memo: { v: 1, kind: "release", milestoneId: esc.milestoneId, hash: sha256Hex(canonicalJson({ milestoneId: esc.milestoneId, suite: suite.passed, result: "pass" })), decision: "pass" },
-  });
-  log.rec(`attest release (releaseService: ${suite.passed.length} checks green)`, rel.tx);
+  if (suite.attestRelease !== false) {
+    const rel = await attest({
+      signer: "releaseService",
+      spv: esc.owner,
+      projectId: project.id,
+      memo: { v: 1, kind: "release", milestoneId: esc.milestoneId, hash: sha256Hex(canonicalJson({ milestoneId: esc.milestoneId, suite: suite.passed, result: "pass" })), decision: "pass" },
+    });
+    log.rec(`attest release (releaseService: ${suite.passed.length} checks green)`, rel.tx);
+  }
   // after XRPL-07 merge: releaseMilestone's default submitter is releaseService.
   const fin = await releaseMilestone({ projectId: project.id, milestoneId: esc.milestoneId, escrow: esc.escrow, fulfillment, amount: esc.amount, submitter: "releaseService" });
   log.rec(`EscrowFinish ${esc.milestoneId.split("-").slice(-2).join("-")} ${esc.amount} -> builder`, fin.tx);
@@ -529,4 +538,3 @@ export async function escrowStillOpen(esc: MilestoneEscrowInfo): Promise<boolean
   return !!(await retry("escrow read", () => getEscrow(esc.owner, esc.offerSequence)));
 }
 
-export { getLoan, convertStringToHex };

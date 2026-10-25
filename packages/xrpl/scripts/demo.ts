@@ -161,7 +161,7 @@ async function runDemo() {
       "4. Fraud held: milestone 2 reuses a photo from another project",
       "Reused framing photo from another job. One red check, the suite fails, the money stays locked.",
     );
-    await attestAudit(log, project, m2.id, w.inspector1, auditFixture("framing.json", m2.id, w.inspector1.classicAddress));
+    await attestAudit(log, project, m2.id, w.inspector1, auditFixture("framing.json", m2.id, w.inspector1.classicAddress), "partial"); // sheathing marked partial
     await attestVerdict(log, project, m2.id, {
       milestoneId: m2.id,
       decision: "fail",

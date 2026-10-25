@@ -53,6 +53,10 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
 
+- [10-25] Prestage (XRPL-11) = three fresh projects per run, pipelined C → B → A (C first: it must wait for its RedemptionDate). A: 6 × 30-day loan, escrow CancelAfter +30/60/90 d. B: M1 released, **M2 (12k) is the stall escrow** (CancelAfter past before the file is written), 12 × 30-day loan so the refund LoanPay is on time and ≥ one periodic payment. C: 1 × 300 s loan, all escrows released, builder → SPV → LoanPay pays it off, then wait for RedemptionDate. `--only A,B` re-stages a subset and keeps the rest of `prestage.json` (a rehearsal consumes A's M1/M2 and B's expired escrow; C stays valid). (Jalil's agent, XRPL-11)
+- [10-25] `.data/prestage.json` shape = `PrestageFile` in `packages/xrpl/src/prestage-types.ts` (exported, with `parsePrestageFile`); preimages only in `.data/prestage-preimages.json` / `.data/demo-preimages.json` (mode 600, never printed, old entries kept); the writer validates that the file has no preimage/fulfillment/seed field. (Jalil's agent, XRPL-11)
+- [10-25] Scripts make every project vault **private** (tfVaultPrivate + platform DomainID + non-transferable shares) by composing `setupProjectOnChain`'s steps in `scripts/demo-lib.ts` (`setupProjectOnChain` has no `domainId` option yet; worth adding). The CLI demo dropped the `DEMO_SPV_MODE=single` master-key fallback (XRPL-01 proved multisig LoanSet). Scripts delete an old investor3 `KYC_INVESTOR` credential so the `tecNO_AUTH` beat works with v1 wallet files. (Jalil's agent, XRPL-11)
+
 ## Open
 
 - Product name.
