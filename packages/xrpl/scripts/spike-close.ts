@@ -6,9 +6,11 @@
 //   - close while the vault is in Subscription with waitForInvestmentPhase:false → TooSoonError, nothing submitted
 //   - duplicate condition / CancelAfter ≥ maturity / malformed condition → CloseValidationError, nothing submitted
 //   - close: LoanSet (platform Account, SPV 3-of-4 countersign, tfLoanOverpayment, origination fee) + 3 EscrowCreates
-//     back to back → SPV liquid RLUSD ≈ 0, escrows sum to the principal, every CancelAfter < maturity
+//     → SPV liquid RLUSD ≈ 0, escrows sum to the principal, every CancelAfter < maturity. Since XRPL-13b the escrows go in
+//     ONE all-or-nothing Batch by default; SPIKE_ESCROW_MODE=sequential reproduces the §2c run (3 back-to-back txs)
 //   - re-running the close with the same conditions → rejected (condition already on an open SPV escrow)
-// Env: SPIKE_SUBSCRIPTION_S=90, SPIKE_PAYMENT_INTERVAL_S=300.
+// Env: SPIKE_SUBSCRIPTION_S=90, SPIKE_PAYMENT_INTERVAL_S=300, SPIKE_ESCROW_MODE=batch|sequential (default: the API's).
+// XRPL-13b's own proof (Batch rollback, partial close, resumeEscrowCreation) is spike-close-batch.ts.
 import type { Project } from "@xrlp/shared";
 import { TooSoonError } from "@xrlp/shared";
 import { rippleTimeToISOTime } from "xrpl";
@@ -24,6 +26,7 @@ const SUBSCRIPTION_S = Number(process.env.SPIKE_SUBSCRIPTION_S ?? 90);
 const PAYMENT_INTERVAL_S = Number(process.env.SPIKE_PAYMENT_INTERVAL_S ?? 300);
 const PAYMENT_TOTAL = 3;
 const PRINCIPAL = "3000";
+const ESCROW_MODE = process.env.SPIKE_ESCROW_MODE as "batch" | "sequential" | undefined;
 
 const spike = new Spike("spike-xrpl06-close");
 const w = loadWallets();
@@ -123,12 +126,13 @@ try {
     closeLoanAndCreateEscrows(project, { conditions: [conditions[0]!, pairs[1]!.fulfillment, conditions[2]!], paymentTotal: 1, paymentIntervalS: PAYMENT_INTERVAL_S }),
   );
 
-  spike.log("3. close: LoanSet (platform Account, SPV 3-of-4 countersign) + 3 × EscrowCreate");
+  spike.log(`3. close: LoanSet (platform Account, SPV 3-of-4 countersign) + 3 × EscrowCreate (escrowMode ${ESCROW_MODE ?? "default"})`);
   const spvBefore = await getBalance(setup.spv, "RLUSD", { issuer });
-  const close = await closeLoanAndCreateEscrows(project, { conditions, paymentTotal: PAYMENT_TOTAL, paymentIntervalS: PAYMENT_INTERVAL_S });
+  const close = await closeLoanAndCreateEscrows(project, { conditions, paymentTotal: PAYMENT_TOTAL, paymentIntervalS: PAYMENT_INTERVAL_S, ...(ESCROW_MODE ? { escrowMode: ESCROW_MODE } : {}) });
   if (close.originationFeeTopUpTx) spike.rows.push({ step: `builder → SPV origination-fee shortfall ${close.originationFee}`, result: close.originationFeeTopUpTx.result, hash: close.originationFeeTopUpTx.hash });
+  if (close.batchTx) spike.rows.push({ step: `Batch (${close.escrowMode}: the 3 EscrowCreates below are its inner txs)`, result: close.batchTx.result, hash: close.batchTx.hash });
   for (const t of close.txs) spike.rows.push({ step: String(t.tx.TransactionType), result: t.result, hash: t.hash });
-  for (const t of close.txs) spike.log(`  ✔ ${t.tx.TransactionType}: ${t.result} ${t.explorerUrl}`);
+  for (const t of [...close.txs, ...(close.batchTx ? [close.batchTx] : [])]) spike.log(`  ✔ ${t.tx.TransactionType}: ${t.result} ${t.explorerUrl}`);
 
   const spvAfter = await getBalance(setup.spv, "RLUSD", { issuer });
   const escrows = await listEscrowsParsed(setup.spv);
