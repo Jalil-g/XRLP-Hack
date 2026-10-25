@@ -39,6 +39,52 @@ export class XrplTxError extends Error {
   }
 }
 
+// ── secret redaction (security review M3) ──────────────────────────────────────────────────
+// xrpl.js errors carry the request: a `submit` TimeoutError's message is `Timeout for request: {"command":"submit",
+// "tx_blob":"…"}` and a RippledError's `data.request.tx_blob` echoes it. For an EscrowFinish that blob holds the
+// fulfillment. Errors kept as `cause` (and printed by `console.error(e)`) go through `redactedCause` first.
+
+/** Hex runs at least this long are signed blobs or fulfillments (a 32-byte fulfillment is 72 hex); tx hashes (64) stay readable. */
+const LONG_HEX = /[0-9A-Fa-f]{72,}/g;
+const SECRET_KEYS = /^(tx_blob|blob|fulfillment|preimage|seed|secret|master_seed|master_key|private_?key)$/i;
+
+/** `s` with every long hex run (signed blob, fulfillment) replaced by `[redacted N hex]`. */
+export function redactSecrets(s: string): string {
+  return s.replace(LONG_HEX, (m) => `[redacted ${m.length} hex]`);
+}
+
+function redactDeep(v: unknown, depth = 0): unknown {
+  if (typeof v === "string") return redactSecrets(v);
+  if (!v || typeof v !== "object" || depth > 8) return v;
+  if (Array.isArray(v)) return v.map((x) => redactDeep(x, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) out[k] = SECRET_KEYS.test(k) ? "[redacted]" : redactDeep(x, depth + 1);
+  return out;
+}
+
+/**
+ * A copy of `e` that is safe to keep as a `cause` or to log: same name, message and stack with long hex runs redacted,
+ * and `data` (xrpl.js errors) with `tx_blob` / `Fulfillment` / `seed` / … fields replaced. Classify the original first.
+ */
+export function redactedCause(e: unknown): Error {
+  const src = e instanceof Error ? e : new Error(String(e));
+  const out = new Error(redactSecrets(src.message));
+  out.name = src.name;
+  if (src.stack) out.stack = redactSecrets(src.stack);
+  const data = (e as { data?: unknown } | null)?.data;
+  if (data !== undefined) (out as Error & { data?: unknown }).data = redactDeep(data);
+  return out;
+}
+
+/** xrpl.js errors (`XrplError`: RippledError, TimeoutError, …) carry `data` that may echo a signed blob. */
+const carriesRequest = (e: unknown): boolean => !!e && typeof e === "object" && "data" in e && !(e instanceof XrplTxError) && !(e instanceof LedgerError);
+
+/** `e` as a cause: raw xrpl.js errors (they echo the request) redacted; this package's errors and plain values as is. */
+export function safeCause(e: unknown): unknown {
+  if (carriesRequest(e)) return redactedCause(e);
+  return typeof e === "string" ? redactSecrets(e) : e;
+}
+
 const NOT_FOUND_RESULTS = new Set(["tecNO_ENTRY", "tecNO_TARGET", "tecNO_DST", "tecOBJECT_NOT_FOUND", "tecNO_LINE"]);
 const NOT_FOUND_RPC = new Set(["entryNotFound", "actNotFound", "txnNotFound", "objectNotFound"]);
 
@@ -88,9 +134,9 @@ export function toLedgerError(e: unknown): LedgerError {
     const msg = typeof o.message === "string" ? o.message : typeof o.error?.message === "string" ? o.error.message : "pre-reveal safety refused the finish";
     out = new LedgerError("unsafe_release", msg);
   } else {
-    out = new LedgerError("ledger_error", e instanceof Error ? e.message : String(e));
+    out = new LedgerError("ledger_error", redactSecrets(e instanceof Error ? e.message : String(e)));
   }
-  out.cause = e;
+  out.cause = safeCause(e);
   return out;
 }
 
