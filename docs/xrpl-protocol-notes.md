@@ -630,10 +630,26 @@ What devnet showed:
 - Fees: a LoanManage costs the 1-drop base fee, and so do its `tec` results. Rows 6, 7 and 13 never reached the ledger: the signer's Sequence
   was compared before and after. Row 16 found the original default through `Loan.PreviousTxnID`.
 
+**Stall-path variant** (`SPIKE_PREPAY=600`, ~01:12 UTC; platform `rQj7NFejJoXvEhv3qesRHdxCJSdcucAFJ`, borrower `rQJEYRRWLupEruBL3jUiZdUdh3dZKbXLdF`).
+Here the borrower repays 600 on time with `tfLoanOverpayment` (as escrow refunds would be) and then goes dark. All other rows match the run above.
+
+| step | result | explorer |
+|---|---|---|
+| LoanPay 600 overpayment, on time | `tesSUCCESS`: `PrincipalOutstanding` and `DebtTotal` 400.000190257666, `AssetsTotal` 1000.0001712319 (interest booked as paid) | https://devnet.xrpl.org/transactions/B3C83D0006803CE4CCCC67505301BABF0AEF20017437AB6A485F6B32B47A9C0E |
+| impair (overdue): `LossUnrealized` 0 → 400.00019, net share price 1 → 0.599999 | `tesSUCCESS` | https://devnet.xrpl.org/transactions/8C54DCC89136CEC53F3C8B206821ADA8AF2ED0F84950CA5CC8A4142806A7980F |
+| **default** (platform, after due + grace) | **`tesSUCCESS`** | https://devnet.xrpl.org/transactions/6FE6525D37DCB9EFBA53D9E8C00D987E17CB4D8F976D97041698389C1512A19E |
+| LoanPay after the default | `tecKILLED` | https://devnet.xrpl.org/transactions/90843C10B2B963E3B53904B65AD04AE41F5D4594385217BC3337721D6E35035D |
+
+- **DefaultCovered = 40.000019025767, equal to `expectedDefaultCovered`.** 10% of 400.000190257666 is 40.0000190257666, rounded **up** to
+  `10^LoanScale` (`LoanScale -12`). This confirms rippled's rounding to the last digit (offline test `devnet stall-path variant`).
+- Vault loss 360.000171231899. `AssetsTotal` 1000.000171 → 640, `AssetsAvailable` 599.99998 → 640, share price **1 → 0.64**.
+  The cover went 110.000043 → 70.000023974233: the default drew only 40, and 70 stays with the platform.
+- Repaying first shrinks the loss (360 instead of 900), and it also shrinks what the cover pays (40 instead of 100): the cover tracks the debt still owed.
+
 **What to say on stage** (who absorbs what, in order):
 1. Unreleased milestone money is never at risk. It sits in escrow, and on a stall it goes back to the project account and is repaid to the vault first.
 2. Money that was released and not repaid is written off on-chain. The platform's first-loss cover pays first: 10 % of the outstanding debt goes back to the vault in the default transaction itself.
-3. Investors absorb the rest pro rata through the share price. Here 1000 defaulted, cover returned 100, and the share price went from 1.00 to 0.10. Every step is on the explorer.
+3. Investors absorb the rest pro rata through the share price. On devnet, 1000 unpaid → cover 100 → share 1.00 → 0.10. With 600 repaid first, 400 unpaid → cover 40 → share 0.64. Every step is on the explorer.
 
 ---
 
