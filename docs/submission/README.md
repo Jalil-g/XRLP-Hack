@@ -2,7 +2,7 @@
 
 > **Adopted pitch (2026-10-25):** [six-slide storyline](../08-pitch-storyline.md), [100-second recorded demo](../04-demo-script.md), [deck style guide](../ideas/pitch-3min-style-guide.md), and [Claude PowerPoint prompts](../ideas/pitch-3min-claude-prompts.md). These supersede older presentation timing and slide numbers below.
 
-Presentation deliverables: exactly six slides and a 100-second primary demo video. The deck and MP4 have not yet been produced by the documentation update; prompts and specifications are ready. Add real artifact links below after production.
+Presentation deliverables: the six-slide deck ([`docs/pitch/`](../pitch/), generated from `build-deck.cjs`) and the recorded demo video (87 s, attached to the [`submission-2026-10-25` release](https://github.com/Jalil-g/XRLP-Hack/releases/tag/submission-2026-10-25)). UI screenshots and slide renders: [`docs/assets/`](../assets/), shown in the root [README](../../README.md).
 
 **Construction money that moves only when the building does.**
 XRPL Lending & Borrowing track · AI & Fintech XRPL Hackathon NYC, Oct 24–25 2026 · devnet prototype, not an offer to invest.
@@ -10,8 +10,8 @@ XRPL Lending & Borrowing track · AI & Fintech XRPL Hackathon NYC, Oct 24–25 2
 | | |
 |---|---|
 | Code | https://github.com/Jalil-g/XRLP-Hack |
-| Primary demo video (100 s) | TODO(PITCH-08) |
-| Pitch deck | TODO(PITCH-06) |
+| Demo video (87 s, recorded on the design preview with sample data, XRPL devnet labelled) | [drawproof-demo.mp4](https://github.com/Jalil-g/XRLP-Hack/releases/download/submission-2026-10-25/drawproof-demo.mp4) |
+| Pitch deck (six slides) | [PDF](../pitch/Drawproof-Pitch.pdf) · [PPTX](../pitch/Drawproof-Pitch.pptx) |
 | Every XRPL primitive we use: code + devnet proof | [xrpl-primitives.md](xrpl-primitives.md) |
 | What we don't claim | [what-we-dont-claim.md](what-we-dont-claim.md) |
 | Full end-to-end devnet run (2026-10-25) | [proof-devnet-2026-10-25-v2.md](../proof-devnet-2026-10-25-v2.md) |
@@ -144,7 +144,7 @@ Last checked on devnet, 2026-10-25 ~03:35–03:50 UTC, on the code of `main` @ 5
 `packages/xrpl/proof/xrpl-11-devnet-2026-10-25.md`, M5 run: LoanSet, then one Batch of 3 escrows), and `spike:escrow` passed all 4 cases
 (finish to the builder, `tecCRYPTOCONDITION_ERROR`, `tecNO_LINE` leak, `tecNO_PERMISSION` after `CancelAfter`).
 
-**Full UI on devnet**: TODO(T+32h) confirm against the `demo-v1` tag: `LEDGER_MODE=devnet pnpm --filter @xrlp/core serve` (:4000), then
+**Full UI on devnet**: confirmed 2026-10-25 ~19:30 UTC on `main` @ 63307f4 (the README screenshots come from this run): `LEDGER_MODE=devnet pnpm --filter @xrlp/core serve` (:4000), then
 both apps with `NEXT_PUBLIC_API_MODE=http`.
 
 ## Team
