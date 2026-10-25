@@ -15,7 +15,8 @@ pnpm --filter @xrlp/verifier fixtures
 
 Mock mode is deterministic and needs no API key. Its judgement reasons are labeled [mock]; stage
 judgement uses filename tokens and audit judgement uses checklist status, not real image analysis.
-Live Claude remains unvalidated until VER-04/VER-10 live evaluation is recorded.
+The live request path is implemented and tested with fake responses; real Claude stability remains
+unvalidated until a keyed VER-10 evaluation is recorded.
 
 ## Shared v2 adapter
 
@@ -64,6 +65,17 @@ Input: project, builder, milestone, evidence; audits; trusted assignedInspectors
 project.sov); policy; optional priorEvidence, timeline, files, dataDir, mode, model and template.
 Prior evidence may include { evidence, projectId, milestoneId, projectName? } for better provenance.
 timeline contains escrowCreatedAt, previousMilestoneApprovedAt and now. Pin now for repeatable demos.
+Verification options also accept timeoutMs (default 20 seconds, maximum 60 seconds) and cacheDir
+(false disables caching). Live SDK requests have maxRetries=0, abort signals and explicit deadlines;
+server-side fallback is disabled so a refusal cannot silently rerun on another model. Builder and
+inspector images, checklists, notes and SoV are reviewed together. Image preprocessing is inside the
+fail-closed path. Corrupt/unreadable evidence, refusal, timeout, malformed/incomplete model responses
+produce needs_human. Reasons identify LLM-extracted invoice totals. Supplied text is untrusted data.
+
+Live cache entries are schema-validated and keyed by SHA-256 of model, prompt version, context,
+timeline, audits, metadata and actual file bytes. Atomic writes are best effort; transport/refusal
+failures are not cached. Cache does not prove model stability; the live eval disables it. Default
+cache path is .data/verifier-cache (override VERIFIER_CACHE_DIR).
 Files may be provided by evidence ID; otherwise data URLs or paths relative to dataDir are loaded.
 
 Audit gates require the correct milestone, assigned inspector, recomputed evidenceBundleHash and
