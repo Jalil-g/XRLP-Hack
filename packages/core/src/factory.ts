@@ -13,6 +13,7 @@ import { FakeClock, systemClock, type Clock } from "./clock.ts";
 import { DEMO_ADDRESSES, demoCancelAfter, seedDemo, SEED_BACKDATE_MS } from "./demo/scenario.ts";
 import { FakeLedger } from "./fakes/fake-ledger.ts";
 import { FakeVerifier } from "./fakes/fake-verifier.ts";
+import { releaseKeyFromEnv } from "./env.ts";
 import { FileStore, resolveDataDir } from "./file-store.ts";
 import { FilePreimageVault, MemoryPreimageVault, ReleaseService } from "./release-service.ts";
 import { CoreService, type CoreServiceOptions } from "./service.ts";
@@ -93,7 +94,7 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir, devnet);
   const verifier = opts.verifier ?? verifierFromEnv(env, clock, store, dataDir, !!devnet);
   const release =
-    opts.release ?? new ReleaseService({ ledger, vault: dataDir ? new FilePreimageVault(dataDir) : new MemoryPreimageVault(), now: () => clock.now() });
+    opts.release ?? new ReleaseService({ ledger, vault: dataDir ? new FilePreimageVault(dataDir, releaseKeyFromEnv(env)) : new MemoryPreimageVault(), now: () => clock.now() });
 
   // Route 21 seeding (fake ledger with files only): replay the demo story on a back-dated clock through a twin core
   // that shares this store, the fake ledger's state file and the preimage vault.
