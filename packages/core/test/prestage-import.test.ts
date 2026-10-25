@@ -539,10 +539,14 @@ describe("CORE-07 signed prestage audits (#173 compatibility)", () => {
     assert.ok(before > 0);
   });
 
-  it("no WALLETS_FILE (injected ledger): audits stay platform-attested as before", async () => {
+  it("no WALLETS_FILE (injected ledger only): unsigned audits, platform-attested today, refused by a devnet core after #173", async () => {
     const { svc, stub } = devnetCore(fixture(), "none");
-    await svc.resetDemo({});
-    assert.equal(stub.submitted.filter((s) => s.type === "attest:audit").length, 2);
+    try {
+      await svc.resetDemo({});
+      assert.equal(stub.submitted.filter((s) => s.type === "attest:audit").length, 2);
+    } catch (e) {
+      assert.ok(isCode("FORBIDDEN", /signed inspector audit is required/)(e), String(e)); // #173's rule outside fake mode
+    }
     assert.equal(stub.submitted.filter((s) => s.type === "signed:audit").length, 0);
   });
 });
