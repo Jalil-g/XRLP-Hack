@@ -32,10 +32,8 @@ for (const s of SCENARIOS) {
   test(`scenario ${s.key} matches the manifest: failing and warning checks`, async () => {
     const v = await verifyMilestone({ ...(await s.input()), mode: "mock" });
     const by = (r: string) => v.checks.filter((c) => c.result === r).map((c) => c.check);
-    // audit checks arrive with VER-03; the manifest already lists them
-    const known = (names: string[]) => names.filter((n) => v.checks.some((c) => c.check === n));
-    for (const f of known(s.failingChecks)) assert.ok(by("fail").includes(f), `${f} should fail: ${v.summary}`);
-    for (const w of known(s.warnChecks)) assert.ok(by("warn").includes(w), `${w} should warn`);
+    for (const f of s.failingChecks) assert.ok(by("fail").includes(f), `${f} should fail: ${v.summary}`);
+    for (const w of s.warnChecks) assert.ok(by("warn").includes(w), `${w} should warn`);
   });
 }
 
