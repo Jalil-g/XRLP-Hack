@@ -20,6 +20,7 @@
     "spike:spv": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-spv.ts",
     "spike:close": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-close.ts",
     "spike:batch": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-batch.ts",
+    "spike:release": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-release.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

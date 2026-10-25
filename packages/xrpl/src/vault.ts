@@ -1,8 +1,9 @@
 // XLS-65 Single Asset Vault. On devnet LendingProtocolV1_1 is enabled, so a vault that backs a
 // LoanBroker MUST be closed-ended: Subscription (deposits) -> Investment (LoanSet, no withdrawals)
 // -> Redemption (withdrawals). Phase is derived from the parent ledger close time.
-import { convertStringToHex, VaultCreateFlags, type Wallet } from "xrpl";
-import { createdNodeId, getClient, isNotFound, getLedgerEntry, signAndSubmit, type TxResult } from "./client.ts";
+import { TooSoonError } from "@xrlp/shared";
+import { convertStringToHex, rippleTimeToISOTime, VaultCreateFlags, type Wallet } from "xrpl";
+import { createdNodeId, getClient, isNotFound, getLedgerEntry, signAndSubmit, XrplTxError, type TxResult } from "./client.ts";
 import { validateVaultDates, type LoanSchedule } from "./lending-math.ts";
 import { rlusdAmount, rlusdAsset } from "./rlusd.ts";
 
@@ -94,14 +95,42 @@ export async function depositToVaultTx(investor: Wallet, vaultId: string, issuer
   });
 }
 
-/** Withdraw `amount` RLUSD worth of assets (burns the corresponding shares). Only in Redemption phase for closed-ended vaults. */
+/**
+ * Withdraw `amount` RLUSD worth of assets (burns the corresponding shares). Closed-ended vaults only allow this in
+ * Subscription or Redemption; an on-ledger `tecTOO_SOON` (Investment phase) is rethrown as shared `TooSoonError`.
+ * Use `withdrawPhaseCheck` first to refuse without submitting (api.ts `withdrawFromVault` does).
+ */
 export async function withdrawFromVaultTx(investor: Wallet, vaultId: string, issuer: string, amount: string): Promise<TxResult> {
-  return signAndSubmit(investor, {
-    TransactionType: "VaultWithdraw",
-    Account: investor.classicAddress,
-    VaultID: vaultId,
-    Amount: rlusdAmount(issuer, amount),
-  });
+  try {
+    return await signAndSubmit(investor, {
+      TransactionType: "VaultWithdraw",
+      Account: investor.classicAddress,
+      VaultID: vaultId,
+      Amount: rlusdAmount(issuer, amount),
+    });
+  } catch (e) {
+    if (e instanceof XrplTxError && e.engineResult === "tecTOO_SOON") {
+      throw new TooSoonError(`VaultWithdraw before RedemptionDate (${e.explorerUrl ?? "on-ledger"})`, { txResult: e.engineResult, ...(e.hash ? { txHash: e.hash } : {}) });
+    }
+    throw e;
+  }
+}
+
+/**
+ * Pure: may `VaultWithdraw` succeed at ledger time `nowRipple`? Closed-ended vaults block withdrawals in the
+ * Investment phase (SubscriptionDate < now < RedemptionDate -> tecTOO_SOON); Subscription, Redemption and open
+ * vaults allow them.
+ */
+export function withdrawPhaseCheck(v: VaultLedgerEntry, nowRipple: number): { ok: true; phase: VaultPhase } | { ok: false; phase: "investment"; secondsLeft: number; message: string } {
+  const phase = vaultPhase(v, nowRipple);
+  if (phase !== "investment") return { ok: true, phase };
+  const secondsLeft = v.RedemptionDate! - nowRipple;
+  return {
+    ok: false,
+    phase,
+    secondsLeft,
+    message: `vault ${v.index} is in its Investment phase: withdrawals reopen at RedemptionDate ${rippleTimeToISOTime(v.RedemptionDate!)} (ledger time, ${secondsLeft}s to go)`,
+  };
 }
 
 /** Raw share (MPT) balance of `holder` for the vault's share issuance, as an integer string. */
