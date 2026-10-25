@@ -75,7 +75,7 @@ import {
   isTerminal,
 } from "./state-machine.ts";
 import { normalizeAnswers, siteVisitHash, siteVisitOutcome, SiteVisitReportInput, type InspectorSiteVisit } from "./site-visit.ts";
-import type { AuditRecord, DbState, ProjectMeta, Store } from "./store.ts";
+import { recordChainEvents, type AuditRecord, type DbState, type ProjectMeta, type Store } from "./store.ts";
 
 // ---------- non-route inputs (seed / admin) ----------
 
@@ -334,7 +334,7 @@ export class CoreService implements CoreApi {
     return this.store.write((db) => {
       const inspector: Inspector = { ...d, verified: true, credentialTx: txs[0]?.hash };
       db.inspectors.push(inspector);
-      db.chainEvents.push(...events);
+      recordChainEvents(db, events);
       return { inspector, events };
     });
   }
@@ -352,7 +352,7 @@ export class CoreService implements CoreApi {
       if (!inv) db.investors.push((inv = { address: addr, name: name ?? `Investor ${addr.slice(0, 6)}`, createdAt: this.nowIso() }));
       // [] = already issued + accepted on-ledger (devnet adapter: nothing submitted); still KYC'd.
       inv.kycCredentialTx = txs[0]?.hash ?? inv.kycCredentialTx ?? KYC_ALREADY_ON_LEDGER;
-      db.chainEvents.push(...events);
+      recordChainEvents(db, events);
       return { events };
     });
   }
@@ -525,7 +525,7 @@ export class CoreService implements CoreApi {
         const p = this.projectIn(db, id);
         this.setProjectStatus(db, p, "verifying");
         this.meta(db, id).verificationFee = { amount, tx: tx.hash, at: tx.at ?? this.nowIso() };
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, events };
       });
     });
@@ -575,7 +575,7 @@ export class CoreService implements CoreApi {
         } else {
           meta.preVisitRequested = true; // inspector pre-construction visit (route 18 needs: "pre_visit")
         }
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { verification, project: p, events };
       });
     });
@@ -638,7 +638,7 @@ export class CoreService implements CoreApi {
         const meta = this.meta(db, id);
         meta.assignment = { ...assignment, at: this.nowIso(), tx: assignTx.hash };
         meta.fundingOpenedAt = this.nowIso();
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, assignment, events };
       });
     });
@@ -671,7 +671,7 @@ export class CoreService implements CoreApi {
         db.investments.push(investment);
         const total = sumMicro(db.investments.filter((i) => i.projectId === id).map((i) => i.amount));
         if (total === toMicro(p.terms.principal)) this.setProjectStatus(db, p, "funded"); // never auto-closes
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { investment, events };
       });
     });
@@ -747,7 +747,7 @@ export class CoreService implements CoreApi {
         p.chain.loanId = res.loanId;
         this.setProjectStatus(db, p, "escrowed");
         this.meta(db, id).escrowedAt = this.nowIso();
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, events };
       });
     });
@@ -780,7 +780,7 @@ export class CoreService implements CoreApi {
       const meta = this.meta(db, id);
       meta.escrowedAt = at;
       meta.closePending = p.milestones.filter((m) => !m.escrow).map((m) => m.id);
-      db.chainEvents.push(...events);
+      recordChainEvents(db, events);
     });
   }
 
@@ -889,7 +889,7 @@ export class CoreService implements CoreApi {
         const rec: AuditRecord = { ...audit, projectId: id, round };
         db.audits.push(rec);
         db.attestations.push({ milestoneId: mid, role: "inspector", signer: inspector, decision: allDone ? "approve" : "reject", notes: audit.notes, txHash: tx.hash, at, projectId: id, round, kind: "audit", hash: auditHash });
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { milestone: m, audit, events };
       });
     });
@@ -956,7 +956,7 @@ export class CoreService implements CoreApi {
           round,
         });
         this.applyOutcome(m, evaluation);
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
       });
       if (evaluation.outcome !== "pass") return { verdict, events };
       const rel = await this.releaseVerifiedLocked(id, mid);
@@ -1004,7 +1004,7 @@ export class CoreService implements CoreApi {
         round: currentRound(db, mid),
       });
       this.maybeComplete(db, p);
-      db.chainEvents.push(...events);
+      recordChainEvents(db, events);
     });
     return { finish: { txHash: finishTx.hash, explorerUrl: finishTx.explorerUrl }, events };
   }
@@ -1046,7 +1046,7 @@ export class CoreService implements CoreApi {
         db.decisions.push({ projectId: id, milestoneId: mid, round: ctx.round, actor: body.actor, decision: body.decision, reason, txHash: tx.hash, at: this.nowIso() });
         db.attestations.push({ milestoneId: mid, role: "platform", signer: body.actor, decision: body.decision, notes: reason, txHash: tx.hash, at: this.nowIso(), projectId: id, round: ctx.round, kind: "decision", hash: sha256Hex(reason) });
         this.applyOutcome(m, evaluation);
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return m;
       });
       if (evaluation.outcome !== "pass") return { milestone, events };
@@ -1086,7 +1086,7 @@ export class CoreService implements CoreApi {
           p.status = "stalled";
           this.meta(db, id).stalledAt = this.nowIso();
         }
-        db.chainEvents.push(...evs);
+        recordChainEvents(db, evs);
       });
     }
     // Refund the vault: multisig LoanPay from the SPV (separate commit; keeperTick retries if it fails). A write-ahead
@@ -1151,11 +1151,14 @@ export class CoreService implements CoreApi {
       const p = this.projectIn(db, id);
       const m = getMilestoneOrThrow(p, mid);
       this.setMilestoneStatus(m, "refunded");
-      db.repayments.push({ projectId: id, milestoneId: mid, amount: m.amount, source: "escrow_refund", tx: tx?.hash ?? `reconciled:${mid}`, at: tx?.at ?? this.nowIso() });
+      // A milestone is refunded at most once. Two writers on one FileStore (keeper + server) can both reconcile the same
+      // ambiguous LoanPay; the second must not book it again (its event is dropped by recordChainEvents).
+      if (!db.repayments.some((r) => r.projectId === id && r.milestoneId === mid && r.source === "escrow_refund"))
+        db.repayments.push({ projectId: id, milestoneId: mid, amount: m.amount, source: "escrow_refund", tx: tx?.hash ?? `reconciled:${mid}`, at: tx?.at ?? this.nowIso() });
       const meta = this.meta(db, id);
       if (meta.refundAttempts) delete meta.refundAttempts[mid];
       this.maybeComplete(db, p);
-      db.chainEvents.push(...evs);
+      recordChainEvents(db, evs);
       return m;
     });
     events.push(...evs);
@@ -1198,7 +1201,7 @@ export class CoreService implements CoreApi {
         db.repayments.push({ projectId: id, amount, source: "builder", tx: tx.hash, at: tx.at ?? this.nowIso() });
         if (canProjectTransition(p.status, "repaying")) p.status = "repaying";
         this.maybeComplete(db, p);
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, events };
       });
     });
@@ -1234,7 +1237,7 @@ export class CoreService implements CoreApi {
       const events = this.evs([tx], { projectId: id, kind: "vault_withdraw", actor: body.investor, amount });
       return this.store.write((db) => {
         db.withdrawals.push({ projectId: id, investor: body.investor, amount, sharesBurned, tx: tx.hash, at: tx.at ?? this.nowIso() });
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { events };
       });
     });
@@ -1323,7 +1326,7 @@ export class CoreService implements CoreApi {
       if (!m.escrow || !isLocked(m.status) || m.status === "expired") throw new DomainError("ILLEGAL_TRANSITION", `Milestone ${mid} has no open escrow`);
       const tx = await this.onLedger("try-steal", () => this.release.tryStealDemo({ project: p, milestone: m }));
       const events = this.evs([tx], { projectId: id, milestoneId: mid, kind: "release_refused", actor: this.platformAddress });
-      await this.store.write((db) => db.chainEvents.push(...events));
+      await this.store.write((db) => recordChainEvents(db, events));
       if (tx.result !== "tecCRYPTOCONDITION_ERROR")
         throw new DomainError("LEDGER_ERROR", `Expected tecCRYPTOCONDITION_ERROR, ledger said ${tx.result}`, undefined, { txResult: tx.result, txHash: tx.hash });
       return { result: "tecCRYPTOCONDITION_ERROR", txHash: tx.hash, explorerUrl: tx.explorerUrl };
@@ -1390,7 +1393,7 @@ export class CoreService implements CoreApi {
         const meta = this.meta(db, id);
         meta.siteVisits = [...(meta.siteVisits ?? []), { ...visit, hash, signedByInspector: false }];
         meta.preVisitRequested = false; // task done; the operator decides (route 25)
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { visit, events };
       });
     });
@@ -1444,7 +1447,7 @@ export class CoreService implements CoreApi {
             builder.credentialTx = credTxs[0]?.hash;
           }
         }
-        db.chainEvents.push(...events);
+        recordChainEvents(db, events);
         return { project: p, events };
       });
     });

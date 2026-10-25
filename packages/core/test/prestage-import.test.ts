@@ -386,6 +386,24 @@ describe("CORE-07 importPrestage (offline)", () => {
     assert.ok(await store.read((d) => d.chainEvents.every((e) => e.projectId.startsWith("ps-r2-"))));
   });
 
+  it("CORE-08: a tx the prestage logged twice is one event; importing twice adds none", async () => {
+    const store = new MemoryStore();
+    const vault = new MemoryPreimageVault();
+    const now = () => new Date(NOW);
+    const f = fixture("dup");
+    const a = f.file.projects.A!;
+    const loanSet = a.txs.find((t) => t.type === "LoanSet")!;
+    a.txs.push({ ...loanSet }); // e.g. a resumed prestage run that re-logged the LoanSet step
+    const paths = write(f);
+    await importPrestage({ ...paths, store, vault, now });
+    await importPrestage({ ...paths, store, vault, now });
+    const events = await store.read((d) => d.chainEvents);
+    assert.equal(events.filter((e) => e.txHash === loanSet.hash).length, 1);
+    const keys = events.map((e) => `${e.txHash}|${e.kind}|${e.projectId}|${e.milestoneId}`);
+    assert.equal(new Set(keys).size, keys.length);
+    assert.equal(events.filter((e) => e.projectId === a.projectId && e.kind === "escrow_created").length, 3);
+  });
+
   it("stale or missing files fail with a 4xx pointing at the prestage command", async () => {
     const now = () => new Date(NOW);
     const base = { store: new MemoryStore(), vault: new MemoryPreimageVault(), now };

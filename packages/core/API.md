@@ -64,7 +64,18 @@ never stolen based on age. Following a process crash, stop **all** writers,
 remove the database's sibling `.lock` file, then restart. Temporary files left
 by a killed process can be removed while all writers are stopped. This is for a
 single local filesystem, not distributed storage. It does not serialize ledger
-calls made outside the database transaction or deduplicate chain events.
+calls made outside the database transaction.
+
+Chain events are deduplicated: every append goes through `recordChainEvents`
+(`store.ts`), keyed on (`txHash`, `kind`, `projectId`, `milestoneId`), hash
+compared case-insensitively. An event whose key is already stored is skipped and
+the first recording wins (a later reconcile of the same tx, e.g. `result:
+"reconciled_loan_repaid"`, does not replace it). The hash alone is not the key:
+one tx may back events of a different kind, project or milestone, and those are
+all kept. Events without a `txHash` are never collapsed. A route still returns
+the events of its own call even when the store already had them. Likewise a
+milestone's escrow refund is booked in `repayments` once, even when two writers
+reconcile the same ambiguous LoanPay.
 
 Evidence IDs must be alphanumeric with underscores, hyphens, or colons (including
 the demo's `project:m1` milestone IDs); filenames are

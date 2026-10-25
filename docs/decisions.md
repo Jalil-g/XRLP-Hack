@@ -232,6 +232,10 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - Atomic writes flush a private temporary file before rename and clean it on
   ordinary failures. Evidence IDs cannot traverse directories. This does not
   change the workflow contracts, ledger-event deduplication, or release vault.
+- Chain events are deduplicated by (txHash, kind, projectId, milestoneId) in one
+  helper (`recordChainEvents`, core `store.ts`); first recording wins, events
+  without a txHash are never collapsed. Not txHash alone: a tx can legitimately
+  back several events (kind / project / milestone), and those must survive.
 
 ## Open
 
