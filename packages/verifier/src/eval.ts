@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CheckResult, Verdict } from "@xrlp/shared";
 import { FIXTURES_DIR, SCENARIOS } from "../fixtures/scenarios.ts";
 import { projectInput } from "../fixtures/project-scenarios.ts";
+import { adversarialInput } from "../fixtures/adversarial-scenarios.ts";
 import { verdictHash } from "./hash.ts";
 import { verifyMilestone } from "./verifyMilestone.ts";
 import { verifyProject } from "./verifyProject.ts";
@@ -58,8 +59,9 @@ export async function runEvaluation(options: { mode?: VerifierMode; repeat?: num
         decision = result.decision; checks = [...result.identity, ...result.feasibility, ...result.capability]; model = result.model;
       } else {
         const scenario = SCENARIOS.find((s) => s.key === expectation.key);
-        if (!scenario) throw new Error("No fixture input builder for manifest scenario.");
-        const result: Verdict = await verifyMilestone({ ...(await scenario.input()), mode }, { cacheDir: false });
+        if (!scenario && !expectation.key.startsWith("adversarial-")) throw new Error("No fixture input builder for manifest scenario.");
+        const input = scenario ? await scenario.input() : await adversarialInput(expectation.key);
+        const result: Verdict = await verifyMilestone({ ...input, mode }, { cacheDir: false });
         decision = result.decision; checks = result.checks; model = result.model; hash = verdictHash(result);
       }
       const errors = expectationErrors(expectation, { decision, checks });

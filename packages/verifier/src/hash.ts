@@ -12,7 +12,7 @@ export function canonicalJson(value: unknown): string {
     if (active.has(v)) throw new Error("Canonical JSON cannot encode cycles.");
     active.add(v);
     let result: string;
-    if (Array.isArray(v)) result = `[${v.map((item) => item === undefined ? "null" : encode(item)).join(",")}]`;
+    if (Array.isArray(v)) result = `[${Array.from(v, (item) => item === undefined ? "null" : encode(item)).join(",")}]`;
     else {
       if (Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) throw new Error("Canonical JSON requires plain objects.");
       const o = v as Record<string, unknown>;

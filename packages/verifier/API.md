@@ -101,14 +101,13 @@ The milestone runner combines caller policy with the baseline; callers can tight
 remove mandatory checks or lower thresholds. Any required failure fails. Missing, skipped, warning
 or low-confidence required checks need human review. Optional warnings do not dilute passing
 confidence. An unverified builder cannot auto-pass. decide accepts a third ReleasePolicy; production
-milestone verification always supplies it.
+milestone verification always supplies it. Without an explicit policy, decide conservatively requires
+the complete suite; partial result arrays can never automatically pass.
 
 verdictHash validates the full shared Verdict, canonicalizes nested object keys (array order is
 preserved), then computes SHA-256 hex. createdAt is included. Core/attest-signer must hash the exact
 returned object, not a placeholder or a reconstruction with another timestamp. canonicalJson is
 also exported; it rejects cycles and non-finite/non-JSON data. Neither helper signs or sends a tx.
-
-## Project verification
 
 ## Invoice reconciliation (VER-05)
 
@@ -139,6 +138,16 @@ the review cache; three repetitions must independently match before claiming sta
 unknown fixture builders, exceptions and mismatches cannot score green. Exit codes: 0 matched,
 1 mismatch, 2 configuration/unavailable. Reports contain results/timings/hashes, never credentials.
 Mock validation completed 24/24 scenario runs; no real live evaluation has been measured here.
+
+VER-11 adds six adversarial manifest cases: an APPROVED overlay on a real photo with a stale audit,
+injected notes from an unassigned inspector, stripped EXIF with an otherwise bound audit, wrong GPS,
+corrupt image bytes, and invoice instructions with a zero total. These test deterministic gating;
+they do not demonstrate that a live model resists every prompt attack. Transformations are generated
+from the credited real source fixtures at evaluation time. Every case must fail or need review.
+
+Locked SoV lines now determine visual criteria and evidence requirements. Caller-supplied line
+definitions cannot weaken different stored lines. A shared document may support several lines;
+the minimum count is the maximum requirement per kind, while audit/AI review covers each line.
 
 ## Inspector assignment
 
