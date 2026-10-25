@@ -137,3 +137,22 @@ export { withAccountLock, submitWithSigner, reconnect, DEFAULT_LLS_MARGIN, toErr
 export type { SubmitOptions, ApiErrorCode, XrplTxErrorOptions } from "./client.ts";
 export { classifyPreliminary, isTransientRpcError, isConnectionError, submitReliably, describeBlob } from "./submit.ts";
 export type { LedgerIo, Lookup, PreliminaryClass, RetryPolicy, RetryEvent, Resign, ResignMode, SignedBlob } from "./submit.ts";
+// XRPL-07: finish / cancel / repay / withdraw
+export { builderPayToSpv, tryFinishWithWrongFulfillment } from "./api.ts";
+export {
+  finishEscrow,
+  cancelEscrow,
+  finishWithWrongFulfillment,
+  getEscrowAtLedger,
+  cancelReadiness,
+  escrowAmountFromMeta,
+  wrongFinishBlockers,
+  wrongFulfillmentFor,
+  fetchValidatedTx,
+  FINISH_LLS_MARGIN,
+  WRONG_FINISH_MIN_CANCEL_S,
+} from "./escrow.ts";
+export type { FinishEscrowParams, CancelReadiness, EscrowTiming } from "./escrow.ts";
+export { loanPayMultisig, loanPayFlags, planLoanPayment, ceilMicro, LoanPayAmountError, LSF_LOAN_OVERPAYMENT } from "./loan.ts";
+export type { LoanPayMode, LoanPayPlan } from "./loan.ts";
+export { withdrawFromVaultTx, withdrawPhaseCheck } from "./vault.ts";
