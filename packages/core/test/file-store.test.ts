@@ -18,9 +18,9 @@ test("independent instances preserve every concurrent update", async (t) => {
   const dir = await fixture(t);
   const stores = [new FileStore(dir), new FileStore(dir)];
   await Promise.all(Array.from({ length: 40 }, (_, i) => stores[i % 2]!.write((db) => {
-    db.inspectors.push({ address: `r${i}`, name: "", licenseNumber: "", createdAt: "" });
+    db.investors.push({ address: `r${i}`, name: "", createdAt: "" });
   })));
-  assert.equal(await stores[0]!.read((db) => db.inspectors.length), 40);
+  assert.equal(await stores[0]!.read((db) => db.investors.length), 40);
   assert.deepEqual(await readdir(dir), ["core-db.json"]);
 });
 
@@ -28,11 +28,11 @@ test("separate Node processes cannot lose each other's writes", async (t) => {
   const dir = await fixture(t);
   const script = `import { FileStore } from ${JSON.stringify(new URL("../src/file-store.ts", import.meta.url).href)};
     const store = new FileStore(process.argv[1]);
-    for (let i = 0; i < 12; i++) await store.write(db => db.inspectors.push({
-      address: process.pid + '-' + i, name: '', licenseNumber: '', createdAt: '' }));`;
+    for (let i = 0; i < 12; i++) await store.write(db => db.investors.push({
+      address: process.pid + '-' + i, name: '', createdAt: '' }));`;
   await Promise.all(Array.from({ length: 3 }, () => exec(process.execPath,
     ["--import", "tsx", "--input-type=module", "-e", script, dir])));
-  const rows = await new FileStore(dir).read((db) => db.inspectors);
+  const rows = await new FileStore(dir).read((db) => db.investors);
   assert.equal(rows.length, 36);
   assert.equal(new Set(rows.map((row) => row.address)).size, 36);
 });
@@ -43,7 +43,7 @@ test("failed transactions preserve data and release the lock", async (t) => {
   await store.reset();
   const before = await readFile(store.path, "utf8");
   await assert.rejects(store.write((db) => {
-    db.inspectors.push({ address: "rX", name: "", licenseNumber: "", createdAt: "" });
+    db.investors.push({ address: "rX", name: "", createdAt: "" });
     throw new Error("abort");
   }), /abort/);
   assert.equal(await readFile(store.path, "utf8"), before);
