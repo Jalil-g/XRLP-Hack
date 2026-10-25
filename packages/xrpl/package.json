@@ -18,7 +18,8 @@
     "stress": "NODE_USE_ENV_PROXY=1 tsx scripts/stress-submit.ts",
     "spike:escrow": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-escrow.ts",
     "spike:spv": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-spv.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "spike:batch": "NODE_USE_ENV_PROXY=1 tsx scripts/spike-batch.ts"
   },
   "dependencies": {
     "@xrlp/shared": "workspace:*",

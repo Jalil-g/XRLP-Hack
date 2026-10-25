@@ -52,6 +52,7 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
 - [10-24] SPV default multisig quorum = platform + builder + trustee (any 3 of 4 is valid). These are fixed per project whichever inspector the AI assigned; callers pass the inspector explicitly when it should sign. `submitMultisigned` checks quorum against the on-ledger SignerList before submitting, because xrpl.js `submitAndWait` hangs ~1 min on `tef*` instead of throwing (Jalil's agent, XRPL-05)
 
 - [10-24] Read models (XRPL-09): `VaultSnapshot`/`LoanSnapshot` defined locally in `packages/xrpl/src/reads.ts` (not in shared yet); `sharesOutstanding` = raw share-MPT units, `sharePrice` = RLUSD per whole share (10^Scale units), 6 dp; RLUSD reads truncate (never round up); paid-off loan → `nextPaymentDueDate: ""`; open-ended vault → phase `subscription` — keeps the 05-api shape without a contract change (Jalil's agent, XRPL-09)
+- [10-25] Batch atomic close: devnet rippled 3.4.1 rejects LoanSet (all Lending/SAV types) as a Batch inner tx with `temINVALID_INNER_BATCH` until `LendingProtocolV1_2`. So `closeLoanAtomic` defaults to mode "escrows": countersigned LoanSet, then one `tfAllOrNothing` Batch of every milestone EscrowCreate from the SPV (2 txs, SPV liquid ~2 ledgers). Mode "full" (platform outer, LoanSet + escrows, SPV BatchSigner) is implemented and offline-tested for when V1_2 lands. Not wired into `closeLoanAndCreateEscrows` yet (api.ts owned elsewhere). See protocol-notes §2d (Jalil's agent, XRPL-13)
 
 ## Open
 
