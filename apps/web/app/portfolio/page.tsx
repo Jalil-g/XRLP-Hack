@@ -73,7 +73,7 @@ export default async function PortfolioPage() {
                 </td>
                 <td className="px-4 py-4 text-right">
                   {pos.phase === "redemption" ? (
-                    <ActionButton size="sm" variant="secondary" action={{ kind: "withdraw", projectId: pos.projectId, investor: investor.address, amount: pos.value }}>
+                    <ActionButton size="sm" variant="secondary" context={pos.projectName} action={{ kind: "withdraw", projectId: pos.projectId, investor: investor.address, amount: pos.value }}>
                       Withdraw {formatAmount(pos.value)}
                     </ActionButton>
                   ) : (

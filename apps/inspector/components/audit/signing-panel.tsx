@@ -13,7 +13,7 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
 
   if (inspectorKey) {
     return (
-      <div className="flex items-start gap-2 rounded-md bg-ok-bg px-3 py-2 text-xs text-ok">
+      <div className="flex items-start gap-2 rounded-md bg-ok-bg px-3 py-2 text-caption text-ok">
         <ShieldCheck className="mt-0.5 size-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="font-medium">
@@ -56,7 +56,7 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
         }
       }}
     >
-      <p className="flex items-center gap-1.5 text-xs font-medium text-ink-2">
+      <p className="flex items-center gap-1.5 text-caption font-medium text-ink-2">
         <KeyRound className="size-3.5" /> Load your inspector key to sign in this browser
       </p>
       <div className="flex gap-2">
@@ -68,14 +68,14 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
           autoComplete="off"
           spellCheck={false}
           aria-label="Inspector seed"
-          className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-1.5 font-mono text-xs placeholder:font-sans placeholder:text-faint focus:ring-2 focus:ring-brand-100 focus:outline-none"
+          className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-1.5 font-mono text-caption placeholder:font-sans placeholder:text-faint focus:ring-2 focus:border-brand"
         />
         <Button type="submit" size="sm" variant="secondary" disabled={!seed.trim()}>
           Load key
         </Button>
       </div>
-      {error && <p className="text-xs text-bad">{error}</p>}
-      <p className="text-[11px] text-muted">Stored in this browser only (devnet). Without a key, core attests the audit on your behalf.</p>
+      {error && <p className="text-caption text-bad">{error}</p>}
+      <p className="text-caption text-muted">Stored in this browser only (devnet). Without a key, core attests the audit on your behalf.</p>
     </form>
   );
 }

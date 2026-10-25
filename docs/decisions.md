@@ -1,5 +1,12 @@
 # Decisions log
 
+## Shared frontend polish — 2026-10-25
+
+- User authorized a consistent Apple/Notion-style polish of both `apps/web` and `apps/inspector`. Both consume `apps/styles/drawproof.css`; inspector compatibility aliases preserve existing component APIs. No domain contracts or signing algorithms change.
+- Match the white canvas, system type, restrained blue actions, status labels, solid header, account menu, responsive gutters, focus states, and reduced motion. App-specific data access stays separate.
+- Require a review before deposits, other payments, audit signatures, and site-visit signatures. Evidence uploads use a short choose/review/submit sequence. Preserve drafts on Back, prevent repeated submission, and retain inspector evidence-version validation.
+- The demo control room follows the primary 100-second recording story. Ledger-condition rejection and stall/refund tools remain available under an extended walkthrough disclosure, outside the timed pitch.
+
 ## Adopted presentation decision — 2026-10-25
 
 User confirmed one three-minute total slot, Apple/Notion simplicity, guided flows with review before signing/paying, and a prerecorded demo. The authoritative plan is [08-pitch-storyline.md](08-pitch-storyline.md): six slides, 8/22/15/15/100/10 seconds, 170 seconds content plus 10 seconds reserve. The demo shows one release and one failed hold. Slide 3 states AI/inspector/XRPL responsibilities; slide 6 closes with fees, one construction-lending pilot ask, and thanks.

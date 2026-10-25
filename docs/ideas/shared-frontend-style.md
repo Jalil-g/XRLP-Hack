@@ -95,4 +95,4 @@ Use real site evidence where it helps inspection. Do not introduce stock imagery
 
 ## Confirmed interaction choice
 
-The user selected guided steps with a review before signing or paying. Overview and queue screens remain directly scannable. This brief captures the agreed direction; production implementation and rendered-app validation remain separate work.
+The user selected guided steps with a review before signing or paying. Overview and queue screens remain directly scannable. This brief captures the agreed direction. Implementation now shares tokens in `apps/styles/drawproof.css`; the app design files document the shared shell, review steps, and responsive behavior.

@@ -1,6 +1,7 @@
 import { ShieldAlert, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { Inspector } from "@/lib/types";
+import { API_MODE } from "@/lib/api";
 import { explorerTxUrl } from "@/lib/utils";
 
 /** VERIFIED_INSPECTOR credential (XLS-70), linked to its CredentialCreate tx when known. */
@@ -13,11 +14,11 @@ export function VerifiedInspectorBadge({ inspector }: { inspector: Inspector }) 
     );
   }
   const badge = (
-    <Badge tone="ok" className="font-mono tracking-tight">
-      <ShieldCheck /> VERIFIED_INSPECTOR
+    <Badge tone="ok" >
+      <ShieldCheck /> Verified inspector
     </Badge>
   );
-  if (!inspector.credentialTx) return badge;
+  if (!inspector.credentialTx || API_MODE === "mock") return badge;
   return (
     <a href={explorerTxUrl(inspector.credentialTx)} target="_blank" rel="noreferrer" title="Credential on XRPL devnet" className="hover:opacity-80">
       {badge}

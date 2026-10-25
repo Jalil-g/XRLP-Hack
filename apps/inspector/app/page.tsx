@@ -1,13 +1,13 @@
 "use client";
 // INS-02 queue: route 18 tasks for the selected inspector, grouped by `needs`, polled every 5s.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, HardHat, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import { useIdentity } from "@/components/identity";
 import { NEEDS, TaskRow } from "@/components/task-row";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
-import { api } from "@/lib/api";
+import { api, API_MODE } from "@/lib/api";
 import { ACTIONABLE, arrivedKeys, groupTasks, taskKey } from "@/lib/queue";
 import type { InspectorTask } from "@/lib/types";
 import { usePoll } from "@/lib/use-poll";
@@ -25,33 +25,30 @@ export default function QueuePage() {
   const fresh = useArrivals(queue.data);
   const now = useNow(queue.updatedAt);
 
-  if (status === "error") return <p className="text-sm text-bad">Could not load the inspector panel: {error}</p>;
-  if (!inspector) return <p className="text-sm text-muted">Loading…</p>;
+  if (status === "error") return <p className="text-small text-bad">Could not load the inspector panel: {error}</p>;
+  if (!inspector) return <p className="text-small text-muted">Loading…</p>;
 
   const groups = queue.data ? groupTasks(queue.data) : null;
   const actionable = groups ? ACTIONABLE.reduce((n, k) => n + groups[k].length, 0) : 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Assigned audits</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted">{BRAND.tagline}</p>
+          <h1 className="text-title">Assigned audits</h1>
+          <p className="mt-2 max-w-2xl text-body text-muted">{BRAND.tagline}</p>
         </div>
         <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
       </div>
 
-      <Card>
+      <Card className="border-y border-line">
         <CardContent className="flex flex-wrap items-center gap-4">
-          <span className="flex size-11 items-center justify-center rounded-full bg-amber-50 text-amber-700">
-            <HardHat className="size-5" />
-          </span>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">{inspector.name}</span>
               <VerifiedInspectorBadge inspector={inspector} />
             </div>
-            <p className="text-[13px] text-muted">
+            <p className="text-caption text-muted">
               {inspector.licenseNumber} · {inspector.trades.join(", ")}
             </p>
           </div>
@@ -64,7 +61,7 @@ export default function QueuePage() {
               ))}
             </div>
           )}
-          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="font-mono text-xs text-muted hover:text-brand">
+          <a href={explorerAccountUrl(inspector.address)} target="_blank" rel="noreferrer" className="font-mono text-caption text-muted hover:text-brand">
             {shortAddress(inspector.address, 8, 6)}
           </a>
         </CardContent>
@@ -72,15 +69,15 @@ export default function QueuePage() {
 
       {!groups ? (
         queue.error ? (
-          <p className="text-sm text-bad">{queue.error}</p>
+          <p className="text-small text-bad">{queue.error}</p>
         ) : (
-          <p className="text-sm text-muted">Loading queue…</p>
+          <p className="text-small text-muted">Loading queue…</p>
         )
       ) : (
         <>
           {actionable === 0 && (
             <Card>
-              <CardContent className="py-10 text-center text-sm text-muted">
+              <CardContent className="py-10 text-center text-small text-muted">
                 {groups.none.length
                   ? "Nothing to audit right now. New work shows up here as soon as a builder submits evidence."
                   : "No projects assigned to you yet. The AI assigns inspectors from the verified panel at lock-terms."}
@@ -123,7 +120,7 @@ function TaskGroup({
           <CardDescription>{hint}</CardDescription>
         </div>
         {collapsible && (
-          <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 text-xs text-muted hover:text-ink" aria-expanded={open}>
+          <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-h-11 items-center gap-1 text-caption text-muted hover:text-ink" aria-expanded={open}>
             {open ? "Hide" : "Show"} <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
           </button>
         )}
@@ -142,18 +139,18 @@ function TaskGroup({
 function PollStatus({ updatedAt, error, now, onRefresh }: { updatedAt?: number; error?: string; now: number; onRefresh(): void }) {
   const ago = updatedAt ? Math.max(0, Math.round((now - updatedAt) / 1000)) : null;
   return (
-    <div className="flex items-center gap-2 text-xs text-muted">
-      {error && updatedAt ? (
+    <div className="flex items-center gap-2 text-caption text-muted">
+      {error ? (
         <Badge tone="warn" title={error}>
-          Stale: core unreachable
+          {updatedAt ? "Stale: unable to refresh" : "Unable to load queue"}
         </Badge>
       ) : (
         <span className="flex items-center gap-1.5">
-          <span className="size-1.5 animate-pulse rounded-full bg-ok" /> Live
+          {!updatedAt ? "Loading queue…" : API_MODE === "mock" ? "Mock data" : "Up to date"}
         </span>
       )}
       {ago !== null && <span className="tabular">updated {ago}s ago</span>}
-      <button type="button" onClick={onRefresh} className="rounded-md p-1 hover:bg-subtle hover:text-ink" aria-label="Refresh queue">
+      <button type="button" onClick={onRefresh} className="flex size-11 items-center justify-center rounded-control hover:bg-subtle hover:text-ink" aria-label="Refresh queue">
         <RefreshCw className="size-3.5" />
       </button>
     </div>
