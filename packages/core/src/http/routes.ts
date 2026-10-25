@@ -2,7 +2,7 @@
 import { CreateProjectInput, EvidenceKind, InspectorAudit, ProjectStatus, Rlusd, XrplAddress } from "@xrlp/shared";
 import type { Context, Hono } from "hono";
 import { z } from "zod";
-import type { AuditReportInput, CoreApi, EvidenceUpload } from "../api-surface.ts";
+import { DEMO_SEEDS, type AuditReportInput, type CoreApi, type EvidenceUpload } from "../api-surface.ts";
 import { DomainError } from "../errors.ts";
 import type { UploadStore } from "./files.ts";
 
@@ -11,7 +11,7 @@ const InvestBody = z.object({ investor: XrplAddress, amount: Rlusd });
 const AmountBody = z.object({ amount: Rlusd });
 const FeeBody = z.object({ builder: XrplAddress });
 const DecisionBody = z.object({ actor: XrplAddress, decision: z.enum(["approve", "reject"]), reason: z.string().min(1) });
-const ResetBody = z.object({ seed: z.literal("maple-st").optional() }).default({});
+const ResetBody = z.object({ seed: z.enum(DEMO_SEEDS).optional() }).default({});
 const ListQuery = z.object({ status: ProjectStatus.optional() });
 const AuditReport = InspectorAudit.pick({ inspector: true, evidenceBundleHash: true, checklist: true, notes: true });
 

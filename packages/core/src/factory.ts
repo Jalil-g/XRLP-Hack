@@ -3,11 +3,13 @@ import { join } from "node:path";
 import type { LedgerPort, VerifierPort } from "@xrlp/shared";
 import type { ReleaseServicePort } from "./api-surface.ts";
 import { FakeClock, systemClock, type Clock } from "./clock.ts";
+import { prestageSeedOptions } from "./demo/prestage-seed.ts";
 import { DEMO_ADDRESSES, demoCancelAfter, seedDemo, SEED_BACKDATE_MS } from "./demo/scenario.ts";
 import { FakeLedger } from "./fakes/fake-ledger.ts";
 import { FakeVerifier } from "./fakes/fake-verifier.ts";
 import { FileStore, resolveDataDir } from "./file-store.ts";
 import { FilePreimageVault, MemoryPreimageVault, ReleaseService } from "./release-service.ts";
+import { DomainError } from "./errors.ts";
 import { CoreService, type CoreServiceOptions } from "./service.ts";
 import { MemoryStore, type Store } from "./store.ts";
 
@@ -51,8 +53,8 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const store = opts.store ?? (dataDir ? new FileStore(dataDir) : new MemoryStore());
   const ledger = opts.ledger ?? ledgerFromEnv(env, clock, dataDir);
   const verifier = opts.verifier ?? verifierFromEnv(env, clock);
-  const release =
-    opts.release ?? new ReleaseService({ ledger, vault: dataDir ? new FilePreimageVault(dataDir) : new MemoryPreimageVault(), now: () => clock.now() });
+  const vault = dataDir ? new FilePreimageVault(dataDir) : new MemoryPreimageVault();
+  const release = opts.release ?? new ReleaseService({ ledger, vault, now: () => clock.now() });
 
   // Route 21 seeding (fake ledger with files only): replay the demo story on a back-dated clock through a twin core
   // that shares this store, the fake ledger's state file and the preimage vault.
@@ -60,24 +62,31 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   const seed: CoreServiceOptions["seed"] =
     opts.seed ??
     (canSeed
-      ? async () => {
+      ? async (name) => {
+          if (name !== "maple-st") throw new DomainError("VALIDATION", `Seed "${name}" needs LEDGER_MODE=devnet (fake mode seeds "maple-st")`);
           const twinClock = new FakeClock(new Date(clock.now().getTime() - SEED_BACKDATE_MS));
           const twin = createCore({ dataDir, env, store, clock: twinClock, cancelAfterFor: demoCancelAfter, seed: async () => {}, resetLedger: () => {} });
           await seedDemo(twin.service, twinClock);
         }
       : undefined);
+  // CORE-07: devnet route 21 loads the XRPL prestage (A/B/C) into this store and the release service's vault.
+  const prestage =
+    !opts.seed && !opts.release && (env.LEDGER_MODE ?? "fake") === "devnet"
+      ? prestageSeedOptions({ env, dataDir: dataDir ?? resolveDataDir(env), store, vault, ledger, service: () => service })
+      : {};
 
-  const service = new CoreService({
+  const service: CoreService = new CoreService({
     platformAddress: DEMO_ADDRESSES.platform,
     aiAgentAddress: DEMO_ADDRESSES.aiAgent,
     releaseServiceAddress: DEMO_ADDRESSES.releaseService,
+    ...prestage,
     ...opts,
     store,
     ledger,
     verifier,
     release,
     clock,
-    seed,
+    seed: seed ?? prestage.seed,
     resetLedger: opts.resetLedger ?? (ledger instanceof FakeLedger ? () => ledger.reset() : undefined),
   });
   return { service, store, ledger, verifier, release, clock, dataDir };

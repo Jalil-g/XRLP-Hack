@@ -33,7 +33,7 @@ import {
   type InspectorAssignment,
 } from "@xrlp/shared";
 import { z } from "zod";
-import type { AuditReportInput, CoreApi, EvidenceUpload, ReleaseServicePort, StoredFile } from "./api-surface.ts";
+import type { AuditReportInput, CoreApi, DemoSeed, EvidenceUpload, ReleaseServicePort, StoredFile } from "./api-surface.ts";
 import { DAY_MS, systemClock, type Clock } from "./clock.ts";
 import { isCondition } from "./conditions.ts";
 import { DomainError } from "./errors.ts";
@@ -122,8 +122,12 @@ export interface CoreServiceOptions {
   coverBps?: number;
   /** Escrow CancelAfter per milestone. Default: milestone i of n at (i+1)/n of termDays after close, capped before maturity. */
   cancelAfterFor?: (project: Project, milestone: Milestone, closeAt: Date) => Date;
-  /** Route 21: rebuild demo data (wired by the factory; fake mode only). */
-  seed?: (name: "maple-st") => Promise<void>;
+  /** Route 21: rebuild demo data (wired by the factory: "maple-st" in fake mode, "prestage" in devnet mode). */
+  seed?: (name: DemoSeed) => Promise<void>;
+  /** Route 21: validate a seed BEFORE the reset wipes anything (devnet prestage: missing/stale files -> 4xx). */
+  checkSeed?: (name: DemoSeed) => Promise<void>;
+  /** Route 21: seed used when the body names none (devnet: "prestage"). */
+  defaultSeed?: DemoSeed;
   /** Route 21: wipe ledger-side demo state (fake ledger). */
   resetLedger?: () => void;
 }
@@ -981,12 +985,14 @@ export class CoreService implements CoreApi {
 
   // ---------- route 21 ----------
 
-  async resetDemo(body: { seed?: "maple-st" } = {}): Promise<{ ok: true }> {
-    if (body.seed && !this.opts.seed) throw new DomainError("VALIDATION", "Demo seeding is not configured for this ledger mode (use the XRPL prestage script on devnet)");
+  async resetDemo(body: { seed?: DemoSeed } = {}): Promise<{ ok: true }> {
+    const seed = body.seed ?? this.opts.defaultSeed;
+    if (seed && !this.opts.seed) throw new DomainError("VALIDATION", "Demo seeding is not configured for this ledger mode (use the XRPL prestage script on devnet)");
+    if (seed) await this.opts.checkSeed?.(seed);
     await this.store.reset();
     await this.release.clear();
     this.opts.resetLedger?.();
-    if (body.seed) await this.opts.seed!(body.seed);
+    if (seed) await this.opts.seed!(seed);
     return { ok: true };
   }
 

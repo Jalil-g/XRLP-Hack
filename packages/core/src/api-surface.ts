@@ -81,10 +81,14 @@ export interface CoreApi {
   inspectorQueue(address: XrplAddress): Promise<InspectorTask[]>; // 18
   kycInvestor(address: XrplAddress): Promise<{ events: ChainEvent[] }>; // 19
   portfolio(investor: XrplAddress): Promise<PortfolioPosition[]>; // 20
-  resetDemo(body: { seed?: "maple-st" }): Promise<{ ok: true }>; // 21
+  resetDemo(body: { seed?: DemoSeed }): Promise<{ ok: true }>; // 21
   keeperTick(): Promise<{ events: ChainEvent[] }>; // 22
   tryStealDemo(id: string, mid: string): Promise<TryStealResult>; // 23
 }
+
+/** Route 21 seeds: "maple-st" = fake-mode back-dated scenario; "prestage" = devnet, loads the XRPL prestage (CORE-07). */
+export const DEMO_SEEDS = ["maple-st", "prestage"] as const;
+export type DemoSeed = (typeof DEMO_SEEDS)[number];
 
 /**
  * CORE-12. Owns escrow preimages (CSPRNG 32 bytes, unique per escrow, encrypted at rest under DATA_DIR) and the finish.
