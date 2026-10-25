@@ -40,6 +40,8 @@ export interface ProjectMeta {
   escrowedAt?: string;
   completedAt?: string;
   stalledAt?: string;
+  /** Write-ahead marker per milestone id: a refund LoanPay was attempted and its outcome is not yet recorded. */
+  refundAttempts?: Record<string, { at: string; tvoBefore?: Rlusd; txHash?: string }>;
 }
 
 /** `round` = 1-based evidence submission round for the milestone (resubmission after a failure = new round). */
