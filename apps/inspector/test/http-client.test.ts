@@ -134,6 +134,30 @@ describe("http client", () => {
     await assert.rejects(api.fileBytes({ id: "ev_1", uri: `/api/files/${uuid}` }), (e) => e instanceof ApiError && e.code === "not_found");
   });
 
+  it("INS-06 site visit (TODO(#53) proposed route): multipart to /api/projects/:id/site-visit; core's 404 maps to not_found", async () => {
+    const report = {
+      projectId: "elm-ct-fourplex",
+      inspector: fx.ADDR.dana,
+      answers: { siteExists: { answer: "yes" as const }, siteAccessible: { answer: "yes" as const }, plansMatchSite: { answer: "yes" as const } },
+      photos: [{ ...fx.EVIDENCE["maple-st-duplex:m1"]![0]!, filename: "site.jpg" }],
+      notes: "ok",
+      at: "2026-10-25T09:00:00Z",
+    };
+    const start = seen.length;
+    reply = () => ({ status: 200, body: { visit: { ...report, txHash: "AB".repeat(32) } } });
+    const res = await api.submitSiteVisit({ projectId: "elm-ct-fourplex", report, photos: [new Blob(["jpg"])], signedTxBlob: "1200" });
+    assert.equal(res.visit.txHash, "AB".repeat(32));
+    const req = seen[start]!;
+    assert.equal(req.method, "POST");
+    assert.equal(req.url, "/api/projects/elm-ct-fourplex/site-visit");
+    assert.deepEqual(JSON.parse(String(req.form?.get("report"))), report);
+    assert.equal((req.form?.get("photos") as File).name, "site.jpg");
+    assert.equal(req.form?.get("signedTxBlob"), "1200");
+    assert.equal(api.siteVisitAttestationTarget(), null);
+    reply = () => ({ status: 404, body: { error: { code: "not_found", message: "Route not found" } } });
+    await assert.rejects(api.submitSiteVisit({ projectId: "elm-ct-fourplex", report, photos: [] }), (e) => e instanceof ApiError && e.code === "not_found");
+  });
+
   it("warns (does not throw) when core drifts from the contract", async () => {
     const warn = console.warn;
     const warnings: unknown[] = [];

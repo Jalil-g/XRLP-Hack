@@ -147,6 +147,11 @@ Format: `- [date] DECISION — why (who)`. Mark open questions under **Open**.
   individual audit revision: the contract has no audit-to-verdict reference. A verdict older than a report is labelled as awaiting
   a new run. Only reports returned by core are shown; superseded reports removed by core cannot be reconstructed. No contract change.
   Added a completed Oak Ave mock project for Dana's pass/release history and aligned the reused Maple M2 photo's GPS with Oak Ave. (Roro's agent)
+- [10-25] INS-06 site visit built **mock-only against the area:inspector proposal on #53** (no answer yet), every piece marked
+  TODO(#53): `InspectorSiteVisit` (3 questions yes/no/unable_to_confirm + note, photos, notes), `POST /api/projects/:id/site-visit`
+  (multipart like route 10), attestation = 1-drop Payment inspector → **platform** (no SPV before lock-terms) with memo
+  `{v:1, kind:"site_visit", projectId, hash}` built in the app (not attest-signer: not an XRPL-08 kind). Hash = canonical JSON like
+  `auditHash`. http mode posts to the proposed route and shows "core does not support site visits yet" on 404. Draft PR.
 
 ## Pitch review (Jalil's agent, PITCH-09)
 
