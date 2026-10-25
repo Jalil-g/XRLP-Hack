@@ -103,7 +103,7 @@ export async function runDevnetFlow(o: FlowOptions): Promise<Row[]> {
       step,
       status: res.status,
       outcome: res.ok ? (outcome?.(j) ?? "ok") : `${j?.error?.code}${j?.error?.txResult ? ` ${j.error.txResult}` : ""}: ${String(j?.error?.message).slice(0, 140)}`,
-      links: linksOf(j),
+      links: method === "GET" ? [] : linksOf(j), // reads echo every earlier event; only mutations carry their own txs
     };
     if (j?.error?.txHash) row.links.push(`https://devnet.xrpl.org/transactions/${j.error.txHash}`);
     rows.push(row);
@@ -247,7 +247,6 @@ export async function runDevnetFlow(o: FlowOptions): Promise<Row[]> {
 
   const final = await call<ProjectDetail>("2 project detail (final)", "GET", P, undefined, [200], (j) => `${j.project.status}: ${j.project.milestones.map((m: any) => `${m.templateKey}=${m.status}`).join(", ")}`);
   const events = await call<ChainEvent[]>("16 events", "GET", `${P}/events`, undefined, [200], (j) => `${j.length} events: ${[...new Set(j.map((e: any) => e.kind))].join(", ")}`);
-  rows.at(-1)!.links = [];
   const statuses = Object.fromEntries(final.project.milestones.map((m) => [m.templateKey, m.status]));
   if (statuses.foundation !== "released" || statuses.framing !== "failed" || statuses.dry_in !== "refunded") throw new Error(`final milestone states ${JSON.stringify(statuses)}`);
   if (!events.some((e) => e.kind === "release_refused" && e.result === "tecCRYPTOCONDITION_ERROR")) throw new Error("no release_refused tecCRYPTOCONDITION_ERROR event");
