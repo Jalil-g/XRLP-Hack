@@ -1,7 +1,7 @@
-import { Wallet, type Transaction } from "xrpl";
+import { Wallet, type ECDSA, type Transaction } from "xrpl";
 import type { InspectorSigner, SignedTx, SignerIdentity } from "./types.ts";
 
-/** Inspector key held in memory (xrpl.js Wallet). Dev/CI/fallback — no human-on-device guarantee. */
+/** Inspector key held in memory (xrpl.js Wallet). */
 export class SoftwareSigner implements InspectorSigner {
   readonly kind = "software" as const;
   readonly wallet: Wallet;
@@ -12,6 +12,13 @@ export class SoftwareSigner implements InspectorSigner {
 
   static fromSeed(seed: string): SoftwareSigner {
     return new SoftwareSigner(Wallet.fromSeed(seed));
+  }
+
+  /** Deterministic key from 16 bytes of entropy (ed25519 by default) — used for mock-mode keys derived from public labels. */
+  static fromEntropy(entropy: Uint8Array, algorithm: "ed25519" | "secp256k1" = "ed25519"): SoftwareSigner {
+    // xrpl.js's `ECDSA` enum is type-only under ESM interop; its values are these strings.
+    const ecdsa = (algorithm === "ed25519" ? "ed25519" : "ecdsa-secp256k1") as ECDSA;
+    return new SoftwareSigner(Wallet.fromEntropy(entropy, { algorithm: ecdsa }));
   }
 
   async getAddress(): Promise<SignerIdentity> {
