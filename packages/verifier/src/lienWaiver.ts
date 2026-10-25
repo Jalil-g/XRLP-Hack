@@ -116,7 +116,7 @@ export function checkLienWaiverPresent(
     return outcome(check, "skipped", "No current-draw invoices were submitted, so waiver presence cannot be evaluated.");
   }
   if (options.previousRequired && !required.some(({ type }) => type === "unconditional")) {
-    return outcome(check, "fail", "The previous draw exists, but its invoice evidence was unavailable; an unconditional previous-draw waiver cannot be verified.");
+    return outcome(check, "skipped", "Previous-draw invoice evidence is unavailable, so unconditional waiver presence cannot be evaluated.");
   }
 
   const missing: string[] = [];
@@ -136,6 +136,11 @@ export function checkLienWaiverPresent(
   }
   if (missing.length) return outcome(check, "fail", `${listJoin(missing)}.`, ids);
   return outcome(check, "pass", `All ${required.length} required lien waiver(s) are present with the correct conditional/unconditional type.`, waivers.map(({ item }) => item.evidence.id));
+}
+
+function exactCents(amount: string): bigint {
+  if (!/^\d+(?:\.\d{1,2})?$/.test(amount)) throw new Error("Amount is not an exact cent value.");
+  return toCents(amount);
 }
 
 /** Exact, integer-cent reconciliation of each waiver to its invoice and invoice vendor. */
@@ -176,8 +181,8 @@ export function checkLienWaivers(
     let waiverCents: bigint;
     let invoiceCents: bigint;
     try {
-      waiverCents = toCents(waiver.amount);
-      invoiceCents = toCents(invoice.amount);
+      waiverCents = exactCents(waiver.amount);
+      invoiceCents = exactCents(invoice.amount);
     } catch {
       warns.push(`${filename(waiver.item)} or ${filename(invoice.item)} has an unreadable monetary amount`);
       ids.push(waiver.item.evidence.id, invoice.item.evidence.id);

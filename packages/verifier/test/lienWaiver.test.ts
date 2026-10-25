@@ -67,6 +67,25 @@ test("unreadable waiver fields require human reconciliation", async () => {
   assert.equal(checkLienWaivers([invoice, bad]).result, "warn");
 });
 
+test("missing previous-draw invoice evidence skips rather than showing a false failure", async () => {
+  const invoice = await loaded("framing/invoice_BLS-88310.txt", "invoice");
+  const conditional = await loaded("waivers/conditional_BLS-88310.txt", "document");
+  const result = checkLienWaiverPresent([invoice, conditional], [], {
+    previousRequired: true,
+  });
+  assert.equal(result.result, "skipped");
+  assert.match(result.reason, /previous-draw invoice evidence is unavailable/i);
+});
+
+test("sub-cent waiver amounts are not silently truncated", async () => {
+  const invoice = await loaded("framing/invoice_BLS-88310.txt", "invoice");
+  const waiver = await loaded("waivers/conditional_BLS-88310.txt", "document");
+  waiver.text = waiver.text!.replace("29,760.00", "29,760.001");
+  const result = checkLienWaivers([invoice, waiver]);
+  assert.equal(result.result, "warn");
+  assert.match(result.reason, /unreadable monetary amount/i);
+});
+
 test("milestone runner loads the immediately previous draw invoice and emits both waiver checks", async () => {
   const input = await SCENARIOS[1]!.input();
   const conditional = await fixtureEvidence("evidence/maple-st/waivers/conditional_BLS-88310.txt", "document");
@@ -87,4 +106,19 @@ test("milestone runner loads the immediately previous draw invoice and emits bot
   });
   assert.equal(result.checks.find((check) => check.check === "lien_waiver_present")?.result, "pass");
   assert.equal(result.checks.find((check) => check.check === "lien_waiver_matches_invoices")?.result, "pass");
+});
+
+test("milestone runner skips previous-draw waiver presence when prior invoices are unavailable", async () => {
+  const input = await SCENARIOS[1]!.input();
+  const conditional = await fixtureEvidence("evidence/maple-st/waivers/conditional_BLS-88310.txt", "document");
+  const result = await verifyMilestoneDetailed({
+    ...input,
+    evidence: [...input.evidence, conditional],
+    priorEvidence: (input.priorEvidence ?? []).map((record) => "evidence" in record ? record.evidence : record),
+    dataDir: FIXTURES_DIR,
+    mode: "mock",
+  });
+  const presence = result.checks.find((check) => check.check === "lien_waiver_present");
+  assert.equal(presence?.result, "skipped");
+  assert.match(presence?.reason ?? "", /previous-draw invoice evidence is unavailable/i);
 });
