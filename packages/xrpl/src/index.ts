@@ -40,10 +40,6 @@ export {
   normalizeCondition,
   PREIMAGE_CONDITION_RE,
 } from "./condition.ts";
-/** @deprecated — core's release service generates conditions (CORE-12). Kept only so scripts/demo.ts compiles; tests/spikes use test/support/conditions.ts. */
-export { generateMilestoneCondition } from "./condition.ts";
-/** @deprecated — see generateMilestoneCondition. */
-export type { MilestoneCondition } from "./condition.ts";
 // XRPL-06: close validation (pure) + typed close errors
 export { planLoanClose, CloseValidationError, CloseLoanPartialError, MIN_ESCROW_LIFETIME_S, MIN_PAYMENT_INTERVAL_S, MAX_INTEREST_RATE } from "./loan-close.ts";
 export type { ClosePlan, ClosePlanInput, PlannedEscrow, CloseConditions, CreatedEscrowRef } from "./loan-close.ts";
@@ -276,3 +272,53 @@ export type {
 export { XrplLedgerAdapter } from "./adapter.ts";
 export type { XrplLedgerAdapterOptions } from "./adapter.ts";
 export { XrplLedgerError, toAdapterError, apiCodeOf, toPortTx, pickQuorumSigners } from "./adapter-map.ts";
+// XRPL-11: .data/prestage.json contract (read by core, CORE-07). Preimages live in a separate file, never here.
+export { PRESTAGE_VERSION, PRESTAGE_FILE, PRESTAGE_PREIMAGES_FILE, PRESTAGE_KEYS, parsePrestageFile, prestageVaultDates } from "./prestage-types.ts";
+export type {
+  PrestageFile,
+  PrestageProject,
+  PrestageEscrow,
+  PrestageEscrowState,
+  PrestageMilestone,
+  PrestageTx,
+  PrestageKey,
+  PrestageScenario,
+  PrestagePreimagesFile,
+} from "./prestage-types.ts";
+// XRPL-16: stage readiness (GO / WARN / NO-GO per beat). Pure; the CLI is `pnpm --filter @xrlp/xrpl stage:check [--json]`.
+export {
+  evaluateStage,
+  renderStageReport,
+  renderFix,
+  mergeFixes,
+  summarizePreimages,
+  walletAddresses,
+  lockTermsCover,
+  stageBeatLabel,
+  STAGE_BEATS,
+  STAGE_BEAT_TITLES,
+  STAGE_DEFAULTS,
+  REQUIRED_AMENDMENTS,
+  PROVEN_RIPPLED_VERSION,
+  RELEASE_MARGIN_S,
+  DEVNET_NETWORK_ID,
+  AMENDMENTS_LEDGER_INDEX,
+  amendmentId,
+} from "./stage-check.ts";
+export type {
+  StageReport,
+  StageCheck,
+  StageBeat,
+  StageBeatResult,
+  StageStatus,
+  StageFix,
+  StageFixStep,
+  StageSnapshot,
+  StageNow,
+  StageOptions,
+  StageRole,
+  StageAccount,
+  StageProjectLedger,
+  StageDevnet,
+  StagePreimage,
+} from "./stage-check.ts";
