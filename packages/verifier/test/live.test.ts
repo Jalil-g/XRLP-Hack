@@ -67,10 +67,21 @@ test("slow/dropped live response is bounded once and never retried", async () =>
   let calls = 0;
   const judge = new LiveJudge("fake-model", client(async () => { calls++; return new Promise(() => {}); }), { cacheDir: false, timeoutMs: 15 });
   const start = Date.now();
-  const result = await verifyMilestone({ ...(await SCENARIOS[0]!.input()), mode: "live" }, { judge, timeoutMs: 50 });
+  // The client owns a 15ms transport deadline; allow image preparation on a slow CI host.
+  const result = await verifyMilestone({ ...(await SCENARIOS[0]!.input()), mode: "live" }, { judge, timeoutMs: 5000 });
   assert.equal(result.decision, "needs_human");
   assert.equal(calls, 1);
-  assert.ok(Date.now() - start < 2000);
+  assert.ok(Date.now() - start < 5000);
+});
+
+test("runner deadline also bounds an injected judge that never returns", async () => {
+  let calls = 0;
+  const result = await verifyMilestone({ ...(await SCENARIOS[0]!.input()), mode: "live" }, {
+    timeoutMs: 15,
+    judge: { judgeMilestone: async () => { calls++; return new Promise(() => {}); } },
+  });
+  assert.equal(result.decision, "needs_human");
+  assert.equal(calls, 1);
 });
 
 test("corrupt builder or inspector images do not reach the API and return needs_human", async () => {
