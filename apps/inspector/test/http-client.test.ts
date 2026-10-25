@@ -101,6 +101,22 @@ describe("http client", () => {
     await assert.rejects(api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1"), (e) => e instanceof ApiError && e.status === 503);
   });
 
+  it("files: core's upload uri when it is an /api/files path (core's evidence id is a different key), else the evidence id", async () => {
+    const core = process.env.CORE_URL!.replace(/\/$/, "");
+    const uuid = "3d48fdf5-56ee-409d-96f2-66062a247391";
+    assert.equal(api.fileUrl({ id: "ev_43dc9c70ecf0", uri: `/api/files/${uuid}` }), `${core}/api/files/${uuid}`);
+    assert.equal(api.fileUrl({ id: "ev 1", uri: "data:image/svg+xml,<svg/>" }), `${core}/api/files/ev%201`);
+    assert.equal(api.fileUrl({ id: "ev_1", uri: "/api/files/../../etc/passwd" }), `${core}/api/files/ev_1`);
+
+    const start = seen.length;
+    reply = () => ({ status: 200, body: { bytes: true } });
+    const bytes = await api.fileBytes({ id: "ev_1", uri: `/api/files/${uuid}` });
+    assert.equal(new TextDecoder().decode(bytes), '{"bytes":true}');
+    assert.equal(seen[start]?.url, `/api/files/${uuid}`);
+    reply = () => ({ status: 404, body: { error: { code: "not_found", message: "gone" } } });
+    await assert.rejects(api.fileBytes({ id: "ev_1", uri: `/api/files/${uuid}` }), (e) => e instanceof ApiError && e.code === "not_found");
+  });
+
   it("warns (does not throw) when core drifts from the contract", async () => {
     const warn = console.warn;
     const warnings: unknown[] = [];
