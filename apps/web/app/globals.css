@@ -4,39 +4,43 @@
 /* Opt-in presentation mode; semantic colors and transaction behavior stay intact. */
 html[data-projector="true"] {
   font-size: 18px;
-  --color-ink-2: #424e44;
-  --color-ink-3: #424e44;
-  --color-line: #c7cec2;
+  --color-ink-2: #3f3f3f;
+  --color-ink-3: #3f3f3f;
+  --color-line: #d6d6d6;
 }
 
-.finance-surface { border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-surface); padding: 24px; box-shadow: 0 2px 8px -4px rgb(23 37 28 / .12); }
-.capital-summary { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr); gap: 40px; border-radius: 20px; background: var(--color-capital); color: var(--color-capital-text); padding: 32px; }
-.project-capital { padding: 24px 32px; }
-.capital-compact { padding: 24px 32px; }
-.capital-compact .financial-amount { font-size: 40px; line-height: 44px; }
-.financial-amount { font-size: 52px; line-height: 56px; letter-spacing: -.035em; font-weight: 600; font-variant-numeric: tabular-nums; }
-.financial-amount > span { font-size: 16px; line-height: 24px; letter-spacing: 0; font-weight: 400; color: var(--color-capital-muted); }
-.capital-detail { display: grid; align-content: center; gap: 16px; border-left: 1px solid #425044; padding-left: 32px; }
-.capital-detail > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; font-size: 15px; line-height: 22px; }
-.capital-detail span { color: var(--color-capital-muted); }
+/* Cards are kept for the checks suite and dialogs; everything else sits on the canvas. */
+.finance-surface { border: 1px solid var(--color-line); border-radius: var(--radius-panel); background: var(--color-surface); padding: 24px; }
+
+/* Capital overview: the number sits on the white canvas, no slab. */
+.capital-summary { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); gap: 24px 56px; align-items: end; color: var(--color-ink); }
+.financial-amount { font-size: 64px; line-height: 68px; letter-spacing: -.045em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.capital-compact .financial-amount { font-size: 48px; line-height: 52px; }
+.financial-amount > span { margin-left: 4px; font-size: 17px; line-height: 24px; letter-spacing: 0; font-weight: 500; color: var(--color-ink-2); }
+.capital-detail { display: grid; align-content: end; gap: 10px; }
+.capital-detail > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; font-size: 14px; line-height: 20px; border-bottom: 1px solid var(--color-line); padding-bottom: 10px; }
+.capital-detail span { color: var(--color-ink-2); }
 .capital-detail strong { font-weight: 500; font-variant-numeric: tabular-nums; }
-.capital-summary button:not([data-state]), .capital-summary a.capital-action { background: var(--color-accent); color: var(--color-capital); }
-.capital-summary button:not([data-state]):hover, .capital-summary a.capital-action:hover { background: var(--color-accent-hover); }
-.capital-summary :focus-visible { outline-color: var(--color-accent); }
-.project-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; align-items: start; }
-.project-context { border: 1px solid var(--color-line); border-radius: 16px; background: var(--color-surface); padding: 20px 24px; box-shadow: 0 2px 8px -4px rgb(23 37 28 / .12); }
-.project-context dl > div { padding: 14px 0; border-bottom: 1px solid var(--color-line); }
-.project-context dl > div:last-child { border-bottom: 0; }
-.project-context dt { font-size: 13px; color: var(--color-ink-2); }
-.project-context dd { margin-top: 4px; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
-@media (max-width: 900px) { .project-workspace { grid-template-columns: minmax(0, 1fr); } .project-context dl { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; } }
+
+/* Project hero (one number, one bar, one quiet row). */
+.hero-amount { font-size: 64px; line-height: 1; letter-spacing: -.045em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.hero-amount > span { margin-left: 2px; font-size: 17px; letter-spacing: 0; font-weight: 500; color: var(--color-ink-2); }
+
+/* The release: the paid figure gets a lime marker once money has reached the builder. */
+.paid-mark { border-radius: 6px; padding: 0 6px; margin-left: -6px; transition: background-color 400ms var(--ease-out); }
+.paid-mark[data-paid="true"] { background: var(--color-accent); }
+.capital-moving [role="img"] { animation: capital-swell 1200ms var(--ease-out); }
+@keyframes capital-swell { 0%, 100% { transform: scaleY(1); } 35% { transform: scaleY(1.5); } }
+
+/* Proof disclosure: plumbing on demand. */
+.proof > summary { list-style: none; cursor: pointer; }
+.proof > summary::-webkit-details-marker { display: none; }
+.proof[open] .proof-chevron { transform: rotate(90deg); }
+
 @media (max-width: 767px) {
-  .money-map { grid-template-columns: minmax(0, 1fr) !important; }
-  .money-map > svg { transform: rotate(90deg); }
-  :root { --text-display: 2.25rem; --text-display--line-height: 2.5rem; --text-title: 1.75rem; --text-title--line-height: 2.125rem; }
-  .capital-summary { grid-template-columns: minmax(0, 1fr); padding: 24px; gap: 24px; }
-  .capital-detail { border-left: 0; border-top: 1px solid #425044; padding-left: 0; padding-top: 20px; }
-  .financial-amount { font-size: 36px; line-height: 40px; }
+  :root { --text-display: 2.75rem; --text-display--line-height: 3rem; --text-title: 1.875rem; --text-title--line-height: 2.25rem; }
+  .capital-summary { grid-template-columns: minmax(0, 1fr); }
+  .financial-amount, .capital-compact .financial-amount, .hero-amount { font-size: 44px; line-height: 48px; }
   .finance-surface { padding: 20px 16px; }
   .responsive-finance-table, .responsive-finance-table tbody { display: block; }
   .responsive-finance-table thead { display: none; }
@@ -47,11 +51,11 @@ html[data-projector="true"] {
   .responsive-finance-table td:last-child { align-self: end; }
 }
 
-/* Keep names, reasons, and proof together instead of clipping the desktop checks grid. */
-.check-row { display: grid; grid-template-columns: 18px minmax(0, 1fr); }
+/* Checks rows: icon, name, detail, flagged evidence. Name and detail stack below 1024px. */
+.check-row { display: grid; grid-template-columns: 20px minmax(0, 1fr); }
 .check-row > :nth-child(n + 3) { grid-column: 2; justify-self: start; min-width: 0; }
-@media (min-width: 1280px) {
-  .check-row { grid-template-columns: 18px 190px minmax(0, 1fr) auto; }
+@media (min-width: 1024px) {
+  .check-row { grid-template-columns: 20px 280px minmax(0, 1fr) auto; }
   .check-row > :nth-child(n + 3) { grid-column: auto; }
   .check-row > :last-child { justify-self: end; }
 }

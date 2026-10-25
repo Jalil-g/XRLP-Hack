@@ -53,7 +53,6 @@ export default async function VerificationPage({ params }: Props) {
           className="mt-2"
           title="Verification report"
           meta={decision && <Tag tone={decision.tone}>{decision.label}</Tag>}
-          description={v ? v.summary : `${builder.name} pays a verification fee, then the AI checks identity, feasibility and capability.`}
         />
       </div>
 

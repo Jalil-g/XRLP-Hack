@@ -38,17 +38,6 @@ export default async function BuilderPage() {
         }
         title={builder.name}
         meta={builder.verified ? <Tag tone="pass">Verified builder</Tag> : <Tag>Not verified yet</Tag>}
-        description={
-          <>
-            Licence {builder.licenseNumber} · {builder.completedProjects} completed projects
-            {builder.credentialTx && (
-              <>
-                {" "}
-                · credential <TxLink hash={builder.credentialTx} />
-              </>
-            )}
-          </>
-        }
       />
 
       {details.length === 0 && <Empty title="Your next project starts here" action={<Link href="/builder/new" className={buttonClass()}>Create a project</Link>}>Submit a Schedule of Values, verify the project, then collect evidence for each construction draw.</Empty>}

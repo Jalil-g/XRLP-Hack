@@ -1,5 +1,4 @@
-// What happened to the money, in one line: Released / Failed / Needs review / Pending / Expired.
-import { TxLink } from "@/components/chain";
+// What happened to the money, in one line, plus the one action. Failures add one short line on what fixes it.
 import type { Attestation, Milestone } from "@/lib/contract";
 import { cn, formatAmount } from "@/lib/utils";
 import { StatusIcon, type RowState } from "./status-icon";
@@ -22,86 +21,75 @@ export function OutcomeBanner({
   outcome,
   milestone: m,
   builderName,
-  builderBalance,
   total,
   failed,
   decision,
   failedChecks = [],
   action,
+  paidCents,
 }: {
   outcome: Outcome;
   /** Names of the checks that failed, to say what fixes it. */
   failedChecks?: string[];
   milestone: Milestone;
   builderName: string;
-  builderBalance?: string;
   total: number;
   failed: number;
   decision?: Attestation;
   action?: React.ReactNode;
+  /** Displayed released amount in cents (counts up during the release motion). Defaults to the milestone amount. */
+  paidCents?: number;
 }) {
-  const view: { tone: string; icon: RowState; title: string; sub?: string; right?: React.ReactNode } = (() => {
+  const view: { tone: string; icon: RowState; title: React.ReactNode; sub?: string } = (() => {
     switch (outcome) {
       case "released":
         return {
-          tone: "bg-pass-bg",
+          tone: "",
           icon: "pass",
-          title: `Released ${formatAmount(m.amount)} RLUSD to ${builderName}`,
-          sub: [decision ? `Approved by the platform operator: ${decision.notes}` : `All ${total} checks passed`, builderBalance && `builder balance now ${formatAmount(builderBalance)} RLUSD`]
-            .filter(Boolean)
-            .join(" · "),
-          right: m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} label="EscrowFinish" />,
+          title: (
+            <>
+              <span className="paid-mark tabular-nums" data-paid="true">
+                {formatAmount(paidCents !== undefined ? paidCents / 100 : m.amount)}
+              </span>{" "}
+              released to {builderName}
+            </>
+          ),
+          sub: decision?.notes ? `Operator: ${decision.notes}` : undefined,
         };
       case "releasing":
-        return { tone: "bg-pass-bg", icon: "pass", title: `All ${total} checks passed`, sub: "The release service is finishing the escrow." };
+        return { tone: "", icon: "running", title: `Releasing ${formatAmount(m.amount)}` };
       case "failed":
         return {
           tone: "bg-fail-bg",
           icon: "fail",
-          title: decision ? "Rejected by the platform operator. Money stays locked" : `${failed} of ${total} checks failed. Money stays locked`,
-          sub: decision
-            ? decision.notes
-            : failedChecks.includes("inspector_audit_present")
-              ? "The assigned inspector has to file a signed audit, then the checks run again."
-              : "The builder can resubmit evidence, or the inspector can re-audit.",
-          right: action,
+          title: decision ? "Rejected by operator" : `${failed} of ${total} checks failed`,
+          sub: decision ? decision.notes : failedChecks.includes("inspector_audit_present") ? "Needs a signed inspector audit." : "Resubmit evidence or re-audit.",
         };
       case "needs_human":
-        return {
-          tone: "bg-review-bg",
-          icon: "warn",
-          title: "Needs review by the platform operator",
-          sub: "Checks passed, but below the confidence this milestone requires. The decision and its reason are attested on-chain.",
-        };
+        return { tone: "bg-review-bg", icon: "warn", title: "Needs operator review" };
       case "expired":
-        return { tone: "bg-band", icon: "skipped", title: "Escrow expired", sub: "The keeper cancels it and repays the vault." };
+        return { tone: "bg-band", icon: "skipped", title: "Escrow expired" };
       case "returned":
-        return {
-          tone: "bg-band",
-          icon: "skipped",
-          title: "Escrow expired. Money returned to the vault",
-          sub: "Cancelled back to the project account, then repaid to the vault.",
-          right: m.escrow?.cancelTx && <TxLink hash={m.escrow.cancelTx} label="EscrowCancel" />,
-        };
+        return { tone: "bg-band", icon: "skipped", title: "Returned to the vault" };
       case "running":
-        return { tone: "bg-band", icon: "running", title: `Running ${total} checks`, sub: "The inspector's audit and the builder's evidence, checked by the suite." };
+        return { tone: "", icon: "running", title: `Running ${total} checks` };
       case "waiting":
-        return { tone: "bg-band", icon: "queued", title: "Waiting for the builder's evidence", sub: "Checks run once evidence and the inspector's audit are in." };
+        return { tone: "", icon: "queued", title: "Waiting for evidence" };
       case "ready":
-        return { tone: "bg-band", icon: "queued", title: `${total} checks ready to run`, sub: `Pays ${formatAmount(m.amount)} RLUSD to ${builderName} only if every required check passes.`, right: action };
+        return { tone: "", icon: "queued", title: `${total} checks` };
     }
   })();
 
   return (
-    <div className={cn("flex items-center justify-between gap-4 border-b border-line px-5 py-3.5 transition-colors duration-200", view.tone)} aria-live="polite">
-      <div className="flex min-w-0 items-start gap-3">
-        <StatusIcon state={view.icon} className="mt-0.5 size-5" />
+    <div className={cn("flex min-h-[72px] flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-line px-5 py-3.5 transition-colors duration-200", view.tone)} aria-live="polite">
+      <div className="flex min-w-0 items-center gap-3">
+        <StatusIcon state={view.icon} className="size-6" />
         <div className="min-w-0">
-          <p className="text-body font-semibold text-ink">{view.title}</p>
-          {view.sub && <p className="text-small text-ink-2">{view.sub}</p>}
+          <p className="text-[19px] leading-7 font-semibold tracking-[-0.01em] text-ink">{view.title}</p>
+          {view.sub && <p className={cn("text-small", outcome === "failed" ? "text-fail" : "text-ink-2")}>{view.sub}</p>}
         </div>
       </div>
-      {view.right}
+      {action}
     </div>
   );
 }

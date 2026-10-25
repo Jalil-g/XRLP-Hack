@@ -20,7 +20,6 @@ export default async function NewProjectPage() {
         <PageHeader
           className="mt-2"
           title="New project"
-          description="A clear plan for the work. A defined proof requirement for every construction draw."
         />
       </div>
       <NewProjectForm builderId={builder.id} builderName={builder.name} />

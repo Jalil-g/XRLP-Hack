@@ -23,7 +23,7 @@ export function NavLinks({ role }: { role: Role }) {
             key={l.href}
             href={l.href}
             aria-current={active ? "page" : undefined}
-            className={cn("flex min-h-11 shrink-0 items-center border-b-2 text-small transition-colors duration-150", active ? "border-action text-ink font-semibold" : "border-transparent text-ink-2 hover:text-ink")}
+            className={cn("flex min-h-11 shrink-0 items-center text-small font-medium transition-colors duration-150", active ? "text-ink" : "text-ink-3 hover:text-ink")}
           >
             {l.label}
           </Link>

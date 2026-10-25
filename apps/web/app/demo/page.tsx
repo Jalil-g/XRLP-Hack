@@ -58,7 +58,6 @@ export default async function DemoPage() {
       <AutoRefresh ms={2500} />
       <PageHeader
         title="Demo control room"
-        description="Prepare the 100-second recording: show the project, review the evidence, release one milestone, and hold a failed milestone."
         action={
           <div className="flex gap-2">
             <a href={INSPECTOR_APP_URL} target="_blank" rel="noreferrer" className={buttonClass("secondary")}>

@@ -32,7 +32,6 @@ export default async function PortfolioPage() {
       <PageHeader
         title="Portfolio"
         meta={investor.kyc ? <Tag tone="pass">KYC verified</Tag> : <Tag tone="review">No KYC credential</Tag>}
-        description={`${investor.name}. Value is your vault shares at today's share price.`}
         action={
           !investor.kyc ? (
             <ActionButton action={{ kind: "kyc", investor: investor.address }}>Issue KYC credential</ActionButton>

@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { TxLink } from "@/components/chain";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input, Label } from "@/components/ui/form";
 import { ApiError, api } from "@/lib/api";
 import { errorDescription, errorFeedback } from "@/lib/error-feedback";
@@ -52,7 +52,7 @@ export function InvestDialog({
       router.refresh();
     } catch (err) {
       const feedback = errorFeedback(err);
-      setError(err instanceof ApiError && err.txResult === "tecNO_AUTH" ? `${investor.name} needs a KYC credential before depositing. The vault refused it (tecNO_AUTH).` : `${feedback.title}. ${errorDescription(feedback)}`);
+      setError(err instanceof ApiError && err.txResult === "tecNO_AUTH" ? `${investor.name} needs a KYC credential first. Issue one from Portfolio.` : `${feedback.title}. ${errorDescription(feedback)}`);
     } finally {
       submitting.current = false;
       setBusy(false);
@@ -73,17 +73,23 @@ export function InvestDialog({
         Invest
       </Button>
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
-        <DialogContent>
+        <DialogContent aria-describedby={undefined}>
           {done ? (
             <>
               <DialogHeader>
                 <DialogTitle>Deposit confirmed</DialogTitle>
-                <DialogDescription>
-                  {formatAmount(done.amount)} RLUSD is in the {projectName} vault. It is lent to the project when funding closes, then released milestone by milestone.
-                </DialogDescription>
               </DialogHeader>
-              <DialogBody className="text-small text-ink-2">
-                VaultDeposit <TxLink hash={done.tx} />
+              <DialogBody className="space-y-4">
+                <p className="hero-amount !text-[44px]">
+                  {formatAmount(done.amount, { cents: true })}
+                  <span>{" "}RLUSD</span>
+                </p>
+                <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-small">
+                  <dt className="text-ink-2">Vault</dt>
+                  <dd>{projectName}</dd>
+                  <dt className="text-ink-2">Receipt</dt>
+                  <dd><TxLink hash={done.tx} /></dd>
+                </dl>
               </DialogBody>
               <DialogFooter>
                 <Button variant="secondary" onClick={() => setOpen(false)}>
@@ -95,20 +101,25 @@ export function InvestDialog({
             <>
               <DialogHeader>
                 <DialogTitle>Review your deposit</DialogTitle>
-                <DialogDescription>Step 2 of 2 · Check the project, account, and amount before paying.</DialogDescription>
               </DialogHeader>
               <DialogBody className="space-y-4">
-                <dl className="space-y-3 text-small">
-                  <div><dt className="text-ink-2">Project</dt><dd className="font-medium">{projectName}</dd></div>
-                  <div><dt className="text-ink-2">Investor</dt><dd>{investor.name}</dd></div>
-                  <div><dt className="text-ink-2">Deposit</dt><dd className="text-heading tabular">{formatAmount(cents / 100, { cents: true })} RLUSD</dd></div>
-                  <div><dt className="text-ink-2">Annual rate</dt><dd>{formatBps(rateBps)}</dd></div>
+                <p className="hero-amount !text-[44px]">
+                  {formatAmount(cents / 100, { cents: true })}
+                  <span>{" "}RLUSD</span>
+                </p>
+                <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-6 gap-y-2 text-small">
+                  <dt className="text-ink-2">Project</dt>
+                  <dd className="font-medium">{projectName}</dd>
+                  <dt className="text-ink-2">From</dt>
+                  <dd>{investor.name}</dd>
+                  <dt className="text-ink-2">Annual rate</dt>
+                  <dd>{formatBps(rateBps)}</dd>
                 </dl>
-                <p className="rounded-control bg-band p-3 text-small text-ink-2">You receive vault shares. {redemptionDate ? `Withdrawals open from ${formatDate(redemptionDate)}, subject to available vault funds.` : "Withdrawals depend on the vault's redemption date and available funds; this is not an instant-access deposit."}</p>
+                <p className="text-small text-ink-2">You get vault shares. {redemptionDate ? `Withdrawals open ${formatDate(redemptionDate)}, if vault funds allow.` : "Withdrawals open at the vault redemption date, if funds allow."}</p>
                 {error && <p role="alert" className="rounded-control bg-fail-bg p-3 text-small text-fail">{error}</p>}
               </DialogBody>
               <DialogFooter>
-                <Button variant="secondary" disabled={busy} onClick={() => setReviewing(false)}>Back to amount</Button>
+                <Button variant="secondary" disabled={busy} onClick={() => setReviewing(false)}>Edit amount</Button>
                 <Button disabled={!!invalid || busy} onClick={deposit}>
                   {busy && <Loader2 className="animate-spin" aria-hidden />}
                   {busy ? "Depositing…" : `Deposit ${formatAmount(cents / 100, { cents: true })} RLUSD`}
@@ -119,13 +130,12 @@ export function InvestDialog({
             <>
               <DialogHeader>
                 <DialogTitle>Invest in {projectName}</DialogTitle>
-                <DialogDescription>Step 1 of 2 · Choose an amount as {investor.name}. Review the details before paying.</DialogDescription>
               </DialogHeader>
               <DialogBody className="space-y-2">
                 <Label htmlFor="amount">Amount (RLUSD)</Label>
                 <Input id="amount" inputMode="decimal" autoFocus value={raw} onChange={(e) => setRaw(e.target.value)} className="tabular" aria-invalid={!!invalid} aria-describedby="amount-help" />
                 <p id="amount-help" className="text-caption text-ink-2">
-                  {invalid ? <span className="text-fail">{invalid}</span> : `${formatBps(rateBps)} a year · ${formatAmount(remaining)} RLUSD left to raise`}
+                  {invalid ? <span className="text-fail">{invalid}</span> : `${formatAmount(remaining)} RLUSD open`}
                 </p>
                 {error && <p role="alert" className="rounded-control bg-fail-bg px-3 py-2 text-small text-fail">{error}</p>}
               </DialogBody>

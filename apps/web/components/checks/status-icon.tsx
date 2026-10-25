@@ -8,14 +8,14 @@ const ICONS = {
   fail: { Icon: XCircle, className: "text-fail", label: "Failed" },
   warn: { Icon: AlertCircle, className: "text-review-icon", label: "Needs review" },
   skipped: { Icon: MinusCircle, className: "text-ink-3", label: "Skipped" },
-  queued: { Icon: CircleDashed, className: "text-ink-3", label: "Not run" },
+  queued: { Icon: CircleDashed, className: "text-line-2", label: "Not run" },
   running: { Icon: Loader2, className: "animate-spin text-ink-3", label: "Running" },
 } as const;
 
 export function StatusIcon({ state, className }: { state: RowState; className?: string }) {
   const { Icon, className: tone, label } = ICONS[state];
-  return <Icon className={cn("size-[18px] shrink-0", tone, className)} aria-label={label} role="img" />;
+  return <Icon className={cn("size-5 shrink-0 transition-colors duration-200", tone, className)} aria-label={label} role="img" />;
 }
 
-/** Shared row grid so check, audit and verdict rows align: icon · name · detail · proof. */
-export const ROW_GRID = "check-row items-start gap-x-3 gap-y-1 px-4 py-3 sm:px-5";
+/** Shared row grid so check, audit and verdict rows align: icon, name, detail, flagged evidence. */
+export const ROW_GRID = "check-row items-center gap-x-3 gap-y-0.5 px-5 py-2.5 min-h-11";

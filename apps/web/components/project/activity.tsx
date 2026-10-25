@@ -1,20 +1,19 @@
-// On-chain activity: one sentence per transaction, newest first.
+// On-chain activity: one sentence per transaction, newest first. Date and tx sit quietly on the right.
 import { TxLink } from "@/components/chain";
 import type { ChainEvent } from "@/lib/contract";
-import { EVENT_TX, describeEvent } from "@/lib/display";
+import { describeEvent } from "@/lib/display";
 import { formatDateTime } from "@/lib/utils";
 
 export function Activity({
   events,
   who,
   milestoneTitle,
-  roleOf,
   builderName,
   limit,
 }: {
   events: ChainEvent[];
   who: (address?: string) => string;
-  /** Actor's role label (Inspector, AI verifier, Release service, …). */
+  /** Actor's role label. Accepted for compatibility; the sentence already names the actor. */
   roleOf?: (address?: string) => string | undefined;
   /** Recipient named in release lines. */
   builderName?: string;
@@ -24,22 +23,13 @@ export function Activity({
   const rows = limit ? events.slice(0, limit) : events;
   if (!rows.length) return <p className="text-small text-ink-2">No transactions yet.</p>;
   return (
-    <ol className="divide-y divide-line">
+    <ol className="border-t border-line">
       {rows.map((e, i) => (
-        <li key={`${e.txHash}-${i}`} className="py-3 first:pt-0">
-          <p className={e.kind === "release_refused" ? "text-small font-medium text-fail" : "text-small text-ink"}>{describeEvent(e, who, milestoneTitle, builderName)}</p>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-caption text-ink-2">
-            {roleOf?.(e.actor) && (
-              <>
-                <span className="font-medium text-ink">{roleOf(e.actor)}</span>
-                <span aria-hidden>·</span>
-              </>
-            )}
-            <span>{EVENT_TX[e.kind]}</span>
-            <span aria-hidden>·</span>
+        <li key={`${e.txHash}-${i}`} className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-0.5 border-b border-line py-3">
+          <p className={e.kind === "release_refused" ? "min-w-0 text-small font-medium text-fail" : "min-w-0 text-small text-ink"}>{describeEvent(e, who, milestoneTitle, builderName)}</p>
+          <p className="flex shrink-0 items-baseline gap-4 text-caption text-ink-3 tabular-nums">
             <span>{formatDateTime(e.at)}</span>
-            <span aria-hidden>·</span>
-            <TxLink hash={e.txHash} />
+            <TxLink hash={e.txHash} className="text-ink-3" />
           </p>
         </li>
       ))}
