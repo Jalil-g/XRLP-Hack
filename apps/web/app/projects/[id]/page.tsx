@@ -151,6 +151,10 @@ export default async function ProjectPage({ params, searchParams }: Props) {
             items={[
               ...(p.chain.spv ? [{ label: "Account", value: <Val main={<Address address={p.chain.spv} />} note="Master key disabled" /> }] : []),
               { label: "Signers", value: <Val main="3 of 4 needed" note="Platform, builder, inspector, trustee" /> },
+              {
+                label: "Inspector",
+                value: d.inspectors.length ? <Val main={d.inspectors.map((i) => i.name).join(", ")} note="Assigned by the AI when terms locked" /> : <Val main="Not assigned yet" note="The AI assigns one when terms lock" />,
+              },
               { label: "Releases", value: <Val main="Decided by the checks" note="Escrows pay the builder or go back" /> },
               ...(d.balances ? [{ label: "Builder balance", value: <Val main={`${formatAmount(d.balances.builder)} RLUSD`} note={builder.name} /> }] : []),
             ]}

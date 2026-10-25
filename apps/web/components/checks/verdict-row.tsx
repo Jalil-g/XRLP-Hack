@@ -10,8 +10,8 @@ export function VerdictRow({ verdict, attestationTx, hash, released }: { verdict
   return (
     <div className={`${ROW_GRID} border-t border-line bg-band`}>
       <StatusIcon state={state} className="mt-0.5" />
-      <span className="text-small font-medium text-ink">AI verdict</span>
-      <span className="text-small text-ink-2">
+      <span className="text-body font-medium text-ink">AI verdict</span>
+      <span className="text-body text-ink-2">
         <span className="font-medium text-ink">{WORD[verdict.decision]}</span> · confidence{" "}
         <span className="tabular font-medium text-ink">{verdict.confidence.toFixed(2)}</span> · {verdict.model === "mock" ? "mock verifier" : verdict.model}
         <span className="block text-caption">

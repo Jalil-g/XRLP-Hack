@@ -4,6 +4,7 @@ import { AutoRefresh } from "@/components/auto-refresh";
 import { EvidenceUploader } from "@/components/builder/evidence-uploader";
 import { TxLink } from "@/components/chain";
 import { ChecksPanel } from "@/components/checks/checks-panel";
+import { buttonClass } from "@/components/ui/button";
 import { Empty, PageHeader, Section } from "@/components/ui/layout";
 import { Tag } from "@/components/ui/tag";
 import { api } from "@/lib/api";
@@ -27,6 +28,11 @@ export default async function BuilderPage() {
     <div className="space-y-14">
       <AutoRefresh ms={4000} />
       <PageHeader
+        action={
+          <Link href="/builder/new" className={buttonClass("secondary")}>
+            New project
+          </Link>
+        }
         title={builder.name}
         meta={builder.verified ? <Tag tone="pass">Verified builder</Tag> : <Tag>Not verified yet</Tag>}
         description={

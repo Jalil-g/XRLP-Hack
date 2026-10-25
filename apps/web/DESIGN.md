@@ -9,6 +9,7 @@ familiar controls, quiet chrome, exact type. Color is reserved for state. Tokens
   hashes, addresses and amounts in tx detail: `ui-monospace` (SF Mono).
 - Roles (fixed rem, ratio ≈ 1.2): `display` 40/44 600 −0.025em · `title` 28/34 600 −0.02em · `heading` 20/26 600 −0.01em ·
   `body` 17/26 400 (Apple's body size; projector-legible) · `small` 15/22 · `caption` 13/18 secondary.
+- Checks panel rows use `body` (17px) for names and reasons: it is the projector hero.
 - Numbers are tabular (`tabular` utility). Headings `text-wrap: balance`, prose `text-wrap: pretty`.
 - No uppercase tracked labels, no eyebrows above headings.
 

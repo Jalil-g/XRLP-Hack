@@ -11,11 +11,11 @@ export function CheckRow({ check, state, evidence = [] }: { check: Pick<CheckRes
   return (
     <li className={cn(ROW_GRID, state === "fail" && "bg-fail-bg/50")}>
       <StatusIcon state={state} className="mt-0.5" />
-      <span className="text-small font-medium text-ink">
+      <span className="text-body font-medium text-ink">
         {checkName(check.check)}
         {AI_CHECKS.has(check.check) && <span className="ml-1.5 font-normal text-ink-2">· AI</span>}
       </span>
-      <span className={cn("text-small", state === "fail" ? "font-medium text-fail" : "text-ink-2")}>{reason}</span>
+      <span className={cn("text-body", state === "fail" ? "font-medium text-fail" : "text-ink-2")}>{reason}</span>
       <span className="flex gap-1.5 justify-self-end">
         {flagged.map((e) => (
           // eslint-disable-next-line @next/next/no-img-element -- evidence served by core (/api/files) or fixture art
