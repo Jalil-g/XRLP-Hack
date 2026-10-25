@@ -1,11 +1,12 @@
 // CORE-07: XRPL prestage (A/B/C) -> core store + release vault, and devnet route 21. Offline: fixture files + a stub ledger.
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { conditionFromPreimage, type PrestageFile, type PrestagePreimagesFile, type PrestageProject } from "@xrlp/xrpl";
+import { auditHash, SoftwareSigner, verifySignedBlob } from "@xrlp/attest-signer";
+import { conditionFromPreimage, verifyAttestBlob, type PrestageFile, type PrestagePreimagesFile, type PrestageProject } from "@xrlp/xrpl";
 import { explorerTxUrl, type AttestMemo, type EscrowSnapshot, type LedgerPort, type TxResult } from "@xrlp/shared";
 import { FakeClock } from "../src/clock.ts";
 import { conditionFromFulfillment } from "../src/conditions.ts";
@@ -24,9 +25,11 @@ const DAY = 86_400_000;
 const at = (ms: number) => new Date(Date.parse(NOW) + ms).toISOString();
 const isCode = (code: string, re?: RegExp) => (e: unknown) => e instanceof DomainError && e.code === code && (!re || re.test(e.message));
 
-const ACCOUNTS = Object.fromEntries(
-  ["issuer", "platform", "releaseService", "builder", "investor1", "investor2", "investor3", "inspector1", "inspector2", "inspector3", "aiAgent", "trustee"].map((r) => [r, fakeAddress(`ps:${r}`)]),
-);
+/** Real XRPL key pairs from PUBLIC labels (test only, never funded): signed audits need checksum-valid addresses. */
+const keyFor = (label: string) => SoftwareSigner.fromEntropy(new Uint8Array(createHash("sha256").update(label).digest().subarray(0, 16)));
+const realAddress = (label: string) => keyFor(label).wallet.classicAddress;
+const ROLES = ["issuer", "platform", "releaseService", "builder", "investor1", "investor2", "investor3", "inspector1", "inspector2", "inspector3", "aiAgent", "trustee"];
+const ACCOUNTS = Object.fromEntries(ROLES.map((r) => [r, realAddress(`ps:${r}`)]));
 
 type Esc = { state: "open" | "expired" | "finished"; cancelAfter: string };
 
@@ -37,7 +40,7 @@ function project(key: "A" | "B" | "C", run: string, escrows: Esc[], extra: Parti
   const principal = key === "C" ? "12000" : "30000";
   const keys = ["foundation", "framing", "dry_in"];
   const titles = ["Foundation", "Framing", "Roof & Dry-in"];
-  const spv = fakeAddress(`ps:${id}:spv`);
+  const spv = realAddress(`ps:${id}:spv`);
   const loanSetAt = at(-20 * MIN);
   const preimages: Record<string, { condition: string; preimage: string; createdAt: string }> = {};
   const txs: PrestageProject["txs"] = [];
@@ -198,6 +201,11 @@ class StubLedger {
   async attest(p: { signer: string; spv: string; memo: AttestMemo }) {
     return this.tx(`attest:${p.memo.kind}`, p, p.memo.kind === "audit" ? "audit_attested" : p.memo.kind === "verdict" ? "verdict_attested" : undefined);
   }
+  /** Like the xrpl adapter: verify the inspector-signed attestation offline, then "submit" it. */
+  async submitSignedBlob(blob: string) {
+    const { memo } = verifyAttestBlob(blob);
+    return this.tx(`signed:${memo.kind}`, blob, memo.kind === "audit" ? "audit_attested" : undefined);
+  }
   async finishEscrow(p: { owner: string; offerSequence: number; condition: string; fulfillment: string }) {
     const e = this.escrows.get(`${p.owner}:${p.offerSequence}`);
     assert.ok(e?.open, "finish of an unknown/closed escrow");
@@ -226,11 +234,26 @@ const asPort = (s: StubLedger) =>
     get: (t, k) => (k in t ? (t as unknown as Record<string | symbol, unknown>)[k] : () => Promise.reject(new Error(`stub ledger: ${String(k)} not expected`))),
   }) as unknown as LedgerPort;
 
-function devnetCore(f: Fixture) {
+/** A WALLETS_FILE like bootstrap writes, with the PUBLIC-label test keys (`roles` = which roles get a wallet). */
+function writeWallets(dir: string, roles = ROLES): string {
+  const path = join(dir, "wallets.json");
+  writeFileSync(path, JSON.stringify({ network: "devnet", createdAt: NOW, wallets: Object.fromEntries(roles.map((r) => [r, { address: ACCOUNTS[r], seed: keyFor(`ps:${r}`).wallet.seed }])), spvs: {} }));
+  return path;
+}
+/** Offline stand-in for devnet autofill. */
+const offlineAutofill = () => {
+  let seq = 100;
+  return async <T extends object>(tx: T) => ({ ...tx, Fee: "12", Sequence: seq++, LastLedgerSequence: 5_000_000 });
+};
+
+/** `wallets`: "signed" (default) = WALLETS_FILE with the inspector's key; "none" = no WALLETS_FILE (unsigned audits). */
+function devnetCore(f: Fixture, wallets: "signed" | "none" | string[] = "signed") {
   const paths = write(f);
   const stub = new StubLedger(f);
   const clock = new FakeClock(NOW);
-  const core = createCore({ inMemory: true, clock, ledger: asPort(stub), env: { LEDGER_MODE: "devnet", PRESTAGE_FILE: paths.prestagePath, PRESTAGE_PREIMAGES_FILE: paths.preimagesPath } });
+  const walletsFile = wallets === "none" ? undefined : writeWallets(paths.dir, wallets === "signed" ? ROLES : wallets);
+  const env = { LEDGER_MODE: "devnet", PRESTAGE_FILE: paths.prestagePath, PRESTAGE_PREIMAGES_FILE: paths.preimagesPath, ...(walletsFile ? { WALLETS_FILE: walletsFile } : {}) };
+  const core = createCore({ inMemory: true, clock, ledger: asPort(stub), env, prestageAutofill: offlineAutofill() });
   return { ...paths, stub, clock, core, svc: core.service };
 }
 
@@ -411,7 +434,7 @@ describe("CORE-07 devnet route 21 (stub ledger)", () => {
     assert.deepEqual(a.inspectors.map((i) => i.address), [ACCOUNTS.inspector1]);
     // 04 §Pre-staged: M1 + M2 evidence and audits uploaded (2 audit attestations on the ledger)
     assert.deepEqual(a.project.milestones.map((m) => m.status), ["audited", "audited", "escrowed"]);
-    assert.equal(stub.submitted.filter((s) => s.type === "attest:audit").length, 2);
+    assert.equal(stub.submitted.filter((s) => s.type === "signed:audit").length, 2);
 
     const [m1, m2] = a.project.milestones;
     const r1 = await svc.runChecks(fa.projectId, m1!.id);
@@ -466,10 +489,61 @@ describe("CORE-07 devnet route 21 (stub ledger)", () => {
     const ids = (await ctx.svc.listProjects()).map((p) => p.id).sort();
     assert.deepEqual(ids, [f.file.projects.A!.projectId, f.file.projects.B!.projectId, f.file.projects.C!.projectId].sort());
     assert.ok(!ids.includes("maple-st-duplex"), "never the fake back-dated scenario on devnet");
-    assert.equal(ctx.stub.submitted.filter((s) => s.type === "attest:audit").length, 2);
+    assert.equal(ctx.stub.submitted.filter((s) => s.type === "signed:audit").length, 2);
     assert.equal(devnetSeed("maple-st"), "prestage");
     assert.equal(devnetSeed(undefined), "prestage");
     assert.equal(devnetSeed("participants"), "participants");
+  });
+});
+
+describe("CORE-07 signed prestage audits (#173 compatibility)", () => {
+  it("A's M1/M2 audits are signed by the assigned inspector's WALLETS_FILE key, bound to inspector + SPV + report", async () => {
+    const f = fixture();
+    const { svc, stub } = devnetCore(f);
+    await svc.resetDemo({});
+    const fa = f.file.projects.A!;
+    const a = await svc.getProject(fa.projectId);
+    const blobs = stub.submitted.filter((s) => s.type === "signed:audit").map((s) => s.args as string);
+    assert.equal(blobs.length, 2);
+    assert.equal(stub.submitted.filter((s) => s.type === "attest:audit").length, 0, "no platform-submitted audit");
+    const inspector = keyFor("ps:inspector1").wallet;
+    for (const [i, blob] of blobs.entries()) {
+      const m = a.project.milestones[i]!;
+      const [stored] = a.audits[m.id]!;
+      // the checks #173's verifyAuditBlob makes: plain 1-drop Payment, Account = assigned inspector with its MASTER key,
+      // Destination = this project's SPV, one audit memo for this milestone whose hash = attest-signer's auditHash(report)
+      const { tx, memo, signer } = verifyAttestBlob(blob, { signer: fa.assignedInspector, spv: fa.chain.spv });
+      assert.equal(signer, inspector.classicAddress);
+      assert.equal((tx as { SigningPubKey?: string }).SigningPubKey, inspector.publicKey.toUpperCase());
+      assert.ok(tx.Fee && tx.Sequence && tx.LastLedgerSequence);
+      assert.ok(!tx.Flags);
+      assert.deepEqual(verifySignedBlob(blob), { signers: [inspector.classicAddress] });
+      assert.equal(memo.kind, "audit");
+      assert.equal(memo.milestoneId, m.id);
+      assert.equal(memo.hash, await auditHash(stored!));
+      assert.equal(stored!.inspector, fa.assignedInspector);
+      assert.ok(!JSON.stringify(stored).includes(keyFor("ps:inspector1").wallet.seed!), "no seed in the store");
+    }
+    assert.notEqual(blobs[0], blobs[1]);
+  });
+
+  it("WALLETS_FILE without the inspector's key: reset refused before wiping, no seed in the message", async () => {
+    const ok = devnetCore(fixture());
+    await ok.svc.resetDemo({});
+    const before = await ok.core.store.read((d) => d.projects.length);
+    const f = fixture("r2");
+    const { svc, core, stub } = devnetCore(f, ROLES.filter((r) => r !== "inspector1"));
+    await assert.rejects(svc.resetDemo({}), (e: unknown) => isCode("VALIDATION", /Cannot sign the prestaged audits as inspector .* no wallet for that address/)(e) && !ROLES.some((r) => (e as Error).message.includes(keyFor(`ps:${r}`).wallet.seed!)));
+    assert.equal(await core.store.read((d) => d.projects.length), 0, "nothing imported");
+    assert.equal(stub.submitted.length, 0);
+    assert.ok(before > 0);
+  });
+
+  it("no WALLETS_FILE (injected ledger): audits stay platform-attested as before", async () => {
+    const { svc, stub } = devnetCore(fixture(), "none");
+    await svc.resetDemo({});
+    assert.equal(stub.submitted.filter((s) => s.type === "attest:audit").length, 2);
+    assert.equal(stub.submitted.filter((s) => s.type === "signed:audit").length, 0);
   });
 });
 

@@ -16,8 +16,10 @@
 // checking conditionFromPreimage(preimage) === the escrow's condition. They are never logged or put in an error message.
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { auditMemo, buildAttestationTx, SoftwareSigner, type AuditForHash } from "@xrlp/attest-signer";
 import {
   conditionFromPreimage,
+  getClient,
   parsePrestageFile,
   type PrestageEscrow,
   type PrestageFile,
@@ -472,13 +474,66 @@ function donorEvidence(p: PrestageProject, m: PrestageProject["milestones"][numb
   return { records, photo };
 }
 
+// ---------- signed audits (the inspector app's route 10 `signedTxBlob`) ----------
+
+/** The unsigned attestation Payment (attest-signer's `buildAttestationTx`). */
+export type AttestTx = ReturnType<typeof buildAttestationTx>;
+/** Fills Fee / Sequence / LastLedgerSequence (devnet by default; tests pass an offline one). */
+export type AttestAutofill = (tx: AttestTx) => Promise<AttestTx>;
+/** Signs an audit's attestation as its inspector: returns the signed tx blob for route 10 / `submitAudit`. */
+export type AuditBlobSigner = (audit: AuditForHash, spv: XrplAddress) => Promise<string>;
+
+/** Ledgers of headroom between signing and core submitting the blob (the inspector app uses the same). */
+const AUDIT_LLS_MARGIN = 75;
+
+/** Autofill on devnet through @xrlp/xrpl's shared client (its devnet network-id guard applies). */
+export const devnetAutofill: AttestAutofill = async (tx) => {
+  const client = await getClient();
+  const ledger = await client.getLedgerIndex();
+  return client.autofill({ ...tx, LastLedgerSequence: ledger + AUDIT_LLS_MARGIN });
+};
+
+/**
+ * The assigned inspector's software key from WALLETS_FILE (looked up by address: inspector1 in the standard prestage),
+ * signing exactly what the inspector app signs (attest-signer: `auditMemo` + `buildAttestationTx`, master key): a 1-drop
+ * Payment inspector -> project SPV with one `xrlp/attest/v1` audit memo whose hash is attest-signer's canonical
+ * `auditHash` of the report. That is what #173's `verifyAuditBlob` checks. The seed stays in this closure: it is never
+ * logged or put in an error message.
+ */
+export async function walletAuditSigner(walletsFile: string, inspector: XrplAddress, autofill: AttestAutofill = devnetAutofill): Promise<AuditBlobSigner> {
+  const refuse = (why: string): never => {
+    throw new DomainError("VALIDATION", `Cannot sign the prestaged audits as inspector ${inspector}: ${why}. Use the WALLETS_FILE the prestage was made with`);
+  };
+  let file: { wallets?: Record<string, { address?: string; seed?: string } | undefined> };
+  try {
+    file = JSON.parse(await readFile(walletsFile, "utf8"));
+  } catch {
+    return refuse(`WALLETS_FILE ${walletsFile} is missing or not valid JSON`);
+  }
+  const stored = Object.values(file.wallets ?? {}).find((w) => w?.address === inspector);
+  if (!stored?.seed) return refuse(`WALLETS_FILE ${walletsFile} has no wallet for that address`);
+  let signer: SoftwareSigner;
+  try {
+    signer = SoftwareSigner.fromSeed(stored.seed);
+  } catch {
+    return refuse("its WALLETS_FILE seed is malformed");
+  }
+  if (signer.wallet.classicAddress !== inspector) refuse("its WALLETS_FILE seed does not derive that address (master key required)");
+  return async (audit, spv) => {
+    const tx = await autofill(buildAttestationTx({ account: inspector, spv, memo: await auditMemo(audit) }));
+    return (await signer.signAttestation(tx)).tx_blob;
+  };
+}
+
 // ---------- 04 §Pre-staged evidence on Project A ----------
 
 /**
  * Project A: M1 evidence + inspector audit, M2 evidence (one photo re-uploaded from a released milestone of another project)
- * + audit. Audits are attested on-ledger by CoreService (platform-submitted, `signed-for` the assigned inspector).
+ * + audit. With `signAudit` (devnet: the inspector's key from WALLETS_FILE) each audit goes through route 10's signed path,
+ * as if the inspector app filed it; without one, CoreService attests it platform-submitted, `signed-for` the inspector
+ * (fake demo only once #173 lands: a devnet core then refuses unsigned audits).
  */
-export async function stagePrestageEvidence(svc: CoreService, imported: ImportedPrestage, log: Log = () => {}): Promise<void> {
+export async function stagePrestageEvidence(svc: CoreService, imported: ImportedPrestage, log: Log = () => {}, signAudit?: AuditBlobSigner): Promise<void> {
   const id = imported.ids.A;
   if (!id) return;
   const { project } = await svc.getProject(id);
@@ -496,15 +551,22 @@ export async function stagePrestageEvidence(svc: CoreService, imported: Imported
     invoice("concrete-rebar-invoice.pdf", m1.amount),
     doc("footing-inspection.pdf", "Footing inspection: PASSED"),
   ];
+  const spv = project.chain.spv;
+  const audit = async (mid: string, body: ReturnType<typeof auditBody>) => {
+    if (!signAudit) return svc.submitAudit(id, mid, body);
+    if (!spv) throw new DomainError("VALIDATION", `Project ${id} has no SPV to address the audit attestation to`);
+    const signedTxBlob = await signAudit({ ...body.report, milestoneId: mid, photos: body.photos }, spv);
+    return svc.submitAudit(id, mid, { ...body, signedTxBlob });
+  };
   await svc.submitEvidence(id, m1.id, m1Evidence);
-  await svc.submitAudit(id, m1.id, auditBody(project, m1.id, inspector, m1Evidence, "Slab cured, anchor bolts set, no framing yet."));
+  await audit(m1.id, auditBody(project, m1.id, inspector, m1Evidence, "Slab cured, anchor bolts set, no framing yet."));
   const m2Evidence = [
     ...photos(site, "Framing — Maple St", 3, at(0.5), "framing", 45),
     ...(imported.reusedPhoto ? [{ ...imported.reusedPhoto, filename: "IMG_2231.jpg" }] : []),
     invoice("lumber-package-invoice.pdf", m2.amount),
   ];
   await svc.submitEvidence(id, m2.id, m2Evidence);
-  await svc.submitAudit(id, m2.id, auditBody(project, m2.id, inspector, m2Evidence, "Walls framed; sheathing started."));
-  log(`${project.name}: M1 + M2 evidence and audits uploaded (M2 contains IMG_2231.jpg reused from another project)`);
+  await audit(m2.id, auditBody(project, m2.id, inspector, m2Evidence, "Walls framed; sheathing started."));
+  log(`${project.name}: M1 + M2 evidence and ${signAudit ? "inspector-signed" : "platform-attested"} audits uploaded (M2 contains IMG_2231.jpg reused from another project)`);
 }
 

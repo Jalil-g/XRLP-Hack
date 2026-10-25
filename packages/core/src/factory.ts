@@ -10,6 +10,7 @@ import { UploadedEvidenceMeta } from "./adapters/evidence-meta.ts";
 import { CoreVerifierAdapter } from "./adapters/verifier.ts";
 import type { ReleaseServicePort } from "./api-surface.ts";
 import { FakeClock, systemClock, type Clock } from "./clock.ts";
+import type { AttestAutofill } from "./demo/prestage-import.ts";
 import { prestageSeedOptions } from "./demo/prestage-seed.ts";
 import { DEMO_ADDRESSES, demoCancelAfter, seedDemo, SEED_BACKDATE_MS } from "./demo/scenario.ts";
 import { FakeLedger } from "./fakes/fake-ledger.ts";
@@ -36,6 +37,8 @@ export interface CreateCoreOptions extends Partial<CoreServiceOptions> {
   inMemory?: boolean;
   dataDir?: string;
   env?: Record<string, string | undefined>;
+  /** Devnet prestage seed: offline Fee/Sequence/LastLedgerSequence for the inspector-signed audits (tests). Default: devnet. */
+  prestageAutofill?: AttestAutofill;
 }
 
 type Env = Record<string, string | undefined>;
@@ -115,7 +118,19 @@ export function createCore(opts: CreateCoreOptions = {}): Core {
   // CORE-07: devnet route 21 loads the XRPL prestage (A/B/C) into this store and the release service's vault.
   const prestage =
     !opts.seed && !opts.release && (env.LEDGER_MODE ?? "fake") === "devnet"
-      ? prestageSeedOptions({ env, dataDir: dataDir ?? resolveDataDir(env), store, vault, ledger, service: () => service, other: seed, walletsPlatform: devnet?.identities.platform })
+      ? prestageSeedOptions({
+          env,
+          dataDir: dataDir ?? resolveDataDir(env),
+          store,
+          vault,
+          ledger,
+          service: () => service,
+          other: seed,
+          walletsPlatform: devnet?.identities.platform,
+          // Project A's prestaged audits are signed by the assigned inspector's key (an injected ledger: only if WALLETS_FILE is set).
+          walletsFile: devnet?.walletsFile ?? (env.WALLETS_FILE ? (isAbsolute(env.WALLETS_FILE) ? env.WALLETS_FILE : resolve(XRPL_REPO_ROOT, env.WALLETS_FILE)) : undefined),
+          ...(opts.prestageAutofill ? { autofill: opts.prestageAutofill } : {}),
+        })
       : {};
 
   const ids = devnet?.identities;
