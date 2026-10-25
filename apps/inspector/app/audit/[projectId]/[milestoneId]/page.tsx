@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ApiError, api, API_MODE } from "@/lib/api";
 import { buildAudit, draftProblems, emptyDraft, evidenceBundleHash, withBrowserExif, type AuditDraft } from "@/lib/audit";
 import { evidenceStatus } from "@/lib/queue";
@@ -96,11 +96,11 @@ function AuditLoader({ inspector, projectId, milestoneId }: { inspector: Inspect
   if (task === null) {
     return (
       <Shell back={back}>
-        <p className="text-small text-muted">This milestone is not in {inspector.name}&apos;s queue. Switch inspector, or go back to the queue.</p>
+        <p className="text-small text-muted">Not in {inspector.name}&apos;s queue.</p>
       </Shell>
     );
   }
-  if (task.needs !== "audit" && task.needs !== "re_audit") return <Shell back={back}><p className="text-small text-muted">No audit is due from you for this milestone. Return to the queue for your current assignments.</p></Shell>;
+  if (task.needs !== "audit" && task.needs !== "re_audit") return <Shell back={back}><p className="text-small text-muted">No audit due.</p></Shell>;
   // Keyed so a reload (after the builder changed evidence) starts a clean draft bound to the new bundle.
   return <AuditForm key={`${inspector.address}:${reloads}`} task={task} checks={checks} browserExif={browserExif} inspector={inspector.address} inspectorName={inspector.name} back={back} onReload={() => setReloads((n) => n + 1)} />;
 }
@@ -239,45 +239,47 @@ function AuditForm({
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="text-title">
-              {isReAudit && "Re-audit: "}M{m.index + 1} · {m.title}
+              <span className="mr-3 text-muted">M{m.index + 1}</span>
+              {m.title}
             </h1>
-            <p className="mt-2 text-small text-muted">{task.projectName} · Inspector {inspectorName}</p>
+            <p className="mt-2 flex flex-wrap gap-x-4 text-small text-muted"><span>{task.projectName}</span><span>{inspectorName}</span></p>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-small">
             <div><p className="text-caption text-muted">Milestone amount</p><p className="mt-1 tabular text-heading font-semibold">{formatRlusd(m.amount)}</p></div>
             {m.cancelAfter && (
               <span className="flex items-center gap-1 text-caption text-muted">
-                <CalendarClock className="size-3.5" /> escrow expires {formatDateTime(m.cancelAfter)}
+                <CalendarClock className="size-3.5" /> Expires {formatDateTime(m.cancelAfter)}
               </span>
             )}
-            <Badge tone={NEEDS[task.needs].tone} dot>
-              {NEEDS[task.needs].label}
-            </Badge>
+            {isReAudit && (
+              <Badge tone={NEEDS.re_audit.tone} dot>
+                {NEEDS.re_audit.label}
+              </Badge>
+            )}
           </div>
         </div>
-        <p className="max-w-3xl text-small text-muted">Your signed observations inform the milestone checks. An audit alone does not release funds.</p>
       </div>
 
       <ol aria-label="Audit workflow" className="workflow-rail">
-        <li aria-current="step">Inspect evidence & complete report</li>
-        <li>Review evidence version</li>
-        <li>Sign & submit</li>
+        <li aria-current="step">Report</li>
+        <li>Review</li>
+        <li>Sign</li>
       </ol>
 
       <ReviewDialog open={reviewing} title="Review and submit audit" busy={busy}
         confirmLabel={phase === "signing" ? "Signing…" : phase === "filing" ? "Submitting…" : canSign ? "Sign and submit audit" : "Submit audit (core signs)"}
         onBack={() => setReviewing(false)} onConfirm={() => void submit(canSign)}>
-        <p className="font-medium">{task.projectName} · M{m.index + 1} {m.title}</p>
-        <p>{formatRlusd(m.amount)} · {inspectorName} ({shortAddress(inspector, 8, 6)})</p>
+        <p className="font-medium">{task.projectName} <span className="ml-2 text-faint">M{m.index + 1}</span> {m.title}</p>
+        <p className="flex flex-wrap gap-x-4"><span className="tabular">{formatRlusd(m.amount)}</span><span>{inspectorName}</span><span className="font-mono">{shortAddress(inspector, 8, 6)}</span></p>
         <ul className="divide-y divide-line border-y border-line">
           {task.sov.map((line) => <li key={line.code} className="py-3">
             <div className="flex flex-wrap justify-between gap-2"><span>{line.title}</span><span className="font-medium">{draft.checklist[line.code]?.status?.replaceAll("_", " ")}</span></div>
             {draft.checklist[line.code]?.note && <p className="mt-1 text-muted">{draft.checklist[line.code]?.note}</p>}
           </li>)}
         </ul>
-        <p>{draft.photos.length} site photo{draft.photos.length === 1 ? "" : "s"} · {task.evidence.length} builder files reviewed</p>
+        <p className="flex flex-wrap gap-x-4"><span>{draft.photos.length} site photo{draft.photos.length === 1 ? "" : "s"}</span><span>{task.evidence.length} builder files</span></p>
         {draft.notes && <p className="whitespace-pre-wrap">{draft.notes}</p>}
-        <p className="text-caption text-muted">Evidence version: {bundle ? shortHash(bundle) : "Preparing…"}. {canSign ? "Signed with your loaded browser key." : "Browser signing is unavailable for this report. Core will sign on your behalf."}</p>
+        <p className="flex flex-wrap gap-x-4 text-caption text-muted"><span>Evidence version <span className="font-mono">{bundle ? shortHash(bundle) : "…"}</span></span><span>Signed by: {canSign ? "Your key" : "Core"}</span></p>
       </ReviewDialog>
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
@@ -285,12 +287,8 @@ function AuditForm({
         <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader>
-              <div>
-                <CardTitle>Current builder evidence</CardTitle>
-                <CardDescription>
-                  {ev.uploaded} file{ev.uploaded === 1 ? "" : "s"} · the suite checks these against your audit
-                </CardDescription>
-              </div>
+              <CardTitle>Builder evidence</CardTitle>
+              <span className="tabular text-caption text-muted">{ev.uploaded} file{ev.uploaded === 1 ? "" : "s"}</span>
             </CardHeader>
             <CardContent>
               <EvidenceGallery evidence={task.evidence} site={task.siteGeo} browserExif={browserExif} />
@@ -312,20 +310,14 @@ function AuditForm({
 
           <Card id="checklist">
             <CardHeader>
-              <div>
-                <CardTitle>Milestone checklist</CardTitle>
-                <CardDescription>{isReAudit ? "Record fresh observations for every SoV line; previous answers are not copied." : "One line per Schedule of Values item this milestone pays for."}</CardDescription>
-              </div>
+              <CardTitle>Checklist</CardTitle>
             </CardHeader>
             <Checklist sov={task.sov} value={draft.checklist} onChange={setLine} showErrors={showErrors} />
           </Card>
 
           <Card id="photos" className={cn(showErrors && draft.photos.length === 0 && "border-bad-line")}>
             <CardHeader>
-              <div>
-                <CardTitle>Your site photos</CardTitle>
-                <CardDescription>Read in your browser: capture time and GPS are shown as the suite will see them.</CardDescription>
-              </div>
+              <CardTitle>Site photos</CardTitle>
             </CardHeader>
             <CardContent>
               <PhotoPicker photos={draft.photos} onChange={(photos) => setDraft((d) => ({ ...d, photos }))} site={task.siteGeo} />
@@ -342,7 +334,7 @@ function AuditForm({
                 value={draft.notes}
                 onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
                 rows={4}
-                placeholder="Anything the builder's evidence does not show: workmanship, deviations from plans, safety."
+                placeholder="Optional"
                 className="w-full rounded-md border border-line bg-surface px-3 py-2 text-small placeholder:text-faint focus:ring-2 focus:border-brand"
               />
             </CardContent>
@@ -350,13 +342,10 @@ function AuditForm({
 
           <Card>
             <CardContent className="space-y-3">
-              <p className="flex items-start gap-2 text-caption text-muted">
-                <Fingerprint className="mt-0.5 size-4 shrink-0 text-faint" />
-                <span>
-                  Your audit is bound to the {task.evidence.length} builder files you reviewed (bundle{" "}
-                  <span className="font-mono text-ink-2">{bundle ? shortHash(bundle) : "…"}</span>). If the builder changes them, the suite asks for a
-                  re-audit.
-                </span>
+              <p className="flex items-center gap-2 text-caption text-muted" title="Your audit is bound to these builder files. If they change, a re-audit is needed.">
+                <Fingerprint className="size-4 shrink-0 text-faint" />
+                <span>Evidence version</span>
+                <span className="font-mono text-ink-2">{bundle ? shortHash(bundle) : "…"}</span>
               </p>
               {showErrors && problems.length > 0 && (
                 <ul className="list-disc space-y-0.5 pl-5 text-caption text-bad">
@@ -387,7 +376,6 @@ function AuditForm({
                 {canSign && <PenLine />}
                 {phase === "signing" ? "Signing attestation…" : phase === "filing" ? "Filing audit…" : "Review audit"}
               </Button>
-              <p className="text-center text-caption text-muted">Step 1 of 2 · Complete your report, then review before signing. Ctrl+Enter or ⌘+Enter opens review.</p>
             </CardContent>
           </Card>
         </div>
@@ -406,13 +394,13 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
         <CardContent className="space-y-4 py-8 text-center">
           <CheckCircle2 className="mx-auto size-10 text-ok" />
           <div>
-            <h1 className="text-xl font-semibold">Audit filed</h1>
-            <p className="mt-1 text-small text-muted">
-              {task.projectName} · M{task.milestone.index + 1} {task.milestone.title} is now <span className="font-medium text-ink">{result.milestone.status}</span>.
-              The AI runs the test suite over your audit and the builder&apos;s evidence.
+            <h1 className="text-xl font-semibold">{task.needs === "re_audit" || latestOwnAudit(task, result.audit.inspector) ? "Re-audit filed" : "Audit filed"}</h1>
+            <p className="mt-1 flex flex-wrap justify-center gap-x-4 text-small text-muted">
+              <span>{task.projectName}</span>
+              <span>M{task.milestone.index + 1} {task.milestone.title}</span>
+              <span className="font-medium text-ink">{result.milestone.status.replaceAll("_", " ")}</span>
             </p>
           </div>
-          {(task.needs === "re_audit" || latestOwnAudit(task, result.audit.inspector)) && <p className="text-small text-muted">Re-audit filed. This report supersedes your earlier report for the next suite. Filing it does not release the escrow; fresh checks must run.</p>}
           {attested && API_MODE !== "mock" && (
             <a href={attested.explorerUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-mono text-small text-brand hover:underline">
               Attestation {shortHash(attested.txHash)} <ExternalLink className="size-3.5" />
@@ -422,20 +410,20 @@ function Filed({ result, signed, task, back }: { result: SubmitAuditResult; sign
             {signed ? (
               <>
                 <Row label="Signed by">
-                  <span className="font-mono">{shortAddress(signed.signer, 8, 6)}</span> in this browser
+                  <span className="font-mono">{shortAddress(signed.signer, 8, 6)}</span>
                 </Row>
                 <Row label="Sent to">
-                  <span className="font-mono">{shortAddress(signed.spv, 8, 6)}</span> (project account), 1 drop
+                  <span className="font-mono">{shortAddress(signed.spv, 8, 6)}</span>
                 </Row>
                 <Row label="Memo">
-                  <span className="font-mono">audit · {shortHash(signed.memo.hash)}</span>
+                  <span className="font-mono">{shortHash(signed.memo.hash)}</span>
                 </Row>
                 <Row label={API_MODE === "mock" ? "Mock receipt" : "On ledger"}>
-                  {sameTx ? <span className="text-ok">{API_MODE === "mock" ? "Signature checked locally; no ledger transaction" : "Transaction matches your signature"}</span> : <span className="text-bad">tx hash differs from the one signed</span>}
+                  {sameTx ? <span className="text-ok">{API_MODE === "mock" ? "Verified locally" : "Matches signature"}</span> : <span className="text-bad">Hash mismatch</span>}
                 </Row>
               </>
             ) : (
-              <Row label="Signed by">core, on your behalf (no key loaded in this browser)</Row>
+              <Row label="Signed by">Core</Row>
             )}
           </dl>
           <div className="flex flex-wrap justify-center gap-2">

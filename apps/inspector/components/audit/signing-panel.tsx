@@ -13,16 +13,12 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
 
   if (inspectorKey) {
     return (
-      <div className="flex items-start gap-2 rounded-md bg-ok-bg px-3 py-2 text-caption text-ok">
+      <div className="flex items-start gap-2 rounded-md bg-ok-bg px-3 py-2 text-caption text-ok"
+        title={inspectorKey.source === "mock" ? "Mock key from public test entropy. Core verifies the signature and memo before filing." : "Software key imported into this browser (devnet). Only the signed attestation leaves it."}>
         <ShieldCheck className="mt-0.5 size-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="font-medium">
-            You sign in this browser as <span className="font-mono">{shortAddress(address, 8, 6)}</span>
-          </p>
-          <p className="text-ok/80">
-            {inspectorKey.source === "mock"
-              ? "Mock key from public test entropy (never funded). Core verifies the signature and memo before filing."
-              : "Software key imported into this browser (devnet). Only the signed attestation leaves it."}
+            Signing as <span className="font-mono">{shortAddress(address, 8, 6)}</span>
           </p>
         </div>
         {inspectorKey.source === "imported" && (
@@ -56,15 +52,15 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
         }
       }}
     >
-      <p className="flex items-center gap-1.5 text-caption font-medium text-ink-2">
-        <KeyRound className="size-3.5" /> Load your inspector key to sign in this browser
+      <p className="flex items-center gap-1.5 text-caption font-medium text-ink-2" title="Stored in this browser only (devnet). Without a key, core attests the audit on your behalf.">
+        <KeyRound className="size-3.5" /> Inspector key
       </p>
       <div className="flex gap-2">
         <input
           type="password"
           value={seed}
           onChange={(e) => setSeed(e.target.value)}
-          placeholder={`Devnet seed for ${shortAddress(address, 6, 4)} (s…)`}
+          placeholder="Devnet seed (s…)"
           autoComplete="off"
           spellCheck={false}
           aria-label="Inspector seed"
@@ -75,7 +71,6 @@ export function SigningPanel({ address, inspectorKey, onChange }: { address: str
         </Button>
       </div>
       {error && <p className="text-caption text-bad">{error}</p>}
-      <p className="text-caption text-muted">Stored in this browser only (devnet). Without a key, core attests the audit on your behalf.</p>
     </form>
   );
 }

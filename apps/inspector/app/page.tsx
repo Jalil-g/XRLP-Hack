@@ -6,7 +6,7 @@ import { useIdentity } from "@/components/identity";
 import { NEEDS, TaskRow } from "@/components/task-row";
 import { Badge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-state";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { VerifiedInspectorBadge } from "@/components/verified-badge";
 import { api } from "@/lib/api";
 import { ACTIONABLE, arrivedKeys, groupTasks, taskKey } from "@/lib/queue";
@@ -39,9 +39,6 @@ export default function QueuePage() {
           <h1 className="text-title">
             Assigned audits{groups && <span className="ml-3 align-baseline text-ink-2 tabular">{actionable}</span>}
           </h1>
-          <p className="mt-2 max-w-2xl text-body text-muted">
-            {groups ? `${actionable} awaiting your review: audits, re-audits and site visits. ` : ""}Record what you see and sign your judgment.
-          </p>
         </div>
         <PollStatus updatedAt={queue.updatedAt} error={queue.error} now={now} onRefresh={queue.refresh} />
       </div>
@@ -52,8 +49,9 @@ export default function QueuePage() {
             <span className="font-semibold">{inspector.name}</span>
             <VerifiedInspectorBadge inspector={inspector} />
           </div>
-          <p className="text-caption text-muted">
-            {inspector.licenseNumber} · {inspector.trades.join(", ")}
+          <p className="flex flex-wrap gap-x-4 text-caption text-muted">
+            <span>{inspector.licenseNumber}</span>
+            <span>{inspector.trades.join(", ")}</span>
           </p>
         </div>
         <p className="text-caption text-muted sm:ml-auto">
@@ -66,7 +64,7 @@ export default function QueuePage() {
 
       {!groups ? (
         queue.error ? (
-          <Card role="alert"><CardContent className="space-y-3"><h2 className="text-heading">Assignments could not load</h2><p className="text-small text-bad">{queue.error}</p><p className="text-small text-muted">Your reports are unchanged. Use Refresh queue to try again.</p></CardContent></Card>
+          <Card role="alert"><CardContent className="space-y-3"><h2 className="text-heading">Assignments could not load</h2><p className="text-small text-bad">{queue.error}. Refresh to retry.</p></CardContent></Card>
         ) : (
           <LoadingState label="Loading assigned audits…" />
         )
@@ -75,9 +73,7 @@ export default function QueuePage() {
           {actionable === 0 && (
             <Card>
               <CardContent className="py-10 text-center text-small text-muted">
-                {groups.none.length
-                  ? "Nothing to audit right now. New work shows up here as soon as a builder submits evidence."
-                  : "No projects assigned to you yet. The AI assigns inspectors from the verified panel at lock-terms."}
+                {groups.none.length ? "No audits due" : "No assignments"}
               </CardContent>
             </Card>
           )}
@@ -105,17 +101,14 @@ function TaskGroup({
   collapsible?: boolean;
 }) {
   const [open, setOpen] = useState(!collapsible);
-  const { label, tone, hint } = NEEDS[needs];
+  const { label, tone } = NEEDS[needs];
   return (
     <Card>
       <CardHeader className={cn(!open && "border-b-0")}>
-        <div>
-          <CardTitle className="flex items-center gap-2">
-            {collapsible ? "Assigned, nothing due" : label}
-            <Badge tone={tone}>{tasks.length}</Badge>
-          </CardTitle>
-          <CardDescription>{hint}</CardDescription>
-        </div>
+        <CardTitle className="flex items-center gap-2">
+          {collapsible ? "Nothing due" : label}
+          <Badge tone={tone}>{tasks.length}</Badge>
+        </CardTitle>
         {collapsible && (
           <button type="button" onClick={() => setOpen((o) => !o)} className="flex min-h-11 items-center gap-1 text-caption text-muted hover:text-ink" aria-expanded={open}>
             {open ? "Hide" : "Show"} <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />

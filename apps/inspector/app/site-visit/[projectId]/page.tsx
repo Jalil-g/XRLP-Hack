@@ -4,16 +4,16 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, FlaskConical, PenLine } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, PenLine } from "lucide-react";
+import { NoteField } from "@/components/audit/note-field";
 import { PhotoPicker } from "@/components/audit/photo-picker";
 import { SigningPanel } from "@/components/audit/signing-panel";
 import { SiteMap } from "@/components/audit/site-map";
 import { useIdentity } from "@/components/identity";
-import { Badge } from "@/components/ui/badge";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ReviewDialog } from "@/components/ui/review-dialog";
 import { Button, buttonClass } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { taskAmount } from "@/lib/queue";
 import { inspectorKey as loadInspectorKey, type InspectorKey } from "@/lib/signing";
@@ -68,7 +68,7 @@ export default function SiteVisitPage() {
   if (error) return <div className="space-y-4">{back}<p role="alert" className="text-small text-bad">Could not load the queue: {error}</p></div>;
   if (!inspector || task === undefined) return <div className="space-y-4">{back}<LoadingState label="Loading your site visit assignment…" /></div>;
   if (task === null) {
-    return <div className="space-y-4">{back}<p className="text-small text-muted">No pre-construction visit is due from {inspector.name} for this project.</p></div>;
+    return <div className="space-y-4">{back}<p className="text-small text-muted">No site visit due.</p></div>;
   }
   return <SiteVisitForm key={inspector.address} task={task} inspector={inspector.address} inspectorName={inspector.name} back={back} />;
 }
@@ -140,9 +140,9 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
             <CheckCircle2 className="mx-auto size-10 text-ok" />
             <div>
               <h1 className="text-xl font-semibold">Site visit filed</h1>
-              <p className="mt-1 text-small text-muted">
-                {task.projectName}: site {outcome === "confirmed" ? "confirmed" : outcome === "concern" ? "concern raised" : "not fully confirmed"}. The AI
-                re-runs project verification with your report.
+              <p className="mt-1 flex flex-wrap justify-center gap-x-4 text-small text-muted">
+                <span>{task.projectName}</span>
+                <span className="font-medium text-ink">{outcome === "confirmed" ? "Site confirmed" : outcome === "concern" ? "Concern raised" : "Not fully confirmed"}</span>
               </p>
             </div>
             {filed.visit.txHash && api.mode !== "mock" && (
@@ -150,7 +150,7 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                 Attestation {shortHash(filed.visit.txHash)} <ExternalLink className="size-3.5" />
               </a>
             )}
-            <p className="text-caption text-muted">{filed.signed ? "Signed in this browser with your key." : "Attested by core on your behalf."}</p>
+            <p className="text-caption text-muted">Signed by: {filed.signed ? "Your key" : "Core"}</p>
             <Link href="/" className={buttonClass("secondary")}>
               Back to queue
             </Link>
@@ -166,35 +166,29 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
         {back}
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-title">Pre-construction site visit</h1>
-            <p className="mt-2 text-small text-muted">{task.projectName} · Confirm conditions before project verification</p>
+            <h1 className="text-title">Site visit</h1>
+            <p className="mt-2 text-small text-muted">{task.projectName}</p>
           </div>
           <div className="flex items-center gap-3 text-small">
             <div className="text-right"><p className="text-caption text-muted">Project amount</p><span className="tabular font-medium">{formatRlusd(taskAmount(task))}</span></div>
-            <Badge tone="info" dot>
-              Pre-construction visit
-            </Badge>
           </div>
         </div>
-        <p className="flex max-w-3xl items-start gap-2 rounded-md bg-info-bg px-3 py-2 text-caption text-info">
-          <FlaskConical className="mt-0.5 size-4 shrink-0" />
-          The AI escalated this project&apos;s verification: it needs an inspector&apos;s eyes on site before the project can be listed.
-          {api.mode === "http" ? " Core cannot accept site-visit reports yet." : " Sample flow in mock mode."}
-        </p>
+        {api.mode === "http" && (
+          <p role="note" className="flex max-w-3xl items-start gap-2 rounded-md bg-info-bg px-3 py-2 text-caption text-info">
+            Core cannot accept site-visit reports yet.
+          </p>
+        )}
       </div>
 
       <ol aria-label="Site visit workflow" className="workflow-rail">
-        <li aria-current="step">Record site conditions</li><li>Add site photos</li><li>Review & sign</li>
+        <li aria-current="step">Answers</li><li>Photos</li><li>Review</li>
       </ol>
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <div>
-                <CardTitle>What you found on site</CardTitle>
-                <CardDescription>Answer each question; explain anything that is not a clear yes.</CardDescription>
-              </div>
+              <CardTitle>On site</CardTitle>
             </CardHeader>
             <ol className="divide-y divide-line">
               {SITE_VISIT_QUESTIONS.map((q) => {
@@ -205,7 +199,6 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-small font-semibold">{q.label}</p>
-                        <p className="text-caption text-muted">{q.hint}</p>
                       </div>
                       <div role="group" aria-label={q.label} className="flex gap-1">
                         {ANSWERS.map(({ value, label, on }) => (
@@ -225,21 +218,16 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                         ))}
                       </div>
                     </div>
-                    <label className="block space-y-2">
-                      <span className="text-caption font-medium">{a.answer && a.answer !== "yes" ? "Explain your finding (required)" : "Observation note (optional)"}</span>
-                      <input
-                      type="text"
-                      value={a.note}
-                      onChange={(e) => setAnswer(q.key, { note: e.target.value })}
-                      placeholder={a.answer && a.answer !== "yes" ? "Required: what did you find?" : "Note (optional)"}
-                      aria-label={`${q.label} note`}
-                      aria-invalid={Boolean(missing && a.answer && a.answer !== "yes")}
-                      className={cn(
-                        "min-h-11 w-full rounded-control border bg-surface px-3 py-1.5 text-small placeholder:text-faint focus:ring-2 focus:border-brand",
-                        missing && a.answer && a.answer !== "yes" ? "border-bad" : "border-line",
-                      )}
+                    {a.answer && (
+                      <NoteField
+                        label={`${q.label} note`}
+                        value={a.note}
+                        onChange={(note) => setAnswer(q.key, { note })}
+                        required={a.answer !== "yes"}
+                        invalid={Boolean(missing && a.answer !== "yes")}
+                        placeholder="What did you find?"
                       />
-                    </label>
+                    )}
                   </li>
                 );
               })}
@@ -256,7 +244,7 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                 value={draft.notes}
                 onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
                 rows={3}
-                placeholder="Anything else the AI should know: neighbours, utilities, access hours."
+                placeholder="Optional"
                 className="w-full rounded-md border border-line bg-surface px-3 py-2 text-small placeholder:text-faint focus:ring-2 focus:border-brand"
               />
             </CardContent>
@@ -266,10 +254,7 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
         <div className="space-y-6">
           <Card id="photos" className={cn(showErrors && draft.photos.length === 0 && "border-bad-line")}>
             <CardHeader>
-              <div>
-                <CardTitle>Site photos</CardTitle>
-                <CardDescription>Capture time and GPS are read in your browser.</CardDescription>
-              </div>
+              <CardTitle>Site photos</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <PhotoPicker photos={draft.photos} onChange={(photos) => setDraft((d) => ({ ...d, photos }))} site={task.siteGeo} />
@@ -296,7 +281,7 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                 confirmLabel={phase !== "idle" ? "Submitting…" : canSign ? "Sign and submit site visit" : "Submit site visit (core signs)"}
                 onBack={() => setReviewing(false)} onConfirm={() => void submit()}>
                 <p className="font-medium">{task.projectName}</p>
-                <p>{inspectorName} ({shortAddress(inspector)}) · {draft.photos.length} site photos</p>
+                <p className="flex flex-wrap gap-x-4"><span>{inspectorName}</span><span className="font-mono">{shortAddress(inspector)}</span><span>{draft.photos.length} site photos</span></p>
                 <ul className="divide-y divide-line border-y border-line">
                   {SITE_VISIT_QUESTIONS.map((q) => <li key={q.key} className="py-3">
                     <p>{q.label}: <strong>{draft.answers[q.key].answer?.replaceAll("_", " ")}</strong></p>
@@ -304,9 +289,8 @@ function SiteVisitForm({ task, inspector, inspectorName, back }: { task: Inspect
                   </li>)}
                 </ul>
                 {draft.notes && <p className="whitespace-pre-wrap">{draft.notes}</p>}
-                <p className="text-caption text-muted">{canSign ? "Signed with your loaded browser key." : "Core will sign on your behalf."}</p>
+                <p className="text-caption text-muted">Signed by: {canSign ? "Your key" : "Core"}</p>
               </ReviewDialog>
-              <p className="text-caption text-muted">Step 1 of 2 · Review your observations before signing.</p>
               <Button variant="brand" size="lg" className="w-full" onClick={() => {
                 setShowErrors(true);
                 if (problems.length) { document.getElementById(problems[0]!.field)?.scrollIntoView({ block: "center" }); return; }

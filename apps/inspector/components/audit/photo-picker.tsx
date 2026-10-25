@@ -24,7 +24,7 @@ export function PhotoPicker({ photos, onChange, site }: { photos: DraftPhoto[]; 
       const seen = new Set(photos.map((p) => p.evidence.sha256));
       onChange([...photos, ...picked.filter((p) => !seen.has(p.evidence.sha256) && seen.add(p.evidence.sha256))]);
     } catch {
-      setError("Could not read these photos. Try a JPEG or PNG file; your existing photos are still here.");
+      setError("Could not read photos. Use JPEG or PNG.");
     } finally {
       setReading(false);
       if (input.current) input.current.value = "";

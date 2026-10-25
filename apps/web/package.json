@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --import tsx --test test/*.test.ts components/builder/*.test.ts components/builder/*.test.tsx"
+    "test": "node --import tsx --test test/*.test.ts components/builder/*.test.ts components/builder/*.test.tsx",
+    "lint:copy": "node scripts/copy-lint.mjs app components ../inspector/app ../inspector/components"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.3.1",

@@ -1,6 +1,6 @@
 // One route 18 task in the queue: project, milestone, SoV line(s), amount, builder evidence status, escrow expiry.
 import Link from "next/link";
-import { ArrowRight, CalendarClock, Camera, FileText, History, MapPin, Receipt } from "lucide-react";
+import { CalendarClock, Camera, FileText, History, MapPin, Receipt } from "lucide-react";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { SectionLabel } from "@/components/ui/card";
 import { buttonClass } from "@/components/ui/button";
@@ -8,11 +8,11 @@ import { evidenceStatus, taskHref, taskAmount, type EvidenceKindStatus } from "@
 import type { InspectorTask, TaskNeeds } from "@/lib/types";
 import { cn, formatDateTime, formatRlusd } from "@/lib/utils";
 
-export const NEEDS: Record<TaskNeeds, { label: string; tone: Tone; hint: string }> = {
-  re_audit: { label: "Re-audit", tone: "warn", hint: "The suite failed on your earlier audit. Your new audit supersedes it." },
-  audit: { label: "Audit due", tone: "brand", hint: "Builder evidence is in. The escrow cannot release until your signed audit is filed." },
-  pre_visit: { label: "Pre-construction visit", tone: "info", hint: "The AI escalated project verification. Confirm the site before the project is listed." },
-  none: { label: "Nothing due", tone: "neutral", hint: "Assigned to you, but nothing to audit yet." },
+export const NEEDS: Record<TaskNeeds, { label: string; tone: Tone }> = {
+  re_audit: { label: "Re-audit", tone: "warn" },
+  audit: { label: "Audit due", tone: "brand" },
+  pre_visit: { label: "Site visit", tone: "info" },
+  none: { label: "Nothing due", tone: "neutral" },
 };
 
 const KIND: Record<EvidenceKindStatus["kind"], { label: string; Icon: typeof Camera }> = {
@@ -35,7 +35,14 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
   const expiry = m?.cancelAfter ? expiryLabel(m.cancelAfter, now) : null;
   const mine = task.priorAudits.length;
   const href = taskHref(task);
-  const title = m ? `M${m.index + 1} · ${m.title}` : "Site visit before verification";
+  const title = m ? (
+    <>
+      <span className="mr-2 text-faint">M{m.index + 1}</span>
+      {m.title}
+    </>
+  ) : (
+    "Site visit"
+  );
 
   return (
     <li className={cn("px-5 py-6 transition-colors duration-150 sm:px-6", fresh && "bg-brand-50")}>
@@ -56,22 +63,18 @@ export function TaskRow({ task, fresh, now }: { task: InspectorTask; fresh?: boo
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
-          <div className="sm:text-right"><span className="block tabular text-body font-semibold">{formatRlusd(taskAmount(task))}</span><span className="text-caption text-muted">{m ? "Milestone amount" : "Project amount"}</span></div>
-          <Badge tone={NEEDS[task.needs].tone} dot>
-            {NEEDS[task.needs].label}
-          </Badge>
+          <div className="sm:text-right"><span className="block tabular text-body font-semibold">{formatRlusd(taskAmount(task))}</span><span className="text-caption text-muted">{m ? "Milestone" : "Project"}</span></div>
           {href && (
             <Link href={href} className={buttonClass("secondary", "sm")}>
-              {task.needs === "re_audit" ? "Re-audit" : task.needs === "pre_visit" ? "Visit site" : "Audit"} <ArrowRight className="size-3.5" />
+              {task.needs === "re_audit" ? "Re-audit" : task.needs === "pre_visit" ? "Visit site" : "Audit"}
             </Link>
           )}
         </div>
       </div>
 
-      <ul aria-label="Schedule of Values lines" className="mt-2 flex flex-wrap gap-x-2 text-small text-ink-2">
-        {task.sov.map((l, i) => (
+      <ul aria-label="Schedule of Values lines" className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-small text-ink-2">
+        {task.sov.map((l) => (
           <li key={l.code}>
-            {i > 0 && <span aria-hidden className="mr-2 text-faint">·</span>}
             {l.title} <span className="tabular text-muted">{formatRlusd(l.amount)}</span>
           </li>
         ))}

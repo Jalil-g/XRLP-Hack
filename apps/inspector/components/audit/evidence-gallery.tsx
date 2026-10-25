@@ -11,7 +11,7 @@ import { formatDateTime, formatRlusd } from "@/lib/utils";
 export function EvidenceGallery({ evidence, site, browserExif }: { evidence: Evidence[]; site: SiteGeo; browserExif?: ReadonlySet<string> }) {
   const photos = evidence.filter((e) => e.kind === "photo");
   const files = evidence.filter((e) => e.kind !== "photo");
-  if (!evidence.length) return <p className="text-small text-muted">The builder has not uploaded evidence for this milestone.</p>;
+  if (!evidence.length) return <p className="text-small text-muted">No evidence uploaded</p>;
 
   return (
     <div className="space-y-4">
@@ -66,7 +66,7 @@ export function PhotoCaption({ evidence, site, browserRead }: { evidence: Eviden
         </p>
       ) : (
         <p className={geo.state === "inside" ? "text-ok" : "font-semibold text-bad"}>
-          {formatDistance(geo.distanceM!)} from site {geo.state === "inside" ? "· on site" : "· OUTSIDE geofence"}
+          {formatDistance(geo.distanceM!)} from site<span className="ml-3">{geo.state === "inside" ? "On site" : "Outside geofence"}</span>
         </p>
       )}
       {browserRead && <p className="text-faint" title="Core's record of this file has no EXIF; read from the file in your browser with the verifier's parser.">EXIF read in your browser</p>}

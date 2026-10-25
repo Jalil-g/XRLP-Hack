@@ -23,8 +23,8 @@ export function AuditHistoryCard({ entry }: { entry: AuditHistoryEntry }) {
       <CardHeader className="flex-wrap">
         <div>
           <h2 className="text-heading">{project.name}</h2>
-          <p className="mt-1 text-small font-medium">M{milestone.index + 1} · {milestone.title}</p>
-          <p className="mt-1 text-caption text-muted">Filed {formatDateTime(audit.at)} · {formatRlusd(milestone.amount)}</p>
+          <p className="mt-1 text-small font-medium"><span className="mr-2 text-faint">M{milestone.index + 1}</span>{milestone.title}</p>
+          <p className="mt-1 flex flex-wrap gap-x-4 text-caption text-muted"><span>Filed {formatDateTime(audit.at)}</span><span className="tabular">{formatRlusd(milestone.amount)}</span></p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={tone[checks.outcome]}>Latest suite: {label[checks.outcome]}</Badge>
@@ -33,14 +33,13 @@ export function AuditHistoryCard({ entry }: { entry: AuditHistoryEntry }) {
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="flex flex-wrap gap-x-6 gap-y-2 text-caption">
-          {audit.txHash ? <TxLink hash={audit.txHash} label="Audit attestation" /> : <span className="text-warn">No audit attestation recorded</span>}
-          {releaseTx ? <TxLink hash={releaseTx} label="Release transaction" /> : <span className="text-muted">No release transaction recorded</span>}
+          {audit.txHash ? <TxLink hash={audit.txHash} label="Audit attestation" /> : <span className="text-warn">No audit attestation</span>}
+          {releaseTx ? <TxLink hash={releaseTx} label="Release transaction" /> : <span className="text-muted">No release transaction</span>}
         </div>
 
-        {verdictPredatesAudit && <p className="rounded-md bg-warn-bg p-3 text-small text-warn">The latest verdict predates this report. This audit is awaiting a new suite run.</p>}
+        {verdictPredatesAudit && <p className="rounded-md bg-warn-bg p-3 text-small text-warn">Verdict predates this report</p>}
         <section aria-label="Checks that use inspector audits" className="space-y-2">
-          <h3 className="text-small font-semibold">What your audit feeds</h3>
-          <p className="text-caption text-muted">These checks use inspector reports. Results below are the latest for this milestone, shared across its audits.</p>
+          <h3 className="text-small font-semibold">Audit checks</h3>
           <ul className="divide-y divide-line">
             {fed.map(({ id, result }) => (
               <li key={id} className="space-y-2 py-4">
@@ -49,27 +48,27 @@ export function AuditHistoryCard({ entry }: { entry: AuditHistoryEntry }) {
                   {result ? <Badge tone={tone[result.result]}>{label[result.result]}</Badge> : <Badge>No result</Badge>}
                 </div>
                 <p className="break-all font-mono text-caption text-faint">{id}</p>
-                <p className="text-caption text-muted">{result?.reason ?? "No check result recorded yet."}</p>
+                <p className="text-caption text-muted">{result?.reason ?? "No result"}</p>
               </li>
             ))}
           </ul>
         </section>
 
-        {checks.verdict && <p className="text-small text-ink-2">{checks.verdict.summary} <span className="text-caption text-muted">({Math.round(checks.verdict.confidence * 100)}% confidence · {formatDateTime(checks.verdict.createdAt)})</span></p>}
+        {checks.verdict && <p className="text-small text-ink-2">{checks.verdict.summary} <span className="ml-2 text-caption text-muted">{Math.round(checks.verdict.confidence * 100)}% confidence</span> <span className="ml-2 text-caption text-muted">{formatDateTime(checks.verdict.createdAt)}</span></p>}
         <details className="rounded-lg border border-line p-3">
           <summary className="cursor-pointer text-small font-medium">All milestone checks ({results.length})</summary>
           {results.length ? <div className="mt-3 space-y-4">
             <CheckList title="Required" checks={checks.required} />
             <CheckList title="Optional" checks={checks.optional} />
-          </div> : <p className="mt-3 text-small text-muted">The suite has not reported any checks yet.</p>}
+          </div> : <p className="mt-3 text-small text-muted">No checks yet</p>}
         </details>
         <details className="rounded-lg border border-line p-3">
-          <summary className="cursor-pointer text-small font-medium">Submitted report · {audit.checklist.length} SoV lines · {audit.photos.length} {audit.photos.length === 1 ? "photo" : "photos"}</summary>
+          <summary className="cursor-pointer text-small font-medium">Submitted report <span className="ml-3 text-muted">{audit.checklist.length} lines</span> <span className="ml-3 text-muted">{audit.photos.length} {audit.photos.length === 1 ? "photo" : "photos"}</span></summary>
           <div className="mt-3 space-y-4">
             <ul className="divide-y divide-line">
               {audit.checklist.map((line) => <li key={line.sovCode} className="py-2 text-small">
                 <div className="flex flex-wrap justify-between gap-2">
-                  <span>{line.sovCode} · {project.sov?.find((s) => s.code === line.sovCode)?.title ?? "SoV line"}</span>
+                  <span><span className="mr-2 font-mono text-caption text-faint">{line.sovCode}</span>{project.sov?.find((s) => s.code === line.sovCode)?.title ?? "SoV line"}</span>
                   <Badge tone={line.status === "done" ? "ok" : "warn"}>{line.status.replaceAll("_", " ")}</Badge>
                 </div>
                 {line.note && <p className="mt-1 whitespace-pre-wrap text-muted">{line.note}</p>}

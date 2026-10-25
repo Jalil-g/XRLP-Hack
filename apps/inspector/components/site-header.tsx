@@ -60,7 +60,3 @@ export function SiteHeader() {
   );
 }
 
-export function InspectorMockNote() {
-  if (API_MODE !== "mock") return null;
-  return <p role="note" className="mb-6 text-caption text-muted">Standalone inspector sample. Amounts and evidence are independent of the investor/builder mock workspace.</p>;
-}

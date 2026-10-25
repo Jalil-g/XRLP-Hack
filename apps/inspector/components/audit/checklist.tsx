@@ -1,5 +1,6 @@
-// One row per SoV line: done / partial / not_done + note. The line's visual criteria say what "done" looks like.
+// One row per SoV line: done / partial / not_done. The note appears once the answer is not "done" (required then).
 import { Check, CircleDashed, X } from "lucide-react";
+import { NoteField } from "@/components/audit/note-field";
 import type { ChecklistDraft } from "@/lib/audit";
 import type { ChecklistStatus, SovLine } from "@/lib/types";
 import { cn, formatRlusd } from "@/lib/utils";
@@ -34,8 +35,9 @@ export function Checklist({
                 <p className="text-small font-semibold">
                   <span className="font-mono text-faint">{line.code}</span> {line.title}
                 </p>
-                <p className="text-caption text-muted">
-                  {line.trade} · <span className="tabular">{formatRlusd(line.amount)}</span>
+                <p className="flex gap-x-4 text-caption text-muted">
+                  <span>{line.trade}</span>
+                  <span className="tabular">{formatRlusd(line.amount)}</span>
                 </p>
               </div>
               <div role="group" aria-label={`${line.code} status`} className="flex gap-1">
@@ -56,28 +58,25 @@ export function Checklist({
               </div>
             </div>
             {line.visualCriteria.length > 0 && (
-              <ul className="list-disc space-y-0.5 pl-5 text-caption text-muted">
-                {line.visualCriteria.map((c) => (
-                  <li key={c}>{c}</li>
-                ))}
-              </ul>
+              <details className="text-caption text-muted">
+                <summary className="cursor-pointer font-medium">Done means</summary>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                  {line.visualCriteria.map((c) => (
+                    <li key={c}>{c}</li>
+                  ))}
+                </ul>
+              </details>
             )}
-            <label className="block space-y-2">
-              <span className="text-caption font-medium">{needsNote ? "Explain your finding (required)" : "Observation note (optional)"}</span>
-              <input
-              type="text"
-              value={entry.note}
-              onChange={(e) => onChange(line.code, { ...entry, note: e.target.value })}
-              placeholder={needsNote ? `Required: what is ${entry.status === "partial" ? "missing" : "not done"}?` : "Note (optional)"}
-              aria-label={`${line.code} note`}
-              aria-invalid={Boolean(missing && needsNote)}
-              required={Boolean(needsNote)}
-              className={cn(
-                "min-h-11 w-full rounded-control border bg-surface px-3 py-1.5 text-small placeholder:text-faint focus:ring-2 focus:border-brand",
-                missing && needsNote ? "border-bad" : "border-line",
-              )}
+            {entry.status !== undefined && (
+              <NoteField
+                label={`${line.code} note`}
+                value={entry.note}
+                onChange={(note) => onChange(line.code, { ...entry, note })}
+                required={Boolean(needsNote)}
+                invalid={Boolean(missing && needsNote)}
+                placeholder={entry.status === "partial" ? "What is missing?" : entry.status === "not_done" ? "What is not done?" : "Note"}
               />
-            </label>
+            )}
           </li>
         );
       })}
