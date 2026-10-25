@@ -105,7 +105,7 @@ export const EVENT_TX: Record<ChainEventKind, string> = {
 };
 
 /** One plain sentence per event. */
-export function describeEvent(e: ChainEvent, who: (address?: string) => string, milestoneTitle: (id?: string) => string): string {
+export function describeEvent(e: ChainEvent, who: (address?: string) => string, milestoneTitle: (id?: string) => string, builderName = "the builder"): string {
   const amt = e.amount ? `${formatAmount(e.amount)} RLUSD` : "";
   const ms = milestoneTitle(e.milestoneId);
   switch (e.kind) {
@@ -140,7 +140,7 @@ export function describeEvent(e: ChainEvent, who: (address?: string) => string, 
     case "decision_attested":
       return `Operator decision on ${ms} recorded`;
     case "escrow_finished":
-      return `${ms}: ${amt} released to ${who(e.actor)}`;
+      return `${ms}: ${amt} released to ${builderName}`;
     case "escrow_cancelled":
       return `${ms} escrow expired; ${amt} back to the project account`;
     case "loan_payment":
@@ -168,3 +168,20 @@ export function focusMilestone(milestones: Milestone[]): Milestone | undefined {
 
 /** The SoV lines a milestone pays for (both fields are optional in the v2 contract). */
 export const sovLinesFor = (p: Pick<Project, "sov">, m: Pick<Milestone, "sovCodes">): SovLine[] => (p.sov ?? []).filter((l) => (m.sovCodes ?? []).includes(l.code));
+
+export const ROLE_LABEL: Record<Party["role"], string> = {
+  investor: "Investor",
+  builder: "Builder",
+  inspector: "Inspector",
+  platform: "Platform",
+  release_service: "Release service",
+  ai_agent: "AI verifier",
+  trustee: "Trustee",
+  spv: "Project account",
+};
+
+/** Address → role label from the parties directory. */
+export function roleNamer(parties: Party[]) {
+  const byAddress = new Map(parties.map((p) => [p.address, ROLE_LABEL[p.role]]));
+  return (address?: string) => (address ? byAddress.get(address) : undefined);
+}

@@ -55,6 +55,37 @@ export async function readPhotoMeta(bytes: ArrayBuffer | Uint8Array): Promise<Ph
   return { ...(takenAt ? { takenAt } : {}), ...(gps ? { gps } : {}) };
 }
 
+/**
+ * Builder photos whose stored record has no EXIF time / GPS (core does not extract it at upload today) get it read from the
+ * file bytes with the verifier's parser. Stored values always win; `browserRead` lists the photos where something was added,
+ * so the UI can say it came from this browser, not from core's record. Unreadable files are left as they are.
+ */
+export async function withBrowserExif(
+  evidence: readonly Evidence[],
+  load: (e: Evidence) => Promise<ArrayBuffer>,
+): Promise<{ evidence: Evidence[]; browserRead: Set<string> }> {
+  const browserRead = new Set<string>();
+  const out = await Promise.all(
+    evidence.map(async (e) => {
+      if (e.kind !== "photo" || (e.meta.takenAt && e.meta.gps)) return e;
+      let read: PhotoMeta;
+      try {
+        read = await readPhotoMeta(await load(e));
+      } catch {
+        return e;
+      }
+      const add: PhotoMeta = {
+        ...(!e.meta.takenAt && read.takenAt ? { takenAt: read.takenAt } : {}),
+        ...(!e.meta.gps && read.gps ? { gps: read.gps } : {}),
+      };
+      if (!add.takenAt && !add.gps) return e;
+      browserRead.add(e.id);
+      return { ...e, meta: { ...e.meta, ...add } };
+    }),
+  );
+  return { evidence: out, browserRead };
+}
+
 // ---------------------------------------------------------------- site geometry
 
 const EARTH_M = 6_371_000;

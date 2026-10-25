@@ -3,6 +3,7 @@
 // State lives in whichever runtime imports it (the browser, for this client-rendered app) and resets on reload.
 import type {
   ErrorCode,
+  Evidence,
   Inspector,
   InspectorAudit,
   InspectorTask,
@@ -49,6 +50,14 @@ export const mockControl = {
   },
   setLatency(ms: number) {
     latencyMs = ms;
+  },
+  /** Simulate a builder resubmission without adding a public API outside this app's contract. */
+  replaceEvidence(projectId: string, milestoneId: string, evidence: Evidence[]) {
+    const milestone = findProject(projectId).milestones.find((m) => m.id === milestoneId);
+    if (!milestone) throw new MockError("not_found", "Milestone not found", 404);
+    state.evidence[milestoneId] = structuredClone(evidence);
+    milestone.status = "evidence_submitted";
+    if (!state.reAudit.includes(milestoneId)) state.reAudit.push(milestoneId);
   },
 };
 
@@ -172,6 +181,13 @@ export async function submitAudit({ projectId, milestoneId, report, photos, sign
     : [...(state.audits[milestoneId] ?? []), audit];
   state.reAudit = state.reAudit.filter((id) => id !== milestoneId);
   if (reAudit || state.audits[milestoneId].length >= milestone.requiredInspectors) milestone.status = "audited";
+  // A prior suite evaluated a different report; it cannot certify (or reject) this replacement.
+  state.checks[milestoneId] = { required: [], optional: [], outcome: "pending" };
+  state.attestations[milestoneId] = [...(state.attestations[milestoneId] ?? []), {
+    milestoneId, role: "inspector", signer: report.inspector,
+    decision: report.checklist.every((line) => line.status === "done") ? "approve" : "reject",
+    notes: report.notes, txHash, at: report.at,
+  }];
 
   const event = fx.chainEvent({ projectId, milestoneId, kind: "audit_attested", actor: report.inspector, at: report.at, txHash });
   state.events.push(event);

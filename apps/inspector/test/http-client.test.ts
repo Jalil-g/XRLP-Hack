@@ -101,6 +101,39 @@ describe("http client", () => {
     await assert.rejects(api.getProject("maple-st-duplex"), (e) => e instanceof ApiError && e.code === "network");
   });
 
+  it("loads re-audit checks through route 2 and surfaces failures rather than hiding the failed-check context", async () => {
+    const backend = await import("../lib/mock/backend.ts");
+    backend.mockControl.setLatency(0);
+    const tasks = await backend.inspectorQueue(fx.ADDR.marcus);
+    const detail = await backend.getProject("rhinebeck-farmhouse");
+    const start = seen.length;
+    reply = (req) => ({ status: 200, body: req.url?.endsWith("/queue") ? tasks : detail });
+    const result = await api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1");
+    assert.equal(result?.checks?.outcome, "fail");
+    assert.deepEqual(seen.slice(start).map((r) => r.url), [`/api/inspectors/${fx.ADDR.marcus}/queue`, "/api/projects/rhinebeck-farmhouse"]);
+    // Core may call the resubmitted round `audit`, but its own prior report still calls for comparison.
+    tasks[0]!.needs = "audit";
+    assert.equal((await api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1"))?.checks?.outcome, "fail");
+    reply = (req) => req.url?.endsWith("/queue") ? { status: 200, body: tasks } : { status: 503, body: { error: { code: "ledger_error", message: "Unavailable" } } };
+    await assert.rejects(api.getAuditReview(fx.ADDR.marcus, "rhinebeck-farmhouse", "rhinebeck-farmhouse:m1"), (e) => e instanceof ApiError && e.status === 503);
+  });
+
+  it("files: core's upload uri when it is an /api/files path (core's evidence id is a different key), else the evidence id", async () => {
+    const core = process.env.CORE_URL!.replace(/\/$/, "");
+    const uuid = "3d48fdf5-56ee-409d-96f2-66062a247391";
+    assert.equal(api.fileUrl({ id: "ev_43dc9c70ecf0", uri: `/api/files/${uuid}` }), `${core}/api/files/${uuid}`);
+    assert.equal(api.fileUrl({ id: "ev 1", uri: "data:image/svg+xml,<svg/>" }), `${core}/api/files/ev%201`);
+    assert.equal(api.fileUrl({ id: "ev_1", uri: "/api/files/../../etc/passwd" }), `${core}/api/files/ev_1`);
+
+    const start = seen.length;
+    reply = () => ({ status: 200, body: { bytes: true } });
+    const bytes = await api.fileBytes({ id: "ev_1", uri: `/api/files/${uuid}` });
+    assert.equal(new TextDecoder().decode(bytes), '{"bytes":true}');
+    assert.equal(seen[start]?.url, `/api/files/${uuid}`);
+    reply = () => ({ status: 404, body: { error: { code: "not_found", message: "gone" } } });
+    await assert.rejects(api.fileBytes({ id: "ev_1", uri: `/api/files/${uuid}` }), (e) => e instanceof ApiError && e.code === "not_found");
+  });
+
   it("warns (does not throw) when core drifts from the contract", async () => {
     const warn = console.warn;
     const warnings: unknown[] = [];

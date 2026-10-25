@@ -22,6 +22,7 @@ export function OutcomeBanner({
   outcome,
   milestone: m,
   builderName,
+  builderBalance,
   total,
   failed,
   decision,
@@ -33,6 +34,7 @@ export function OutcomeBanner({
   failedChecks?: string[];
   milestone: Milestone;
   builderName: string;
+  builderBalance?: string;
   total: number;
   failed: number;
   decision?: Attestation;
@@ -45,7 +47,9 @@ export function OutcomeBanner({
           tone: "bg-pass-bg",
           icon: "pass",
           title: `Released ${formatAmount(m.amount)} RLUSD to ${builderName}`,
-          sub: decision ? `Approved by the platform operator: ${decision.notes}` : `All ${total} checks passed`,
+          sub: [decision ? `Approved by the platform operator: ${decision.notes}` : `All ${total} checks passed`, builderBalance && `builder balance now ${formatAmount(builderBalance)} RLUSD`]
+            .filter(Boolean)
+            .join(" · "),
           right: m.escrow?.finishTx && <TxLink hash={m.escrow.finishTx} label="EscrowFinish" />,
         };
       case "releasing":

@@ -25,13 +25,15 @@ export type ChecksPanelProps = {
   attestations: Attestation[];
   evidence?: Evidence[];
   builderName: string;
+  /** Builder's RLUSD balance, shown in the released banner so the payout is visible where it happens. */
+  builderBalance?: string;
   /** Address → display name (inspector on the audit row). */
   names?: Record<string, string>;
   /** Enables the Run checks button (route 11). */
   run?: { projectId: string; /** Where to land after the run, e.g. "?m=<id>" so the selection doesn't move. */ pinHref?: string };
 };
 
-export function ChecksPanel({ milestone: m, status, audits, attestations, evidence, builderName, names = {}, run }: ChecksPanelProps) {
+export function ChecksPanel({ milestone: m, status, audits, attestations, evidence, builderName, builderBalance, names = {}, run }: ChecksPanelProps) {
   const router = useRouter();
   const [running, setRunning] = useState(false);
   const verdictAt = status.verdict?.createdAt;
@@ -86,6 +88,7 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
         outcome={revealing && ran ? "running" : outcomeOf(m, running)}
         milestone={m}
         builderName={builderName}
+        builderBalance={builderBalance}
         total={total}
         failed={failed}
         decision={latest("decision")}
@@ -110,7 +113,7 @@ export function ChecksPanel({ milestone: m, status, audits, attestations, eviden
         ))}
       </ul>
       {status.verdict && !running && !revealing && (
-        <VerdictRow verdict={status.verdict} attestationTx={latest("verdict")?.txHash} released={m.status === "released"} />
+        <VerdictRow verdict={status.verdict} attestationTx={latest("verdict")?.txHash} hash={latest("verdict")?.hash} released={m.status === "released"} />
       )}
     </div>
   );
