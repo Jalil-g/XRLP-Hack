@@ -2,14 +2,20 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 import { ApiError, api } from "../lib/api.ts";
-import { ADDR } from "../lib/mock/fixtures.ts";
+import { evidenceBundleHash } from "../lib/audit.ts";
+import { ADDR, EVIDENCE } from "../lib/mock/fixtures.ts";
 import { mockControl } from "../lib/mock/backend.ts";
 import { Inspector, InspectorTask, ProjectDetail, SubmitAuditResult, type InspectorAudit } from "../lib/types.ts";
+
+/** Real bundle hashes of the fixture evidence: the mock rejects any other. */
+const BUNDLE: Record<string, string> = Object.fromEntries(
+  await Promise.all(Object.entries(EVIDENCE).map(async ([id, ev]) => [id, await evidenceBundleHash(ev)] as const)),
+);
 
 const report = (inspector: string, milestoneId: string, codes: string[]): InspectorAudit => ({
   milestoneId,
   inspector,
-  evidenceBundleHash: "ab".repeat(32),
+  evidenceBundleHash: BUNDLE[milestoneId] ?? "ab".repeat(32),
   checklist: codes.map((sovCode) => ({ sovCode, status: "done" as const })),
   photos: [],
   notes: "Matches SoV.",

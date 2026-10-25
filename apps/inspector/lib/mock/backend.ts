@@ -11,6 +11,7 @@ import type {
   SubmitAuditResult,
   TaskNeeds,
 } from "../types.ts";
+import { evidenceBundleHash } from "../audit.ts";
 import * as fx from "./fixtures.ts";
 
 export class MockError extends Error {
@@ -142,6 +143,10 @@ export async function submitAudit({ projectId, milestoneId, report, photos, sign
   if (unknown.length) throw new MockError("validation", `Checklist has SoV lines outside this milestone: ${unknown.join(", ")}`, 400);
   if (needsFor(milestone, report.inspector) === "none") {
     throw new MockError("invalid_state", `Milestone is ${milestone.status}; no audit is due from this inspector`, 409);
+  }
+  // Core's suite fails `inspector_audit_present` on a stale bundle; the mock refuses up front so client bugs surface here.
+  if (report.evidenceBundleHash !== (await evidenceBundleHash(state.evidence[milestoneId] ?? []))) {
+    throw new MockError("validation", "evidenceBundleHash does not match the builder evidence on file; reload and re-review", 400);
   }
 
   const txHash = fx.fakeHash(signedTxBlob ? `blob:${signedTxBlob}` : `audit:${milestoneId}:${report.inspector}:${report.at}`);

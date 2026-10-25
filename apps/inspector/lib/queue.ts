@@ -5,6 +5,12 @@ import type { EvidenceRequirement, InspectorTask, TaskNeeds } from "./types.ts";
 /** Order on screen: a failed suite waiting on you first, then audits that gate money, then pre-construction visits. */
 export const ACTIONABLE: readonly Exclude<TaskNeeds, "none">[] = ["re_audit", "audit", "pre_visit"];
 
+/** The audit form for an audit / re-audit task; null for pre-visits (INS-06) and tasks with nothing due. */
+export function auditHref(t: Pick<InspectorTask, "projectId" | "milestone" | "needs">): string | null {
+  if (!t.milestone || (t.needs !== "audit" && t.needs !== "re_audit")) return null;
+  return `/audit/${encodeURIComponent(t.projectId)}/${encodeURIComponent(t.milestone.id)}`;
+}
+
 export const taskKey = (t: Pick<InspectorTask, "projectId" | "milestone">) => `${t.projectId}:${t.milestone?.id ?? "pre_visit"}`;
 
 export type EvidenceKindStatus = { kind: EvidenceRequirement["kind"]; have: number; need: number };

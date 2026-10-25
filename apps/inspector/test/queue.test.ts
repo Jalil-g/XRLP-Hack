@@ -4,7 +4,7 @@ import { beforeEach, describe, it } from "node:test";
 import { api } from "../lib/api.ts";
 import { ADDR } from "../lib/mock/fixtures.ts";
 import { mockControl } from "../lib/mock/backend.ts";
-import { arrivedKeys, evidenceStatus, groupTasks, sovTotal, taskAmount, taskKey } from "../lib/queue.ts";
+import { arrivedKeys, auditHref, evidenceStatus, groupTasks, sovTotal, taskAmount, taskKey } from "../lib/queue.ts";
 import type { Evidence, InspectorTask, SovLine } from "../lib/types.ts";
 
 beforeEach(() => {
@@ -115,5 +115,15 @@ describe("arrivedKeys", () => {
     const target = groupTasks(tasks).audit[0]!;
     const before = tasks.map((t) => (taskKey(t) === taskKey(target) ? { ...t, needs: "none" as const } : t));
     assert.deepEqual([...arrivedKeys(before, tasks)], [taskKey(target)]);
+  });
+});
+
+describe("auditHref", () => {
+  it("links audit + re-audit tasks to the form (ids URL-encoded); pre-visits and nothing-due tasks have no form", async () => {
+    const g = groupTasks(await api.getQueue(ADDR.dana));
+    assert.equal(auditHref(g.audit[0]!), "/audit/maple-st-duplex/maple-st-duplex%3Am1");
+    assert.equal(auditHref(g.pre_visit[0]!), null);
+    assert.equal(auditHref(g.none[0]!), null);
+    assert.ok(auditHref(groupTasks(await api.getQueue(ADDR.marcus)).re_audit[0]!));
   });
 });
